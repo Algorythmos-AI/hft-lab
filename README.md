@@ -8,7 +8,7 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | F1 broker adapter and probe · nothing trades yet · paper only · no live trading                              |
+| **Status**      | Code for F1 to F3 is written and tested against a fake broker and synthetic streams only · the F1, F2 and F3 gates are open · nothing has recorded or traded yet · paper only · no live trading |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
 | **Runs at**     | Nothing runs yet. Target: a shared Linux host, against an Interactive Brokers **paper** account              |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
@@ -38,7 +38,9 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 "High frequency" here means many trades a day held for seconds to minutes on a quote stream that updates every
 few milliseconds. It does not mean microsecond races or co-location.
 
-## What exists today (F0, and F1 up to the owner's probe run)
+## What exists today
+
+Code, and tests of it. **Nothing here has met the real market yet.**
 
 | Piece | Where |
 |---|---|
@@ -47,13 +49,31 @@ few milliseconds. It does not mean microsecond races or co-location.
 | The venue port and the guard every venue shares | `src/hftlab/venues/port.py`, `guard.py` |
 | The Interactive Brokers adapter (paper only) and the capability probe | `src/hftlab/venues/ibkr/` |
 | A deterministic fake broker for tests and fault injection | `src/hftlab/venues/fake/` |
-| The research-registry lint and the trial count | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The forex week, the rollover, and dated holidays and macro events (both lists still empty) | `src/hftlab/calendar/`, `config/calendar/` |
+| The recorder, its checksummed store, and replay with a day check | `src/hftlab/record/`, `src/hftlab/replay/` |
+| The shadow venue and its cost model (every number a placeholder) | `src/hftlab/venues/sim/`, `config/cost_model.yaml` |
+| The book: positions, cash and profit from fills only | `src/hftlab/book/` |
+| The sleeve interface, the idle sleeve and the random control sleeve | `src/hftlab/strategy/` |
+| The shadow runner with a hash-chained journal | `src/hftlab/shadow/` |
+| The feasibility map: moves against the modelled cost, by pair and holding time | `src/hftlab/feasibility/` |
+| The research registry: its lint, the trial count, one hypothesis and one experiment, registered and not run | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
+| The status snapshot contract (nothing publishes it yet) | `contracts/` |
 | Design records | `docs/` |
 
-The adapter has been tested against the fake broker and a stub of the broker library, not yet against a real
-gateway: the [probe runbook](docs/runbooks/ibkr-probe.md) is the next step and it is the owner's. The recorder
-and the strategies come in later phases: see the [roadmap](docs/roadmap.md).
+What that does and does not mean:
+
+- **Proven against:** a deterministic fake broker, a stub of the broker library, synthetic quote streams, and
+  recordings the tests make themselves.
+- **Not done:** nothing has connected to a real gateway, nothing has been recorded from the real feed, and no
+  experiment has been run on real data. There is no order manager yet. The recorder and the shadow runner
+  cannot place a broker order; the one thing that can is the capability probe, on the paper account, when
+  the owner runs it with `--orders`.
+- **F1 is open** until the owner runs the capability probe against the real paper account
+  ([runbook](docs/runbooks/ibkr-probe.md)).
+- **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days.
+
+The [roadmap](docs/roadmap.md) has the state of each part.
 
 ## Run it locally
 

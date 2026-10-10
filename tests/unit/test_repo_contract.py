@@ -129,6 +129,17 @@ def test_every_design_record_that_is_cited_anywhere_exists():
             assert (ROOT / "docs" / "adr" / name).is_file(), f"{path} links to docs/adr/{name}"
 
 
+def test_every_document_the_code_and_the_config_point_to_exists():
+    document = re.compile(r"\bdocs/[A-Za-z0-9_./-]+\.(?:md|yaml)\b")
+    pointed = {}
+    for path in tracked():
+        if path.startswith(("src/", "config/", "tools/", ".githooks/")) or path == "Makefile":
+            for target in document.findall((ROOT / path).read_text(errors="replace")):
+                pointed.setdefault(target, path)
+    assert "docs/runbooks/ibkr-probe.md" in pointed and "docs/architecture.md" in pointed
+    assert {target: path for target, path in pointed.items() if not (ROOT / target).is_file()} == {}
+
+
 def test_the_roadmap_has_all_eight_phases_and_the_documents_the_readme_links_exist():
     roadmap = read("docs/roadmap.md")
     assert [n for n in range(8) if f"| F{n} " in roadmap] == list(range(8))

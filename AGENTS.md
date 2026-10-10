@@ -65,11 +65,13 @@ The repository is **public**. Assume every byte committed is read by strangers a
 ## Layout
 
 ```
-src/hftlab/    core · safety · venues (port, guard, ibkr/, fake/) · record · registry
-               (later: calendar · features · labels · models · strategy · risk · exec · book · learn · ops)
+src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
+               book · strategy · shadow · feasibility · registry
+               (later: features · labels · models · risk · exec · learn · ops)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
-config/        risk limits, venue capability file, trial registry
+config/        risk limits, venue capability file, trial registry, cost model, calendar, and the settings of
+               the recorder, the shadow runner and the feasibility map
 docs/          architecture, ADRs, roadmap, requirements, runbooks, never-build list
 contracts/     versioned data contracts this platform publishes (the status snapshot), each with an example
 tests/         pytest and hypothesis (CI-safe: fixtures and tmp_path only, no network)

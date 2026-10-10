@@ -1,4 +1,4 @@
-"""`python -m hftlab.record`: record quotes until told to stop (docs/runbooks/recorder.md).
+"""`python -m hftlab.record`: record quotes until told to stop. Its runbook is not written yet.
 
     python -m hftlab.record                        record from the paper gateway, as config/recorder.yaml says
     python -m hftlab.record --dry-run-seconds 60   record a minute of the built-in fake broker; no gateway

@@ -32,7 +32,7 @@ gives different quotes every time.
 ## Consequences
 
 - Any incident on a recorded day can be replayed on a laptop and stepped through.
-- Purity is a constraint on every module outside `venues/` and `record/`. Two tests hold the line today:
+- Purity is a constraint on every module outside `venues/ibkr/` and `record/`. Two tests hold the line today:
   only the wall clock may read system time, and only those two packages may import a network library.
 - Anything that cannot be made deterministic (network timing, the broker's own behaviour) is pushed to the
   edge and recorded, so that what happened becomes an input instead of a hidden variable.

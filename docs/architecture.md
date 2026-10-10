@@ -57,11 +57,10 @@ learn/     datasets, training, validation, promotion
 ops/       jobs, units, deploy gate, heartbeat, alerts, backup
 ```
 
-`venues/` and `record/` exist as empty packages so the first boundary below has something to hold on to.
-
 Two boundaries are enforced by tests from the first commit:
 
-- **Only `venues/` and `record/` may import a network library.** Everything else is computation on events.
+- **Only `venues/ibkr/` and `record/` may import a network library**, and only `venues/ibkr/` the broker's
+  client library. Everything else, the venue port and the fake broker included, is computation on events.
 - **Only `safety/lock.py` may name a live port or read the variables that select the trading mode.**
 
 ## Data flow

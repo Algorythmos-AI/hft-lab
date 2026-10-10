@@ -4,6 +4,13 @@ One loop, on one thread: poll the source, write what arrived, write a heartbeat 
 not change, flush a block at least every `flush_ns`, and say it is alive in a status file. It is handed a
 `QuoteSource`, which has no order methods, so it cannot trade; disconnects are the source's supervisor's job
 and reach it only as connection events, which it records.
+
+A quote gets its receive time when the loop next polls, so whatever the loop does between two polls (above
+all the flush, which syncs to disk on this same thread) delays the receive times of what arrived meanwhile.
+The loop measures that time and reports the longest and the recent one in the status file.
+
+It stops by itself for two reasons, each with its own exit code and status: the quota (this platform's own
+limit on the store) and a write the operating system refused (no space left, an I/O error).
 """
 from __future__ import annotations
 
@@ -17,13 +24,13 @@ from pathlib import Path
 
 from hftlab.core import Clock, Instrument, InstrumentKind, Quote
 from hftlab.record import format as fmt
-from hftlab.record.store import QuotaExceeded, Store
+from hftlab.record.store import QuotaExceeded, Store, StoreIOError
 from hftlab.venues.port import ConnectionEvent, ConnectionState, VenueError, VenueNotice, VenueUnavailable
 from hftlab.venues.view import QuoteSource
 
 MS = 1_000_000
 _UP = (ConnectionState.RECONCILING, ConnectionState.READY)
-EXIT_OK, EXIT_QUOTA = 0, 3
+EXIT_OK, EXIT_QUOTA, EXIT_IO = 0, 3, 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +60,11 @@ class Recorder:
         self._last_quote: dict[str, int] = {}
         self._beat_at = self._status_at = 0
         self._buffered_since: int | None = None
+        self._left_poll_at: int | None = None
+        self._between_longest = self._between_recent = 0
+        self._status_refused = False
         self.records = 0
+        self.polls = 0
 
     # ---- life ---------------------------------------------------------------------------------------------------
 
@@ -68,37 +79,65 @@ class Recorder:
         self._subscribe()
 
     def stop(self, reason: str = "requested") -> None:
+        """Write the STOP record and the journal's last line, close the store and let go of the source.
+
+        Nothing here raises for the quota or for the disk: a store that can take no more is closed as it is.
+        After a refused write the STOP record is not written at all, and the journal line still is, if it can be.
+        """
         now = self._clock.now_ns()
-        with contextlib.suppress(QuotaExceeded):
+        with contextlib.suppress(QuotaExceeded, StoreIOError):
             self._write(fmt.STOP, now, 0, None, self._store.run)
+        with contextlib.suppress(StoreIOError):
             self._store.note({"type": "stop", "reason": reason, "at_ns": now})
-        with contextlib.suppress(QuotaExceeded):
+        with contextlib.suppress(QuotaExceeded, StoreIOError):
             self._store.close()
         self._source.disconnect()
         self._status("stopped")
 
     def run(self, should_stop: Callable[[], bool]) -> int:
-        """Record until asked to stop. Returns the exit code: 0, or 3 when the quota stopped the recording."""
-        self.start()
-        code, reason = EXIT_OK, "requested"
+        """Record until asked to stop. Returns the exit code.
+
+        0 it was asked to stop; 3 the quota stopped the recording; 4 the operating system refused a write. The
+        last two leave their own status ("quota", "io-error") and their own line in the journal, when the disk
+        still takes one. Anything else that goes wrong is not caught here: it is not a full store.
+        """
+        code, reason, started = EXIT_OK, "requested", False
         try:
+            self.start()
+            started = True
             while not should_stop():
                 self.step()
         except QuotaExceeded as exc:
             code, reason = EXIT_QUOTA, "quota"
             print(f"RECORDER STOPPED: QUOTA REACHED. {exc}", file=sys.stderr, flush=True)
-            self._store.note({"type": "quota", "at_ns": self._clock.now_ns(), "used_bytes": self._store.used_bytes})
-            self._status("quota")
+            self._note({"type": "quota", "at_ns": self._clock.now_ns(), "used_bytes": self._store.used_bytes})
+        except StoreIOError as exc:
+            code, reason = EXIT_IO, "io-error"
+            print(f"RECORDER STOPPED: I/O ERROR. The system refused a write: {exc}", file=sys.stderr, flush=True)
+            self._note({"type": "io-error", "at_ns": self._clock.now_ns(), "error": exc.code})
         finally:
-            self.stop(reason)
-            if code == EXIT_QUOTA:
-                self._status("quota")
+            if started or code != EXIT_OK:
+                self.stop(reason)
+            if code != EXIT_OK:
+                self._status(reason)
         return code
+
+    def _note(self, entry: dict[str, object]) -> None:
+        """Journal why the recording stopped, if the disk still takes a line."""
+        with contextlib.suppress(StoreIOError):
+            self._store.note(entry)
 
     # ---- one turn of the loop -----------------------------------------------------------------------------------
 
     def step(self) -> None:
-        for event in self._source.poll(self._settings.poll_ns):
+        if self._left_poll_at is not None:
+            between = self._clock.now_ns() - self._left_poll_at
+            self._between_longest = max(self._between_longest, between)
+            self._between_recent = max(self._between_recent, between)
+        events = self._source.poll(self._settings.poll_ns)
+        self._left_poll_at = self._clock.now_ns()
+        self.polls += 1
+        for event in events:
             if isinstance(event, Quote):
                 self._last_quote[event.pair] = event.recv_ts_ns
                 book = (event.bid, event.ask, event.bid_size, event.ask_size)
@@ -158,7 +197,14 @@ class Recorder:
         self._buffered_since = None
 
     def _status(self, status: str) -> None:
-        """Replace the status file in one step, so a reader never sees half of it."""
+        """Replace the status file in one step, so a reader never sees half of it.
+
+        `loop` is the time between leaving one poll and entering the next: `longest_between_polls_ns` since
+        this run started, `recent_between_polls_ns` since the status was last written.
+
+        The status file is not the recording. When it cannot be written, that is said once and the recorder
+        carries on: a status that has stopped moving is what the dead-man check is for.
+        """
         self._status_at = self._clock.now_ns()
         if self._status_path is None:
             return
@@ -171,11 +217,28 @@ class Recorder:
             "run": self._store.run,
             "next_index": self._store.next_index,
             "records_this_run": self.records,
+            "last_record_ns": self._store.last_ts_ns,
             "used_bytes": self._store.used_bytes,
             "quota_bytes": self._store.settings.quota_bytes,
             "silent": self._store.silent(self._status_at),
+            "loop": {
+                "polls": self.polls,
+                "longest_between_polls_ns": self._between_longest,
+                "recent_between_polls_ns": self._between_recent,
+            },
         }
-        self._status_path.parent.mkdir(parents=True, exist_ok=True)
         partial = self._status_path.with_name(self._status_path.name + ".partial")
-        partial.write_text(json.dumps(body, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(partial, self._status_path)
+        try:
+            self._status_path.parent.mkdir(parents=True, exist_ok=True)
+            partial.write_text(json.dumps(body, sort_keys=True) + "\n", encoding="utf-8")
+            os.replace(partial, self._status_path)
+        except OSError as exc:
+            if not self._status_refused:
+                why = type(exc).__name__
+                print(f"record: the status file could not be written ({why})", file=sys.stderr, flush=True)
+            self._status_refused = True
+            with contextlib.suppress(OSError):
+                partial.unlink()
+            return
+        self._status_refused = False
+        self._between_recent = 0

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import errno
 import json
 import os
 import signal
@@ -11,16 +12,19 @@ import time
 
 import pytest
 
+from hftlab.calendar import Calendar
 from hftlab.core import InstrumentKind, SimClock
 from hftlab.record import __main__ as cli
 from hftlab.record import format as fmt
-from hftlab.record.recorder import EXIT_OK, EXIT_QUOTA, Recorder, RecorderSettings
+from hftlab.record.recorder import EXIT_IO, EXIT_OK, EXIT_QUOTA, Recorder, RecorderSettings
+from hftlab.record.segment import SegmentWriter
 from hftlab.record.store import StoreSettings, days, read_day, read_journal
+from hftlab.replay import check
 from hftlab.venues.fake import FakeConfig, build
 from hftlab.venues.port import ConnectionState
 from hftlab.venues.supervisor import Backoff
 from hftlab.venues.view import MarketDataView
-from tests.record.kit import HOUR, MS, PAIRS, ROOMY, SECOND, T0, a_store, everything
+from tests.record.kit import HOUR, MS, PAIRS, ROOMY, SECOND, T0, a_disk, a_store, everything
 from tests.support import ROOT, called_name, sources
 from tests.venues.kit import INSTRUMENTS
 
@@ -31,13 +35,16 @@ WALK = {"interval_ns": 10 * MS, "mid": 108_505, "spread": 10, "step": 5}
 class Rig:
     """A recorder over a view of the fake broker, with a simulated clock the test moves."""
 
-    def __init__(self, tmp_path, config: FakeConfig | None = None, store_settings: StoreSettings = ROOMY) -> None:
+    def __init__(
+        self, tmp_path, config: FakeConfig | None = None, store_settings: StoreSettings = ROOMY, **store_options
+    ) -> None:
         self.clock = SimClock(T0)
         self.broker = build(self.clock, INSTRUMENTS, config or FakeConfig(), seed=5, backoff=Backoff())
         self.market = self.broker.market
         self.root = tmp_path / "rec"
         self.seen: list = []
-        self.store = a_store(self.root, store_settings, opened=False)  # the recorder opens it when it starts
+        # the recorder opens the store when it starts
+        self.store = a_store(self.root, store_settings, opened=False, **store_options)
         self.recorder = Recorder(
             MarketDataView(self.broker), self.store, self.clock, SETTINGS,
             status_path=self.root / "status.json", on_event=self.seen.append,
@@ -183,6 +190,175 @@ def test_run_returns_zero_when_asked_to_stop(tmp_path):
     rig = Rig(tmp_path)
     turns = iter([False, False, True])
     assert rig.recorder.run(lambda: next(turns)) == EXIT_OK and rig.kinds()[-1] == fmt.STOP
+
+
+def until_the_disk_fills(rig: Rig, disk, at_ns: int = T0 + 2 * SECOND, also=lambda: None):
+    """A `should_stop` that moves the clock, and fills the disk once the clock passes `at_ns`."""
+
+    def advance() -> bool:
+        rig.clock.advance(20 * MS)
+        if rig.clock.now_ns() > at_ns and not disk.full:
+            disk.full = True
+            also()
+        return rig.clock.now_ns() > T0 + 60 * SECOND
+
+    return advance
+
+
+def test_a_write_the_system_refuses_stops_it_with_its_own_code_status_and_journal_line(tmp_path, capsys):
+    """A full disk is not the quota. It must not look like one, and it must not escape as a crash."""
+    disk = a_disk()
+    rig = Rig(tmp_path, writer=disk)
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + MS, count=3_000, **WALK)
+
+    assert rig.recorder.run(until_the_disk_fills(rig, disk)) == EXIT_IO
+    said = capsys.readouterr().err
+    assert "RECORDER STOPPED: I/O ERROR" in said and "ENOSPC" in said and "QUOTA" not in said
+    assert rig.clock.now_ns() < T0 + 3 * SECOND, "it stopped when the write was refused, not at the end"
+    assert json.loads((rig.root / "status.json").read_text())["status"] == "io-error"
+    journal = read_journal(rig.root / "2026-10-14")
+    assert [line["error"] for line in journal if line["type"] == "io-error"] == ["ENOSPC"]
+    assert journal[-1]["type"] == "stop" and journal[-1]["reason"] == "io-error"
+    assert not [line for line in journal if line["type"] == "quota"]
+    found = everything(rig.root)
+    assert len(found) > 100 and [r.index for r in found] == list(range(len(found)))
+    assert fmt.STOP not in rig.kinds(), "nothing is appended after a block the disk may have cut short"
+    assert rig.broker.state is ConnectionState.DISCONNECTED, "the source is let go of"
+
+
+def test_after_a_refused_write_the_next_run_continues_without_a_hole_and_the_day_still_checks_out(tmp_path, capsys):
+    disk = a_disk()
+    rig = Rig(tmp_path, writer=disk)
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + MS, count=3_000, **WALK)
+    assert rig.recorder.run(until_the_disk_fills(rig, disk)) == EXIT_IO
+    on_disk = len(everything(rig.root))
+
+    second = Rig(tmp_path)  # the unit's back-off has passed and there is room again
+    second.clock.advance(70 * SECOND)
+    second.recorder.start()
+    second.market.script_quote(T0 + 70 * SECOND + 30 * MS, "EUR.USD", 108_600, 108_610)
+    second.run(SECOND)
+    second.recorder.stop()
+    found = everything(rig.root)
+    assert len(found) > on_disk and [r.index for r in found] == list(range(len(found)))
+    assert [r.a for r in found if r.kind == fmt.START] == [1, 2] and found[-1].kind == fmt.STOP
+    gaps = [g for g in read_journal(rig.root / "2026-10-14") if g["type"] == "gap" and g["pair"] == "EUR.USD"]
+    assert [g["reason"] for g in gaps] == ["process_down"]
+    report = check(rig.root / "2026-10-14", Calendar(), 5 * SECOND)
+    assert report.ok and report.unexplained == 0, report.problems
+    assert json.loads((rig.root / "status.json").read_text())["status"] == "stopped"
+
+
+def test_when_not_even_the_journal_or_the_status_can_be_written_it_still_stops_with_the_code(
+    tmp_path, capsys, monkeypatch
+):
+    disk = a_disk(half=False)
+    rig = Rig(tmp_path, writer=disk)
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + MS, count=3_000, **WALK)
+
+    def refuse(*_arguments: object) -> None:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    def everything_else_fills_too() -> None:
+        monkeypatch.setattr("hftlab.record.store.append_line", refuse)
+        monkeypatch.setattr(os, "replace", refuse)
+
+    code = rig.recorder.run(until_the_disk_fills(rig, disk, T0 + 7 * SECOND, also=everything_else_fills_too))
+    monkeypatch.undo()
+    said = capsys.readouterr().err
+    assert code == EXIT_IO and "RECORDER STOPPED: I/O ERROR" in said
+    assert said.count("the status file could not be written") == 1, "said once, not at every try"
+    assert json.loads((rig.root / "status.json").read_text())["status"] == "recording", "the last one that got out"
+    assert not [line for line in read_journal(rig.root / "2026-10-14") if line["type"] in ("io-error", "stop")]
+    assert not list(rig.root.glob("*.partial")), "the half of a status file is not left lying about"
+    found = everything(rig.root)
+    assert found and [r.index for r in found] == list(range(len(found)))
+
+
+def test_a_disk_that_is_full_before_the_first_record_gives_the_same_code(tmp_path, capsys):
+    disk = a_disk(half=False)
+    disk.full = True
+    rig = Rig(tmp_path, writer=disk)
+    assert rig.recorder.run(lambda: True) == EXIT_IO
+    assert "RECORDER STOPPED: I/O ERROR" in capsys.readouterr().err
+    assert json.loads((rig.root / "status.json").read_text())["status"] == "io-error" and everything(rig.root) == []
+    disk.full = False
+    second = Rig(tmp_path)
+    assert second.recorder.run(lambda: True) == EXIT_OK and second.kinds() == [fmt.START, fmt.STOP]
+
+
+def test_a_status_file_that_cannot_be_written_does_not_stop_the_recording(tmp_path, capsys):
+    rig = Rig(tmp_path)
+    (tmp_path / "in-the-way").write_text("a file where the status directory should be")
+    rig.recorder._status_path = tmp_path / "in-the-way" / "status.json"
+    rig.recorder.start()
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + MS, count=1_500, **WALK)
+    rig.run(12 * SECOND)
+    rig.recorder.stop()
+    assert capsys.readouterr().err.count("the status file could not be written") == 1
+    assert len([r for r in everything(rig.root) if r.kind == fmt.QUOTE]) > 1_000
+
+
+class BrokenSource:
+    """A quote source whose socket fails: an error of the operating system that has nothing to do with the disk."""
+
+    name = "broken"
+    state = ConnectionState.DISCONNECTED
+
+    def __init__(self) -> None:
+        self.disconnected = False
+
+    def connect(self) -> None: ...
+
+    def disconnect(self) -> None:
+        self.disconnected = True
+
+    def poll(self, timeout_ns: int = 0) -> list:
+        raise ConnectionResetError(errno.ECONNRESET, os.strerror(errno.ECONNRESET))
+
+
+def test_an_error_of_the_quote_source_is_not_mistaken_for_the_disk(tmp_path, capsys):
+    source, store = BrokenSource(), a_store(tmp_path / "rec", opened=False)
+    recorder = Recorder(source, store, SimClock(T0), SETTINGS, status_path=tmp_path / "rec" / "status.json")
+    with pytest.raises(ConnectionResetError):
+        recorder.run(lambda: False)
+    assert "I/O ERROR" not in capsys.readouterr().err
+    assert [r.kind for r in everything(tmp_path / "rec")] == [fmt.START, fmt.STOP] and source.disconnected
+    assert json.loads((tmp_path / "rec" / "status.json").read_text())["status"] == "stopped"
+
+
+# ---- how long the loop is away from the source ----------------------------------------------------------------------
+
+
+def test_the_status_reports_the_longest_and_the_recent_time_between_two_polls(tmp_path):
+    """The flush syncs to disk on the loop's own thread. What that costs in receive time is measured, not assumed."""
+    stall = {"ns": 0}
+
+    class SlowDisk(SegmentWriter):
+        def _sync(self) -> None:  # every flush ends in a sync; here it takes as long as the test says
+            if stall["ns"]:
+                rig.clock.advance(stall["ns"])
+
+    def loop() -> dict:
+        return json.loads((rig.root / "status.json").read_text())["loop"]
+
+    rig = started(tmp_path, writer=SlowDisk)
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + MS, count=3_000, **WALK)
+    rig.run(6 * SECOND)  # the rig moves the clock 20 ms between two turns of the loop, and nothing else takes time
+    first = loop()
+    assert first["longest_between_polls_ns"] == first["recent_between_polls_ns"] == 20 * MS
+    assert first["polls"] > 200
+
+    stall["ns"] = 35 * MS  # a second of slow syncs ...
+    rig.run(SECOND)
+    stall["ns"] = 0
+    rig.run(4 * SECOND)  # ... seen in the status that covers it
+    assert loop()["longest_between_polls_ns"] == loop()["recent_between_polls_ns"] == 55 * MS
+
+    rig.run(5 * SECOND)  # the next status covers a quiet stretch: the longest stays, the recent one comes down
+    assert loop()["longest_between_polls_ns"] == 55 * MS and loop()["recent_between_polls_ns"] == 20 * MS
+    assert loop()["polls"] > first["polls"]
+    rig.recorder.stop()
 
 
 # ---- it cannot trade ------------------------------------------------------------------------------------------------

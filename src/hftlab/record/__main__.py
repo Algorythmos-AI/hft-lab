@@ -5,7 +5,8 @@
     python -m hftlab.record --housekeep            compress closed hours and hand old ones to the offload, once
 
 SIGTERM and SIGINT stop it cleanly: the last block is flushed and a STOP record is written. Exit codes: 0
-stopped on request, 2 refused or misconfigured, 3 stopped because the quota was reached.
+stopped on request, 2 refused or misconfigured, 3 stopped because the quota was reached, 4 stopped because the
+operating system refused a write (no space left on the disk, an I/O error).
 """
 from __future__ import annotations
 

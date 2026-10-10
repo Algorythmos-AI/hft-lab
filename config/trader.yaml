@@ -1,0 +1,47 @@
+# The trader's settings. Read by `python -m hftlab.trader` (ADR 0019, docs/runbooks/trader.md).
+#
+# AS SHIPPED THIS FILE TRADES NOTHING ON PAPER. Every sleeve starts in `shadow`, every promotion rule below is
+# null, and a null rule is never met. On top of that the risk limits (config/risk.yaml) are not in force, and
+# while they are not the trader runs in shadow-only mode: it holds no object that could send an order.
+#
+# A sleeve moves up only by its rule: the number of clean trading days in a row, AND the decision record
+# (HFT-DEC-NNNN, `approved_by: owner`) that approved the step, AND the limits in force. Neither number below
+# is chosen here. Each is set by the decision record that names it.
+status: placeholder             # placeholder | decided
+state_dir: var/trader           # git-ignored: the outbox, the journals, the tapes and the status file
+venue: ibkr_paper               # the registered paper venue; nothing else is accepted
+seed: 1                         # seeds the shadow venue's latency draws
+
+pairs:
+  - {pair: EUR.USD, form: cash}
+
+poll_ms: 50                     # ENGINEERING DEFAULT. How long one poll of the venue may wait
+beat_ms: 1000                   # ENGINEERING DEFAULT. How often the switches are read and a quiet book confirmed
+reconcile_seconds: 60           # the plan's number: the venue's positions and fills against the broker book
+close_retry_seconds: 5          # ENGINEERING DEFAULT. The least time between two closes the trader proposes for a line
+fsync: true                     # the outbox and the state journals reach the disk before an order is sent
+
+# The sleeves, written as in config/shadow.yaml. The control sleeve's three numbers are PLACEHOLDERS: a control
+# run that is compared with anything takes them from its registered experiment (research/experiments/).
+sleeves:
+  - {name: idle, kind: idle}
+  - name: control
+    kind: control
+    seed: 1
+    entry_per_million: 200      # PLACEHOLDER
+    hold_seconds: 60            # PLACEHOLDER
+    retry_seconds: 10           # PLACEHOLDER
+
+clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
+
+rollout:
+  idle:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  control:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met

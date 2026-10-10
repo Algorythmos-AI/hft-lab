@@ -83,6 +83,13 @@ def rollover_near(ts_ns: int) -> int:
     return min(candidates, key=lambda at: abs(at - ts_ns))
 
 
+def last_rollover(ts_ns: int) -> int:
+    """The latest daily rollover instant (17:00 New York) at or before `ts_ns`: when the trading day in hand began."""
+    day = new_york(ts_ns).date()
+    candidates = [instant(day + timedelta(days=offset), ROLLOVER_TIME) for offset in (-1, 0)]
+    return max(at for at in candidates if at <= ts_ns)
+
+
 def in_rollover_window(ts_ns: int, before_ns: int, after_ns: int) -> bool:
     """Is `ts_ns` within `before_ns` before or `after_ns` after a daily rollover? Both ends are included."""
     if require_int("before_ns", before_ns) < 0 or require_int("after_ns", after_ns) < 0:

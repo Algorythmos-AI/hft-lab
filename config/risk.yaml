@@ -1,43 +1,59 @@
-# Risk limits for the independent risk gate.
+# Risk limits for the independent risk gate (hftlab.risk, ADR 0015). Read by hftlab.risk.load_risk_config.
 #
-# NOT YET IN FORCE. Nothing reads this file in F0: the risk gate is built in F3/F4, and no order can be placed
-# before then. Every value below is a placeholder that marks the shape of the file, not a chosen limit. Each
-# real value is set by a decision record (HFT-DEC-NNNN) before the phase that enforces it, and names it here.
+# NOT YET IN FORCE. Every limit below is null: a PLACEHOLDER that marks the shape of the file, not a chosen
+# value. While `in_force` is false the loader checks the file's shape and then refuses it, so no risk gate, and
+# therefore no order manager, can be built from this file as it stands.
 #
-# Units: sizes are whole units of the base currency; money is in the account currency; prices and distances
-# are in integer price units at the pair's scale (ADR 0002). No floats.
-status: placeholder
+# To put limits in force: set every PLACEHOLDER by a decision record (HFT-DEC-NNNN) written in research/,
+# name that record in `decision`, set `status: decided` and `in_force: true`. The loader refuses a file in
+# force that still has a null limit, a key it does not define, or no decision record.
+#
+# Units. Sizes are whole units of the base currency. Prices and distances are in price increments of the pair
+# (ADR 0002). Money is quoted decimal text in the currency it is written under, such as "50.00"; it is never
+# a float, and amounts in different currencies are never added. Times are whole seconds, minutes or
+# milliseconds as each key says.
+status: placeholder                 # placeholder | decided
 in_force: false
+decision: null                      # the HFT-DEC-NNNN that set the values below
 
 desk:
-  max_gross_exposure: null          # sum over pairs of |position| valued in the account currency
-  max_leverage: null                # well under the regulatory cap; an integer ratio, e.g. 2 means 2:1
-  daily_loss_latch: null            # entries stop for the day at this loss; survives a restart
-  drawdown_latch: null              # entries stop until the owner resets it
-  max_orders_per_minute: null
-  max_order_to_trade_ratio: null
-  reject_streak_breaker: null       # consecutive rejects before entries stop
+  max_gross_exposure: null          # PLACEHOLDER, NOT ENFORCED: needs positions valued in one currency, and nothing converts one. Must stay null
+  max_leverage: null                # PLACEHOLDER, NOT ENFORCED: for the same reason. Must stay null
+  max_open_pairs: null              # PLACEHOLDER: pairs with a position or an order in flight at once
+  max_orders_per_minute: null       # PLACEHOLDER: all sleeves together, entries and exits alike
+  max_order_to_trade_ratio: null    # PLACEHOLDER: orders and cancels sent per order that traded, per sleeve and for the desk
+  order_to_trade_window_seconds: null   # PLACEHOLDER: the rolling window that ratio is taken over
+  reject_streak_breaker: null       # PLACEHOLDER: consecutive venue rejects before entries stop until reset
+  loss_latches:                     # one block per quote currency traded; entries stop until an operator resets
+    USD:
+      daily_loss: null              # PLACEHOLDER: loss since the 17:00 New York rollover, marked at the quote
+      drawdown: null                # PLACEHOLDER: fall from the highest result reached
 
-per_pair:                           # one block per traded pair, from config/venues/ibkr.yaml
+per_pair:                           # one block per traded pair, from config/venues/ibkr.yaml once it is measured
   EUR.USD:
-    max_position: null              # base-currency units, long or short
-    max_order_size: null
-    price_collar_ticks: null        # an order further than this from mid is refused
-    max_spread_ticks: null          # spread guard: no entries when the quoted spread is wider
-    stale_quote_ms: null            # stale-quote stop: no orders on a quote older than this
+    max_position: null              # PLACEHOLDER: long or short, for the desk and for each sleeve, orders in flight counted in full
+    max_order_size: null            # PLACEHOLDER
+    price_collar_ticks: null        # PLACEHOLDER: a limit price, or the touch a market order would take, further than this from the mid is refused
+    max_spread_ticks: null          # PLACEHOLDER: no entries while the quoted spread is wider
+    stale_quote_ms: null            # PLACEHOLDER: no order on a quote the venue has not confirmed for this long
 
 per_sleeve:                         # each sleeve has its own book and its own latches
   control:
-    daily_loss_latch: null
-    drawdown_latch: null
-    max_position: null
+    max_position: null              # PLACEHOLDER: the sleeve's own cap in any one pair; the pair's cap holds as well
+    max_orders_per_minute: null     # PLACEHOLDER
+    loss_latches:
+      USD:
+        daily_loss: null            # PLACEHOLDER
+        drawdown: null              # PLACEHOLDER
 
-market_guards:
-  rollover_no_trade_minutes_before: null   # flat and no entries around 17:00 New York
-  rollover_no_trade_minutes_after: null
-  friday_flat_minutes_before_close: null
-  macro_event_blackout_minutes: null
+market_guards:                      # macro-event blackouts take their width from config/calendar/macro_events.yaml
+  rollover_no_entry_minutes_before: null    # PLACEHOLDER: exits only from this long before 17:00 New York
+  rollover_no_entry_minutes_after: null     # PLACEHOLDER: until this long after it
+  weekly_close_no_entry_minutes: null       # PLACEHOLDER: exits only in the last minutes before the Friday close
 
-switches:                           # files in the platform's state directory; checked before every order
+reconciliation:
+  grace_seconds: null               # PLACEHOLDER: how long a position difference may stand before it is a break
+
+switches:                           # files in the platform's state directory; read before every verdict
   kill: KILL                        # no new entries, exits still managed
-  flatten: FLATTEN                  # close every position
+  flatten: FLATTEN                  # no new entries, and every open position is closed

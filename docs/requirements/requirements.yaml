@@ -149,8 +149,9 @@ requirements:
       Every order must pass a risk gate that is independent of the strategy that produced it and that
       rebuilds positions from fills rather than trusting the strategy's own view.
     basis: engineering_judgement
-    status: seed
-    verified_by: []
+    status: verified
+    verified_by: [tests/risk/test_gate.py, tests/risk/test_structure.py, tests/exec/test_manager.py,
+                  tests/venues/test_guard.py]
     rationale_cites: []
     kb_claims: []
 
@@ -172,8 +173,8 @@ requirements:
       A daily loss latch and a drawdown latch must stop new entries per sleeve and for the desk, and a
       reject-streak breaker must stop entries after repeated rejects; a latch must survive a restart.
     basis: engineering_judgement
-    status: seed
-    verified_by: []
+    status: verified
+    verified_by: [tests/risk/test_gate.py]
     rationale_cites: []
     kb_claims: []
 
@@ -185,6 +186,20 @@ requirements:
     basis: engineering_judgement
     status: seed
     verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-RISK-005
+    title: The hard limits that need no currency conversion
+    statement: >-
+      The risk gate must refuse an order that could take a sleeve or the desk past the position limit of its
+      pair with every order in flight counted in full, an order over the size limit, a price outside the
+      collar around the mid, and an order beyond the orders-per-minute or order-to-trade limits, and it must
+      open no pair beyond the number allowed at once. This is the part of REQ-RISK-002 that can be enforced
+      without valuing positions in one currency; gross exposure and leverage stay with REQ-RISK-002.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/risk/test_gate.py, tests/risk/test_properties.py, tests/faults/test_invariants.py]
     rationale_cites: []
     kb_claims: []
 
@@ -206,8 +221,22 @@ requirements:
       The platform must send no order while the market-data or order connection is down, and on reconnect
       must cancel working orders and reconcile before it resumes.
     basis: engineering_judgement
-    status: seed
-    verified_by: []
+    status: verified
+    verified_by: [tests/exec/test_manager.py, tests/faults/test_faults.py, tests/risk/test_gate.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-CONN-002
+    title: An order is journalled before it is sent and is never sent twice
+    statement: >-
+      The order manager must write an order durably to its outbox before handing it to the venue, and after
+      a crash at any point must settle every order in flight by asking the venue under the order's client
+      order id. It must not send again an order whose fate it cannot establish, and must book each fill
+      exactly once however often and in whatever order it is reported.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/exec/test_manager.py, tests/exec/test_states.py, tests/faults/test_crash.py,
+                  tests/faults/test_invariants.py]
     rationale_cites: []
     kb_claims: []
 
@@ -230,6 +259,19 @@ requirements:
     basis: engineering_judgement
     status: seed
     verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-BOOK-003
+    title: The broker book is reconciled against the venue
+    statement: >-
+      A fill the venue reports and the broker book has not seen must be booked exactly once, and a position
+      difference that outlives its grace time must set a break flag that stops new entries and clears only
+      when the positions agree again and that agreement has been recorded. Paging on a break stays with
+      REQ-BOOK-002.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/book/test_reconcile.py, tests/faults/test_faults.py]
     rationale_cites: []
     kb_claims: []
 

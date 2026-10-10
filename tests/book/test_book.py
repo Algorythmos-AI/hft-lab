@@ -194,3 +194,15 @@ def test_a_commission_on_the_fill_itself_is_counted_and_a_later_report_replaces_
     book.take(CommissionEvent("x1", 8, "USD", 0, 0))
     book.take("not an event")
     assert book.fees() == {"USD": 8} and book.fees("control", "EUR.USD") == {"USD": 8} and book.fees("ml") == {}
+
+
+def test_a_repeat_of_a_fill_that_is_the_first_to_say_what_it_cost_adds_the_cost_and_no_position():
+    bare = a_fill(1, Side.BUY, 100, 10)  # as it is reported live: the commission follows by itself
+    listed = dataclasses.replace(bare, commission=5, commission_currency="USD")  # as the venue lists it afterwards
+    book = booked([bare])
+    assert book.fees() == {} and book.apply(listed) is False
+    assert book.fees() == {"USD": 5} and book.position("control", "EUR.USD").quantity == 100
+    assert book.apply(dataclasses.replace(listed, commission=9)) is False and book.fees() == {"USD": 5}, "once"
+    assert book.has("x1") and not book.has("x2") and book.open_lines() == {("control", "EUR.USD"): 100}
+    assert book.gross("control", "EUR.USD", 12, 13) == 200, "a long of 100 bought at 10, valued at the bid"
+    assert [instrument.pair for instrument in book.instruments] == ["EUR.USD", "USD.JPY"]

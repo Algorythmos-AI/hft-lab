@@ -56,13 +56,15 @@ venues/       port, guard, supervisor, a market-data view with no order methods;
 calendar/     forex week, rollover window, holidays, macro-event blackout                               F2
 record/       recorder, recording format, store with quota and offload, gap journal                     F2
 replay/       a recorded day read back as the stream the live process saw; the day check                F2
-book/         the shadow book: positions, cash and profit from fills (broker book, reconciliation: F4)  F3
+book/         positions, cash and profit from fills: the shadow book; the broker book and the           F3
+              reconciler that compares it with the venue's positions and executions                     F4
 strategy/     the sleeve interface, the idle and the control sleeve (directional-change, ml, dl: F5)    F3
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
 features/  labels/  models/ (registry, hashed model files, scorer in its own process)
-risk/         the independent gate: limits, market guards, latches, switches
-exec/         idempotent order ids, order state machine, outbox
+risk/         the independent gate: limits, market guards, latches, switches                            F4
+exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
+journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets, training, validation, promotion
 ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
 publish/      the status snapshot: built from the status reading, checked, signed and sent                 F2
@@ -140,12 +142,12 @@ and a control sleeve that enters at random must lose about the modelled cost (F3
 | Guard | What it does |
 |---|---|
 | Paper-only lock | Checked at start-up and before every order ([ADR 0001](adr/0001-paper-only-lock.md)) |
-| Limits | Position per pair, gross exposure, leverage, order size, price collar against mid, orders per minute, order-to-trade ratio |
+| Limits | Position per pair, order size, price collar against mid, orders per minute, order-to-trade ratio, pairs open at once. Gross exposure and leverage are not enforced yet: they need a currency conversion ([ADR 0015](adr/0015-risk-gate.md)) |
 | Market guards | Stale-quote stop, spread guard, flat and no-trade around rollover, macro-event blackout, flat before the Friday close |
-| Loss control | Daily loss latch and drawdown latch per sleeve and for the desk; reject-streak breaker |
+| Loss control | Daily loss latch and drawdown latch per sleeve and for the desk, per currency; reject-streak breaker. A latch stays tripped until an operator resets it |
 | Switches | `KILL` (no new entries, exits managed) and `FLATTEN` |
-| Connection loss | No orders while blind; on reconnect, cancel working orders and reconcile before resuming |
-| Reconciliation break | Entries stop and an alert pages |
+| Connection loss | No orders while blind; on reconnect, cancel working orders and reconcile before resuming ([ADR 0016](adr/0016-order-manager-and-outbox.md)) |
+| Reconciliation break | Entries stop and an alert pages. The alert is not built yet; the break is a flag, an event and a journal line |
 
 Each has a requirement in [`requirements/requirements.yaml`](requirements/requirements.yaml). What is never
 built is listed in [`never-build.md`](never-build.md).

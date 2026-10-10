@@ -24,7 +24,7 @@ from hftlab.venues.port import (
     VenueUnavailable,
 )
 from hftlab.venues.supervisor import Backoff
-from tests.support import called_name, sources
+from tests.support import called_name, imports, sources
 from tests.venues.kit import (
     EURUSD,
     EURUSD_CFD,
@@ -384,6 +384,52 @@ def test_only_the_guard_calls_send_and_only_the_gate_mints_permits():
             assert calls(tree, {"submit", "request_cancel"}) == [], f"{rel} reaches the fake market's order entry"
     guard = dict(sources())["src/hftlab/venues/guard.py"]
     assert calls(guard, {"_send", "_cancel"}) == ["_send", "_cancel"]
+
+
+def called_on(tree: ast.AST, names: set[str]) -> list[str]:
+    """What each call to one of `names` is made on, as written: `self._venue.place`."""
+    found = [ast.unparse(n.func) for n in ast.walk(tree) if isinstance(n, ast.Call) and called_name(n) in names]
+    return sorted(found)
+
+
+def test_only_the_order_manager_places_or_cancels_on_a_venue_the_platform_trades_on():
+    """A scan of the package for every call named `place`, `cancel` or `mark_reconciled`.
+
+    The order manager makes one of each, on the venue it was built with. The two other callers were there
+    before it and neither can reach the trader's venue: the shadow runner builds its own shadow venue and can
+    be handed no other (tests/shadow/test_structure.py), and the capability probe is a command the owner runs,
+    which places nothing unless asked and cancels what it placed (tests/venues/test_probe.py). Anything else
+    that calls one of the three fails here, whatever it calls it on.
+    """
+    order_calls = {rel: called_on(tree, {"place", "cancel"}) for rel, tree in sources()}
+    assert {rel: found for rel, found in order_calls.items() if found} == {
+        "src/hftlab/exec/manager.py": ["self._venue.cancel", "self._venue.place"],
+        "src/hftlab/shadow/runner.py": ["self._venue.cancel", "self._venue.place"],
+        "src/hftlab/venues/ibkr/probe.py": ["self.venue.cancel", "self.venue.cancel", "self.venue.place"],
+    }
+    marks = {rel: called_on(tree, {"mark_reconciled"}) for rel, tree in sources()}
+    assert {rel: found for rel, found in marks.items() if found} == {
+        "src/hftlab/exec/manager.py": ["self._venue.mark_reconciled"],
+        "src/hftlab/shadow/runner.py": ["self._venue.mark_reconciled"],
+        "src/hftlab/venues/ibkr/probe.py": ["venue.mark_reconciled"],
+    }
+
+
+def test_the_order_manager_reaches_its_venue_by_one_name_and_nothing_by_a_computed_one():
+    package = [(rel, tree) for rel, tree in sources() if rel.startswith("src/hftlab/exec/")]
+    assert [rel.rsplit("/", 1)[-1] for rel, _ in package] == ["__init__.py", "manager.py", "outbox.py", "states.py"]
+    bound = []
+    for rel, tree in package:
+        assert calls(tree, {"getattr", "setattr", "__import__", "import_module"}) == [], rel
+        for node in ast.walk(tree):
+            targets = node.targets if isinstance(node, ast.Assign) else []
+            names = [n.attr for target in targets for n in ast.walk(target) if isinstance(n, ast.Attribute)]
+            if "_venue" in names:
+                bound.append((rel, ast.unparse(node.value)))
+        reached = sorted({name for _, name in imports(tree, rel) if name.startswith("hftlab.venues")})
+        assert all(name.startswith("hftlab.venues.port.") for name in reached), f"{rel} imports {reached}"
+    assert len(bound) == 1 and bound[0][0].endswith("manager.py"), "the venue is the one the manager was built with"
+    assert "venue" in bound[0][1].split(",")[0]
 
 
 # ---- the same guarantee, for any sequence of events ----------------------------------------------------------------

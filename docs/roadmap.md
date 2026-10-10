@@ -25,11 +25,13 @@ then the parts of the snapshot that later phases make real. More pairs and a sec
 
 ## Where things stand
 
-**The gates of F1, F2 and F3 are all open.** The code of those three phases is written and passes its tests
-against a deterministic fake broker and against synthetic streams and recordings the tests make themselves.
-That is all it has been run against:
+**The gates of F1, F2, F3 and F4 are all open.** The code of the first three phases, and of the first half of
+F4, is written and passes its tests against a deterministic fake broker and against synthetic streams and
+recordings the tests make themselves. That is all it has been run against:
 
 - Nothing has connected to a gateway. The capability probe has not been run with the paper login.
+- Nothing has placed an order on the paper account, and nothing can yet: the process that would is not built,
+  and the risk limits are not in force.
 - Nothing has been recorded from the real feed. There is no recorded trading day.
 - No experiment has been run on real data. The research registry holds one hypothesis and one experiment,
   both registered and neither run.
@@ -40,6 +42,24 @@ That is all it has been run against:
 | F1 | Open | The owner runs the capability probe against the real paper account ([runbook](runbooks/ibkr-probe.md)); the probe report and the two decision records follow |
 | F2 | Open | Five recorded trading days with every gap accounted for. Code cannot close it: the days have to pass |
 | F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
+| F4 | Open | The trader process, risk limits set by a decision record, then five trading days on the real paper account with zero reconciliation breaks and the slippage report. Code cannot close it: the days have to pass |
+
+## Where F4 stands
+
+The first half of F4 is written: everything between a sleeve's intent and the broker, except the process
+that wires it together. It has run against the fake broker and the shadow venue, and against nothing else.
+
+| Part of the deliverable | State |
+|---|---|
+| Risk gate | Written: `src/hftlab/risk/` ([ADR 0015](adr/0015-risk-gate.md)). Every check has a code from a closed list and its own tests. **Every limit in `config/risk.yaml` is a null placeholder and the file is not in force**: no gate, and so no order manager, can be built from it until a decision record sets the values. Gross exposure and leverage are not enforced: they need a currency conversion, and nothing does one |
+| Order manager | Written: `src/hftlab/exec/` ([ADR 0016](adr/0016-order-manager-and-outbox.md)). Idempotent ids, an explicit state machine, a write-ahead outbox, recovery by client order id, cancel and reconcile on every reconnect. It is the only caller of `place` and `cancel` on a venue the platform trades on, and a scan holds that |
+| Broker book and reconciliation | Written: the same `Book` class, fed by the venue's fills; `src/hftlab/book/reconcile.py` compares the venue's positions and executions with it, books what was missed once, and flags a break that clears only when the books agree again |
+| Fault-injection suite | Green against the fake broker (`tests/faults/`): a kill at every step of the outbox, a disconnect mid-order, duplicated and reordered reports, partial fills, rejects, a gateway restart, a clock jump, stale quotes, the weekend gap, a rollover blow-out, an outbox that cannot be written, and generated sessions that hold the accounting invariants. What only a real gateway does is not in it |
+| Trader process | **Not built.** The loop that polls the venue, runs the sleeves, passes their intents to the order manager, steps the reconciliation and schedules the reconciler is the next round. Until it exists nothing reads the real `KILL` and `FLATTEN` files and nothing can place an order |
+| Control sleeve placing minimum-size paper orders | **Not started.** It needs the trader process, limits in force by a decision record, and the probe of F1 |
+| Shadow-versus-broker slippage report | **Not built** |
+| Alerts for a fault and for a reconciliation break | **Not built.** Both stop entries and are journalled; nobody is told. Alerts belong to the host layer |
+| Exit gate: five days, zero reconciliation breaks, fault-injection suite green, slippage reported | Open. Only the third part can be met by code, and it is met against the fake broker only. Nothing here has seen the paper account |
 
 ## Where F3 stands
 
@@ -113,6 +133,6 @@ not check offline is listed at the end of the runbook.
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
 | Registry | Done: lint and trial count. The first two records came with F3 |
-| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0014, and the host layer 0017 and 0018 |
-| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Eleven of the first file's are verified by tests they name; the other eleven and all 68 of the second are open |
+| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016, and the host layer 0017 and 0018 |
+| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Seventeen of the first file's 25 are verified by tests they name; the other 8 and all 68 of the second are open |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

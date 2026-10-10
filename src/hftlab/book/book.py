@@ -109,21 +109,25 @@ class Book:
     # ---- booking: each fill once, each fee once -----------------------------------------------------------------
 
     def apply(self, fill: Fill) -> bool:
-        """Book a fill. Returns False, and changes nothing, if this fill was booked before."""
+        """Book a fill. Returns False, and no position changes, if this fill was booked before.
+
+        A fill reported live carries no commission; the same fill listed later by the venue does. So a repeat
+        that is the first to say what the fill cost still has that recorded, once.
+        """
         known = self._fills.get(fill.fill_id)
         if known is not None:
             same = (known.pair, known.side, known.quantity, known.price, known.client_order_id)
             if same != (fill.pair, fill.side, fill.quantity, fill.price, fill.client_order_id):
                 raise BookError(f"two different fills carry the id {fill.fill_id}")
-            return False
-        if fill.pair not in self._instruments:
+        elif fill.pair not in self._instruments:
             raise BookError(f"the book was not given an instrument for {fill.pair}")
-        self._fills[fill.fill_id] = fill
-        sleeve = sleeve_of(fill.client_order_id) or UNATTRIBUTED
-        self._lines.setdefault((sleeve, fill.pair), _Line(fill.pair)).apply(fill)
+        else:
+            self._fills[fill.fill_id] = fill
+            sleeve = sleeve_of(fill.client_order_id) or UNATTRIBUTED
+            self._lines.setdefault((sleeve, fill.pair), _Line(fill.pair)).apply(fill)
         if fill.commission_currency is not None and fill.fill_id not in self._fees:
             self._fees[fill.fill_id] = (fill.commission, fill.commission_currency)
-        return True
+        return known is None
 
     def charge(self, event: CommissionEvent) -> None:
         """Record the commission of a fill. The latest report for a fill is its commission; none is added twice."""

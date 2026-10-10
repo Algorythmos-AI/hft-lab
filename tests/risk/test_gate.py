@@ -174,6 +174,20 @@ def test_a_close_is_for_what_the_book_holds_never_for_what_might_fill(tmp_path):
     assert (close.side, close.quantity) == (SELL, 20_000)
 
 
+def test_a_position_nobody_here_ordered_is_closed_too_under_the_name_the_book_gives_it(tmp_path):
+    desk = Desk(tmp_path)
+    by_hand = Fill("m1", "manual-7", "EUR.USD", BUY, 30_000, ASK, T0)  # a fill of an order that is not the platform's
+    desk.gate.observe(by_hand)
+    assert desk.gate.book.open_lines() == {("unattributed", "EUR.USD"): 30_000}
+    desk.switched.add(FLATTEN)
+    (close,) = desk.gate.flatten_orders()
+    assert (close.sleeve, close.side, close.quantity) == ("unattributed", SELL, 30_000)
+    verdict = desk.check(close)
+    assert verdict.allowed and codes(verdict) == ["FLATTEN_SWITCH", "SLEEVE_NOT_CONFIGURED"]
+    desk.fill(close, BID)
+    assert desk.gate.book.open_lines() == {} and desk.gate.flatten_orders() == ()
+
+
 def test_switches_that_cannot_be_read_stop_entries_and_propose_nothing(tmp_path):
     desk = Desk(tmp_path)
     desk.hold(1)

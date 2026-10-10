@@ -134,6 +134,15 @@ class Journal:
     def last_hash(self) -> str:
         return self._prev
 
+    def push(self) -> None:
+        """Hand what was written to the operating system, without waiting for the disk.
+
+        It is then in the file for any reader and survives this process being killed. It does not survive the
+        power going: only `flush`, with fsync on, promises that.
+        """
+        if self._stream is not None:
+            self._stream.flush()
+
     def flush(self) -> None:
         if self._stream is not None and self._dirty:
             self._stream.flush()

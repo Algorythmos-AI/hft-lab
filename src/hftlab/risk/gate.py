@@ -203,9 +203,10 @@ class RiskGate:
         except BookError:
             self.halt()  # two fills under one id, or a pair the gate has no instrument for
             return
+        if new or fill.commission_currency is not None:
+            self._fees, self._dirty = None, True  # a repeat can be the first to carry what the fill cost
         if not new:
             return
-        self._fees, self._dirty = None, True
         pending = self._pending.get(fill.client_order_id)
         if pending is None:
             return

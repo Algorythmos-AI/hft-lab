@@ -10,6 +10,11 @@ random entries after costs has shown nothing.
 
 Its randomness is a hash of the seed and of the quote it is looking at, not a generator with a position: the
 same seed and the same events give the same decisions, from any starting point in the stream.
+
+An order that comes to nothing (refused, cancelled, rejected) is not sent again at once. The pair remembers
+when it last tried and waits a fixed time before the next attempt, so a market that fills nothing for twenty
+minutes costs a few dozen orders and not one for every quote. The wait is a setting and the time is part of
+the state, so a replay waits exactly as long.
 """
 from __future__ import annotations
 
@@ -52,6 +57,7 @@ class PairState:
     since_ns: int = 0  # when the position was taken, by the venue's time
     trips: int = 0  # round trips completed
     exits: int = 0  # exit orders sent for the current position
+    tried_ns: int | None = None  # when the order on its way, or the last that came to nothing, was sent
 
 
 ControlState = tuple[PairState, ...]  # one per pair, in the sleeve's pair order
@@ -66,14 +72,16 @@ def draw(seed: int, pair: str, recv_ts_ns: int, seq: int) -> tuple[int, Side]:
 
 class ControlSleeve:
     def __init__(
-        self, name: str, *, seed: int, sizes: Mapping[str, int], entry_per_million: int, hold_ns: int
+        self, name: str, *, seed: int, sizes: Mapping[str, int], entry_per_million: int, hold_ns: int, retry_ns: int
     ) -> None:
         if not sizes or any(size <= 0 for size in sizes.values()):
             raise ValueError("the control sleeve needs a positive size for at least one pair")
         if not 0 <= entry_per_million <= MILLION or hold_ns < 0:
             raise ValueError("entry_per_million is 0 to 1,000,000 and the holding time is not negative")
+        if retry_ns < 0:
+            raise ValueError("the time between two attempts is not negative")
         self._name = check_sleeve(name)
-        self.seed, self.entry_per_million, self.hold_ns = seed, entry_per_million, hold_ns
+        self.seed, self.entry_per_million, self.hold_ns, self.retry_ns = seed, entry_per_million, hold_ns, retry_ns
         self.sizes = dict(sizes)
         self._slot = {pair: number for number, pair in enumerate(self.sizes)}
 
@@ -111,14 +119,16 @@ class ControlSleeve:
         if pair not in self._slot:
             return state, ()
         mine, held = state[self._slot[pair]], view.quantity(pair)
+        if mine.tried_ns is not None and now_ns - mine.tried_ns < self.retry_ns:
+            return state, ()  # the last attempt came to nothing too short a time ago
         if mine.phase == FLAT and held == 0 and isinstance(event, Quote):
             number, side = draw(self.seed, pair, event.recv_ts_ns, event.seq)
             if number < self.entry_per_million:
-                waiting = replace(mine, phase=ENTERING, order_id=None)
+                waiting = replace(mine, phase=ENTERING, order_id=None, tried_ns=now_ns)
                 return self._put(state, pair, waiting), (Intent(pair, side, self.sizes[pair], ENTRY),)
         elif mine.phase == HOLDING and held != 0 and now_ns - mine.since_ns >= self.hold_ns:
             side = Side.SELL if held > 0 else Side.BUY
-            waiting = replace(mine, phase=EXITING, order_id=None, exits=mine.exits + 1)
+            waiting = replace(mine, phase=EXITING, order_id=None, exits=mine.exits + 1, tried_ns=now_ns)
             return self._put(state, pair, waiting), (Intent(pair, side, abs(held), EXIT, attempt=mine.exits),)
         return state, ()
 
@@ -132,11 +142,15 @@ class ControlSleeve:
             return self._put(state, fill.pair, PairState(trips=mine.trips + 1))
         if mine.phase == ENTERING:
             since = fill.venue_ts_ns if fill.venue_ts_ns is not None else now_ns
-            return self._put(state, fill.pair, replace(mine, phase=HOLDING, order_id=None, since_ns=since))
+            held_now = replace(mine, phase=HOLDING, order_id=None, since_ns=since, tried_ns=None)
+            return self._put(state, fill.pair, held_now)
         return state
 
     def _back(self, state: ControlState, pair: str) -> ControlState:
-        """An order came to nothing: an entry leaves the pair flat, an exit leaves it held and due."""
+        """An order came to nothing: an entry leaves the pair flat, an exit leaves it held and due.
+
+        `tried_ns` is kept, and it is what makes the next attempt wait.
+        """
         mine = state[self._slot[pair]]
         if mine.phase == ENTERING:
             return self._put(state, pair, replace(mine, phase=FLAT, order_id=None))

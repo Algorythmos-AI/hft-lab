@@ -14,9 +14,17 @@ BIG = 10**9
 TRADED = (EURUSD, USDJPY)
 
 
-def constant(count: int, *, bid: int = 108_500, ask: int = 108_510, interval_ns: int = 100 * MS, pair: str = "EUR.USD"):
+def constant(
+    count: int,
+    *,
+    bid: int = 108_500,
+    ask: int = 108_510,
+    interval_ns: int = 100 * MS,
+    pair: str = "EUR.USD",
+    start_ns: int = T0,
+):
     """The same book, `count` times. The sizes alternate so that each quote is a change of the top of book."""
-    return [Quote(pair, bid, ask, BIG, BIG + (n % 2), T0 + n * interval_ns, n + 1) for n in range(count)]
+    return [Quote(pair, bid, ask, BIG, BIG + (n % 2), start_ns + n * interval_ns, n + 1) for n in range(count)]
 
 
 def walk(seed: int, count: int, *, mid: int = 108_505, spread: int = 10, step: int = 5, interval_ns: int = 100 * MS):

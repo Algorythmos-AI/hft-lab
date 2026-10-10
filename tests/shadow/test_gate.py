@@ -16,7 +16,7 @@ ROUND_TRIP = 10 * SIZE * 10 + 2 * FEE  # one spread of 10 price units on 20,000,
 
 
 def control(seed: int, **changes) -> ControlSleeve:
-    settings = {"sizes": {"EUR.USD": SIZE}, "entry_per_million": 50_000, "hold_ns": SECOND}
+    settings = {"sizes": {"EUR.USD": SIZE}, "entry_per_million": 50_000, "hold_ns": SECOND, "retry_ns": 10 * SECOND}
     return ControlSleeve("control", seed=seed, **{**settings, **changes})
 
 

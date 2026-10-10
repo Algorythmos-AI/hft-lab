@@ -31,7 +31,7 @@ def quote(seq: int, at: int = T0, pair: str = "EUR.USD") -> Quote:
 
 
 def control(**changes) -> ControlSleeve:
-    settings = {"seed": 7, "sizes": SIZES, "entry_per_million": 1_000_000, "hold_ns": 2 * SECOND}
+    settings = {"seed": 7, "sizes": SIZES, "entry_per_million": 1_000_000, "hold_ns": 2 * SECOND, "retry_ns": SECOND}
     return ControlSleeve("control", **{**settings, **changes})
 
 
@@ -98,7 +98,7 @@ def test_a_round_trip_step_by_step():
     (entry,) = actions
     assert isinstance(entry, Intent) and (entry.pair, entry.quantity, entry.leg) == ("EUR.USD", 20_000, "entry")
     assert entry.tif is TimeInForce.FOK and entry.limit_price is None, "a market order, all or nothing"
-    assert state[0].phase == ENTERING and state[1] == PairState(), "the other pair is untouched"
+    assert (state[0].phase, state[0].tried_ns) == (ENTERING, T0) and state[1] == PairState(), "the other is untouched"
 
     state, actions = sleeve.decide(state, Placed(entry, an_id()), T0, view())
     assert state[0].order_id == an_id() and not actions
@@ -109,6 +109,7 @@ def test_a_round_trip_step_by_step():
     state, actions = sleeve.decide(state, a_fill(entry.side, an_id(), T0 + 50 * MS), T0 + 60 * MS, long)
     assert (state[0].phase, state[0].since_ns, state[0].order_id) == (HOLDING, T0 + 50 * MS, None)
     assert not actions, "held from the venue's time of the fill, not from when the report came"
+    assert state[0].tried_ns is None, "the entry did what it was sent to do: nothing to wait for"
 
     done = OrderEvent(an_id(), OrderState.FILLED, T0 + 60 * MS, 4, 20_000)
     assert sleeve.decide(state, done, T0 + 60 * MS, long) == (state, ()), "the order's own FILLED changes nothing more"
@@ -153,7 +154,9 @@ def test_an_entry_that_comes_to_nothing_leaves_the_pair_flat(how):
         dead = OrderState.CANCELLED if how == "cancelled" else OrderState.REJECTED
         state, actions = sleeve.decide(state, OrderEvent(an_id(), dead, T0 + MS, 3), T0 + MS, view())
     assert state[0].phase == FLAT and state[0].order_id is None and not actions
-    assert sleeve.decide(state, quote(2, T0 + MS), T0 + MS, view())[1], "and it may enter again"
+    again = T0 + SECOND
+    assert sleeve.decide(state, quote(2, again - 1), again - 1, view()) == (state, ()), "not again at once"
+    assert sleeve.decide(state, quote(3, again), again, view())[1], "it may enter again when the wait is over"
 
 
 def test_an_exit_that_comes_to_nothing_is_sent_again_as_a_new_attempt():
@@ -166,9 +169,44 @@ def test_an_exit_that_comes_to_nothing_is_sent_again_as_a_new_attempt():
     stranger = OrderEvent(an_id(99), OrderState.CANCELLED, at + MS, 2)
     assert sleeve.decide(state, stranger, at + MS, long) == (state, ()), "another order's end is not this one's"
     state, _ = sleeve.decide(state, OrderEvent(an_id(1), OrderState.CANCELLED, at + MS, 3), at + MS, long)
-    assert state[0].phase == HOLDING
-    state, (second,) = sleeve.decide(state, quote(3, at + 2 * MS), at + 2 * MS, long)
+    assert (state[0].phase, state[0].tried_ns) == (HOLDING, at), "held again, and it remembers when it tried"
+    for early in (at + 2 * MS, at + SECOND - 1):
+        beat = Heartbeat("EUR.USD", early, early, 0)
+        assert sleeve.decide(state, quote(3, early), early, long) == (state, ()), "not on the very next quote"
+        assert sleeve.decide(state, beat, early, long) == (state, ()), "nor on a heartbeat"
+    state, (second,) = sleeve.decide(state, quote(4, at + SECOND), at + SECOND, long)
     assert (first.attempt, second.attempt) == (0, 1) and second.side is Side.SELL
+    assert state[0].tried_ns == at + SECOND, "the wait is counted from the attempt, send to send"
+
+
+def test_orders_that_keep_coming_to_nothing_are_sent_once_per_wait_and_not_once_per_quote():
+    sleeve, long = control(retry_ns=30 * SECOND), view(EUR_USD=20_000)
+    holding = (PairState(HOLDING, since_ns=T0 - 3 * SECOND), PairState())
+    for start, held in ((holding, long), (sleeve.initial(), view())):
+        state, sent = start, []
+        for number in range(6_000):  # ten minutes of quotes, 100 ms apart, and nothing sent in them is ever taken
+            at = T0 + number * 100 * MS
+            state, actions = sleeve.decide(state, quote(number + 1, at), at, held)
+            for intent in actions:
+                sent.append((at, intent.leg, intent.attempt))
+                state, _ = sleeve.decide(state, Refused(intent, "no"), at, held)
+        assert [at for at, _, _ in sent] == [T0 + n * 30 * SECOND for n in range(20)], "600 s / 30 s, not 6,000"
+        if held is long:
+            assert [(leg, attempt) for _, leg, attempt in sent] == [("exit", n) for n in range(20)]
+
+
+def test_the_wait_follows_a_failure_only_so_a_filled_entry_is_left_on_time():
+    sleeve = control(hold_ns=SECOND, retry_ns=30 * SECOND)
+    state, (entry,) = sleeve.decide(sleeve.initial(), quote(1), T0, view())
+    state, _ = sleeve.decide(state, Placed(entry, an_id()), T0, view())
+    long = view(EUR_USD=entry.side.sign * 20_000)
+    state, _ = sleeve.decide(state, a_fill(entry.side, an_id(), T0 + 50 * MS), T0 + 60 * MS, long)
+    due = T0 + 50 * MS + SECOND
+    state, (leave,) = sleeve.decide(state, quote(2, due), due, long)
+    assert leave.leg == "exit", "one second after the fill, although the entry was sent less than thirty ago"
+    state, _ = sleeve.decide(state, a_fill(leave.side, an_id(2), due + 5 * MS), due + 9 * MS, view())
+    assert state[0] == PairState(FLAT, trips=1), "and a completed round trip leaves nothing to wait for either"
+    assert sleeve.decide(state, quote(3, due + 10 * MS), due + 10 * MS, view())[1]
 
 
 def test_pairs_are_independent_and_a_pair_it_was_not_given_is_ignored():
@@ -183,11 +221,14 @@ def test_pairs_are_independent_and_a_pair_it_was_not_given_is_ignored():
 
 
 def test_settings_that_make_no_sense_are_refused():
-    for bad in ({"sizes": {}}, {"sizes": {"EUR.USD": 0}}, {"entry_per_million": 1_000_001}, {"hold_ns": -1}):
+    bad_settings = ({"sizes": {}}, {"sizes": {"EUR.USD": 0}}, {"entry_per_million": 1_000_001}, {"hold_ns": -1})
+    for bad in (*bad_settings, {"retry_ns": -1}):
         with pytest.raises(ValueError):
             control(**bad)
     with pytest.raises(ValueError, match="sleeve name"):
-        ControlSleeve("Not A Name", seed=1, sizes=SIZES, entry_per_million=1, hold_ns=1)
+        ControlSleeve("Not A Name", seed=1, sizes=SIZES, entry_per_million=1, hold_ns=1, retry_ns=1)
+    with pytest.raises(TypeError, match="retry_ns"):
+        ControlSleeve("control", seed=1, sizes=SIZES, entry_per_million=1, hold_ns=1)  # never a silent default
     for bad in ({"quantity": 0}, {"pair": "EURUSD"}, {"limit_price": 0}, {"attempt": -1}, {"leg": "two words"}):
         with pytest.raises((ValueError, TypeError)):
             Intent(**{"pair": "EUR.USD", "side": Side.BUY, "quantity": 1, **bad})

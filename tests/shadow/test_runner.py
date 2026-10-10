@@ -1,6 +1,7 @@
 """The shadow runner: what a sleeve decides becomes a shadow order, a fill, a booked result and a journal line."""
 from __future__ import annotations
 
+import itertools
 import json
 
 import pytest
@@ -213,7 +214,7 @@ def test_a_second_session_continues_the_journal_and_starts_flat(tmp_path):
 
 def test_the_same_events_and_seeds_write_the_same_journal_byte_for_byte(tmp_path):
     def journal(name: str, sleeve_seed: int, venue_seed: int, stream_seed: int = 3) -> bytes:
-        settings = {"sizes": {"EUR.USD": 20_000}, "entry_per_million": 30_000, "hold_ns": SECOND}
+        settings = {"sizes": {"EUR.USD": 20_000}, "entry_per_million": 30_000, "hold_ns": SECOND, "retry_ns": SECOND}
         sleeve = ControlSleeve("control", seed=sleeve_seed, **settings)
         costs = plain_costs(latency_min_ns=20 * MS, latency_max_ns=80 * MS)
         session(tmp_path / name, [sleeve, IdleSleeve()], walk(stream_seed, 1_500), seed=venue_seed, costs=costs)
@@ -245,6 +246,42 @@ def test_heartbeats_keep_a_quiet_book_tradable_and_markers_and_connection_events
         assert result["sleeves"]["hand"]["fills"] == filled, name
         assert result["events"] == len(extra) + len(stream)
     assert [e["reason"] for e in entries if e["type"] == "order_event"][-1] == "the quote is stale"
+
+
+# ---- a market that fills nothing ------------------------------------------------------------------------------------
+
+MINUTE = 60 * SECOND
+ROLLOVER = 1_760_043_600 * SECOND  # 2025-10-09 21:00 UTC: 17:00 in New York
+WINDOW = {"no_fill_before_ns": 5 * MINUTE, "no_fill_after_ns": 15 * MINUTE}
+
+
+def test_through_a_whole_no_fill_window_the_control_sleeve_tries_once_per_wait_not_once_per_quote(tmp_path):
+    quotes = constant(15_000, start_ns=ROLLOVER - 6 * MINUTE)  # 25 minutes, 100 ms apart, right across the window
+    opens, shuts = ROLLOVER - 5 * MINUTE, ROLLOVER + 15 * MINUTE
+    wait = 30 * SECOND
+
+    def journal(name: str, retry_ns: int) -> list[dict]:
+        # It enters on the first quote, a minute before the window, and its minute is up just as the window opens.
+        settings = {"sizes": {"EUR.USD": 20_000}, "entry_per_million": 1_000_000, "hold_ns": MINUTE}
+        sleeve = ControlSleeve("control", seed=4, retry_ns=retry_ns, **settings)
+        return session(tmp_path / name, [sleeve], quotes, costs=plain_costs(**WINDOW))[1]
+
+    entries = journal("a.jsonl", wait)
+    inside = [e for e in entries if e["type"] == "decision" and opens <= e["at_ns"] <= shuts]
+    exits = [e["at_ns"] for e in inside]
+    assert {e["leg"] for e in inside} == {"exit"}, "it went into the window holding, and could not get out"
+    assert len(exits) == 40 <= (shuts - opens) // wait + 1, "twenty minutes of window, thirty seconds apart"
+    assert {later - earlier for earlier, later in itertools.pairwise(exits)} == {wait}
+    assert [e["attempt"] for e in inside] == list(range(40)), "each one a new attempt, so a new order id"
+    ended = [e["reason"] for e in entries if e["type"] == "order_event" and e["state"] == "CANCELLED"]
+    assert ended == ["inside the rollover window or the market is shut"] * 40
+    out = next(e for e in entries if e["type"] == "fill" and e["side"] != entries[1]["side"])
+    assert 0 < out["at_ns"] - shuts <= wait, "and it is out within one wait of the window's end"
+
+    journal("b.jsonl", wait)
+    assert (tmp_path / "a.jsonl").read_bytes() == (tmp_path / "b.jsonl").read_bytes(), "a replay waits just as long"
+    hasty = [e for e in journal("c.jsonl", 0) if e["type"] == "decision" and opens <= e["at_ns"] <= shuts]
+    assert len(hasty) > 5_000, "with no wait it is an order for nearly every quote: what the wait is here to prevent"
 
 
 # ---- live quotes: the same stream, and still no broker order ---------------------------------------------------------
@@ -280,7 +317,8 @@ def test_live_quotes_drive_the_sleeves_and_no_order_reaches_the_broker(tmp_path)
     traded = open_live(live.view, PAIRS)
     assert [i.pair for i in traded] == ["EUR.USD", "USD.JPY"] and traded[0] == EURUSD
     sizes = {"EUR.USD": 20_000, "USD.JPY": 20_000}
-    sleeve = ControlSleeve("control", seed=2, sizes=sizes, entry_per_million=60_000, hold_ns=SECOND)
+    settings = {"sizes": sizes, "entry_per_million": 60_000, "hold_ns": SECOND, "retry_ns": SECOND}
+    sleeve = ControlSleeve("control", seed=2, **settings)
     shadow = Shadow(traded, plain_costs(), [sleeve], Journal(tmp_path / "live.jsonl"), source="venue:fake")
     result = run(shadow, live.stream(60))
     line = result["sleeves"]["control"]
@@ -388,6 +426,8 @@ def test_the_command_runs_a_recorded_day_and_its_journal_verifies(tmp_path, caps
         ({"seed: 1 ": "seed: one "}, "seed must be a whole"),
         ({"kind: control": "kind: clever"}, "unknown kind"),
         ({"hold_seconds: 60 ": "hold_seconds: 1.5 "}, "whole numbers"),
+        ({"retry_seconds: 10 ": "retry_seconds: -1 "}, "between two attempts is not negative"),
+        ({"    retry_seconds: 10 ": "    # retry_seconds: 10 "}, "unknown kind or settings"),
         ({"entry_per_million: 2000 ": "entry_per_million: 2000000 "}, "entry_per_million is 0 to 1,000,000"),
         ({"  - {name: idle, kind: idle}": "  - {name: Idle Sleeve, kind: idle}"}, "not a sleeve name"),
         ({"  - {name: idle, kind: idle}": "  - idle"}, "a sleeve needs a name"),

@@ -88,9 +88,9 @@ def make_sleeves(entries: Sequence[object], sizes: Mapping[str, int]) -> list[Sl
         try:
             if kind == "idle" and not rest:
                 out.append(IdleSleeve(entry["name"]))
-            elif kind == "control" and set(rest) == {"seed", "entry_per_million", "hold_seconds"}:
+            elif kind == "control" and set(rest) == {"seed", "entry_per_million", "hold_seconds", "retry_seconds"}:
                 if any(type(value) is not int for value in rest.values()):
-                    raise ConfigError(f"sleeve {entry['name']}: its three settings must be whole numbers")
+                    raise ConfigError(f"sleeve {entry['name']}: its four settings must be whole numbers")
                 out.append(
                     ControlSleeve(
                         entry["name"],
@@ -98,6 +98,7 @@ def make_sleeves(entries: Sequence[object], sizes: Mapping[str, int]) -> list[Sl
                         sizes=sizes,
                         entry_per_million=rest["entry_per_million"],
                         hold_ns=rest["hold_seconds"] * SECOND,
+                        retry_ns=rest["retry_seconds"] * SECOND,
                     )
                 )
             else:

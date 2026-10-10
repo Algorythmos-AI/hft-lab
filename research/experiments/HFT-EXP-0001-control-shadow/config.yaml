@@ -1,0 +1,20 @@
+# HFT-EXP-0001: the frozen configuration of the control sleeve's shadow run.
+# Read as it stands by `python -m hftlab.shadow --config`. REGISTERED ON 2026-10-11, NOT RUN.
+#
+# Nothing here is tuned and nothing here may be: a different seed, entry rate, holding time or waiting time is
+# a new experiment with a new id. What a shadow order costs is not in this file. It is config/cost_model.yaml
+# as of the commit the run is made from, and the journal's first entry keeps every parameter of it.
+journal_dir: var/shadow/HFT-EXP-0001
+seed: 1                         # seeds the shadow venue's latency draws
+
+pairs: []                       # not used: the run is over recorded days, and a recording says what it holds
+heartbeat_ms: 1000              # not used over a recording
+
+sleeves:
+  - {name: idle, kind: idle}    # never trades; expected to end on exactly zero
+  - name: control
+    kind: control
+    seed: 1                     # with each quote's pair, receive time and sequence number, fixes every entry
+    entry_per_million: 2000     # the entry rate: a flat pair enters on this share of its quotes, in millionths
+    hold_seconds: 60            # the holding time: the exit is sent this long after the entry was filled
+    retry_seconds: 10           # the least time between two orders of a pair after one came to nothing

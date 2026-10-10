@@ -14,6 +14,8 @@ and is exercised once as a drill.
 
 | Runbook | For |
 |---|---|
+| Recorder | Starting and stopping `python -m hftlab.record` on the host, housekeeping, and checking a recorded day. Needed before the five days of the F2 gate begin |
+| Shadow run | Running `python -m hftlab.shadow` over recorded days, verifying its journal, and making the feasibility map |
 | Weekly login | The gateway's once-a-week paper login |
 | Kill and flatten | Stopping new entries (`KILL`) and closing every position (`FLATTEN`) |
 | Gateway down | The broker gateway stops or will not connect |

@@ -1,0 +1,20 @@
+# The feasibility map's settings. Read by `python -m hftlab.feasibility`.
+#
+# The map asks, for each pair and each holding time: across a window of that length, does the mid move by more
+# than one round trip of the minimum size costs under config/cost_model.yaml? A cell (one pair, one holding
+# time) is `viable` when it has enough windows and a large enough share of them pay.
+#
+# EVERY NUMBER HERE IS A PLACEHOLDER. They are first choices that make the arithmetic run. The holding times
+# and the rule are evaluation choices: a decision record fixes them, and sets `status: decided`, before any map
+# is read as a result. Until then, and for as long as the cost model is a placeholder, the map says so itself.
+version: 1
+status: placeholder
+
+horizons_seconds: [1, 5, 30, 60, 300, 900]   # PLACEHOLDER: the holding times. Each is a multiple of the step
+step_seconds: 1                 # PLACEHOLDER: a window starts on every multiple of this, in UTC time
+upper_quantile_ppm: 900000      # PLACEHOLDER: the upper move reported beside the median, in millionths (90%)
+
+viable:
+  min_windows: 1000             # PLACEHOLDER: a cell with fewer windows than this is never viable
+  min_share_ppm: 500000         # PLACEHOLDER: at least this share of a cell's windows must move by more than
+                                # the round trip costs, in millionths (a half)

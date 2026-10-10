@@ -12,7 +12,14 @@ research/
  └── decisions/     HFT-DEC-NNNN-<slug>.md     what was decided, when, on which experiments
 ```
 
-There are no records yet.
+## Records
+
+| Record | What it is | State |
+|---|---|---|
+| [HFT-HYP-0001](hypotheses/HFT-HYP-0001-shadow-accounting-is-honest.yaml) | The shadow accounting is honest: a sleeve that never trades earns exactly zero, and one that trades at random loses the modelled cost | Registered. No evidence yet |
+| [HFT-EXP-0001](experiments/HFT-EXP-0001-control-shadow/protocol.md) | The control sleeve in shadow on five recorded days, with its seed, entry rate, holding time and waiting time fixed | Registered. **Not run**: nothing has been recorded from the real feed yet |
+
+There is no decision record yet, and the trial registry is empty.
 
 ## Rules
 

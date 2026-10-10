@@ -17,6 +17,52 @@ approved plan, unchanged.
 Recording starts as early as possible (F2), because data only accumulates with time. Real money,
 co-location and anything on the [never-build list](never-build.md) are out of scope.
 
+## Where things stand
+
+**The gates of F1, F2 and F3 are all open.** The code of those three phases is written and passes its tests
+against a deterministic fake broker and against synthetic streams and recordings the tests make themselves.
+That is all it has been run against:
+
+- Nothing has connected to a gateway. The capability probe has not been run with the paper login.
+- Nothing has been recorded from the real feed. There is no recorded trading day.
+- No experiment has been run on real data. The research registry holds one hypothesis and one experiment,
+  both registered and neither run.
+- Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
+
+| Gate | State | What closes it |
+|---|---|---|
+| F1 | Open | The owner runs the capability probe against the real paper account ([runbook](runbooks/ibkr-probe.md)); the probe report and the two decision records follow |
+| F2 | Open | Five recorded trading days with every gap accounted for. Code cannot close it: the days have to pass |
+| F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
+
+## Where F3 stands
+
+| Part of the deliverable | State |
+|---|---|
+| Cost model | Written: `src/hftlab/venues/sim/cost.py`, `config/cost_model.yaml` ([ADR 0013](adr/0013-shadow-cost-model.md)). **Every number is a placeholder** until the probe has measured latency, minimum size and commission |
+| Shadow venue | Written: `src/hftlab/venues/sim/`. Fills against quotes it is fed, by the rules of ADR 0013. Tested case by case and against the parts of the venue contract suite that apply to it |
+| Shadow book | Written: `src/hftlab/book/`. Positions, cash and profit in exact integers, from fills only. It converts no currency: a fee in a currency other than the pair's quote currency is reported beside the net result, not in it |
+| Sleeves | Written: the interface, the idle sleeve and the seeded control sleeve, `src/hftlab/strategy/` ([ADR 0014](adr/0014-sleeves-as-pure-functions.md)) |
+| Control sleeve in shadow | Written: `python -m hftlab.shadow`, with a hash-chained journal. It can be handed no venue but the shadow venue it builds. Run so far only on synthetic streams and on recordings of the fake broker |
+| Feasibility map | Written: `python -m hftlab.feasibility` over a store of recorded days. Tested on streams worked out by hand. **No map of real data exists**, and a map on placeholder costs says in itself that it is not a result |
+| Pre-registration | Done: `HFT-HYP-0001` and `HFT-EXP-0001` in [`research/`](../research/README.md), with seed, entry rate and times fixed. **Not run** |
+| Exit gate: a flat strategy earns 0 | Holds exactly on synthetic streams (`tests/shadow/test_gate.py`). Open on recorded data |
+| Exit gate: the random control loses about the modelled cost | On synthetic streams: exact on a still book, within 3% in the mean over 30 seeds on a walk. Open on recorded data |
+
+Not built yet in F3: the tool that compares the control run trip by trip with the recording (the registered
+experiment needs it), and the runbook for a shadow run.
+
+## Where F2 stands
+
+| Part of the deliverable | State |
+|---|---|
+| Calendar | Written: the forex week by New York time, the rollover, dated holidays and macro events, `src/hftlab/calendar/`. **Both dated lists are empty**: no holiday and no event has been entered. A calendar directory or file that is missing is an error, not an empty calendar |
+| Recording format and store | Written: `src/hftlab/record/` ([ADR 0012](adr/0012-recording-format.md)). Tested with a kill at every byte of a block, restarts, a full quota and an offload that does not confirm |
+| Recorder process | Written: `python -m hftlab.record`, on a market-data view that has no order methods. Run so far only against the fake broker (`--dry-run-seconds`) |
+| Replay and the day check | Written: `python -m hftlab.replay --day DIR --check`. Replay parity is tested on recordings of the fake broker |
+| Recording 24 hours on weekdays | **Not started.** It needs the probe to have been run, the host's pre-flight measurement ([ADR 0007](adr/0007-shared-host-isolation.md)), the install, and a runbook for the recorder. None of those has happened yet |
+| Exit gate: five days, every gap accounted for, replay parity, memory and disk inside budget | Open. The quota in `config/recorder.yaml` is a placeholder until the host's disk budget is measured |
+
 ## Where F1 stands
 
 | Part of the deliverable | State |
@@ -39,7 +85,7 @@ not check offline is listed at the end of the runbook.
 | Leak mechanism | Done: `tools/leakcheck.py`, hooks, attestation ([ADR 0006](adr/0006-public-repo-and-leak-mechanism.md)) |
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
-| Registry | Done: lint and trial count; no records yet |
-| ADRs | Done: 0001 to 0008 |
-| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml). The citations to the private knowledge base are added later, so this part of the deliverable is not complete |
+| Registry | Done: lint and trial count. The first two records came with F3 |
+| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0014 |
+| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Eleven of the first file's are verified by tests they name; the other eleven and all 68 of the second are open |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

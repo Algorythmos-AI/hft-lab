@@ -2,8 +2,8 @@
 
 HFT Lab trades the currency market on an Interactive Brokers **paper** account, fully automatically, with
 guardrails that are always on. This page is the map. The reasons behind each choice are in the
-[ADRs](adr/), the order of work is in the [roadmap](roadmap.md), and what is built today is F0: the
-foundation only.
+[ADRs](adr/), and the order of work and what is built today are in the [roadmap](roadmap.md). The page
+describes the whole design; much of it is not built, and nothing built has met the real market yet.
 
 ## Constraints that shape everything
 
@@ -37,30 +37,35 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 
 ## Package map
 
-`src/hftlab/`. The packages marked F0 exist today; the others arrive with the phase that needs them
+`src/hftlab/`. A package marked with a phase exists today; the others arrive with the phase that needs them
 ([roadmap](roadmap.md)).
 
 ```
-core/      types, injected clock, ids; prices as integers at each pair's quote precision      F0
-safety/    paper-only lock, venue registry                                                    F0
-registry/  hypotheses, experiments, decisions, trial count                                    F0
-venues/    port, guard, supervisor; ibkr/ (translation, client seam, adapter, capability probe);      F1
-           fake/ (a deterministic broker for tests);  sim/ (shadow venue, not built yet)
-record/    recorder, schema, compaction, offload
-calendar/  forex week, rollover window, holidays, macro-event blackout
+core/         types, injected clock, ids; prices as integers at each pair's quote precision             F0
+safety/       paper-only lock, venue registry                                                           F0
+registry/     hypotheses, experiments, decisions, trial count                                           F0
+venues/       port, guard, supervisor, a market-data view with no order methods;                        F1
+              ibkr/ (translation, client seam, adapter, capability probe);
+              fake/ (a deterministic broker for tests);
+              sim/ (the shadow venue and its cost model)                                                F3
+calendar/     forex week, rollover window, holidays, macro-event blackout                               F2
+record/       recorder, recording format, store with quota and offload, gap journal                     F2
+replay/       a recorded day read back as the stream the live process saw; the day check                F2
+book/         the shadow book: positions, cash and profit from fills (broker book, reconciliation: F4)  F3
+strategy/     the sleeve interface, the idle and the control sleeve (directional-change, ml, dl: F5)    F3
+shadow/       the shadow runner and its hash-chained journal                                            F3
+feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
 features/  labels/  models/ (registry, hashed model files, scorer in its own process)
-strategy/  sleeves: control, directional-change, ml, dl
-risk/      the independent gate: limits, market guards, latches, switches
-exec/      idempotent order ids, order state machine, outbox
-book/      broker book, shadow book, reconciliation
-learn/     datasets, training, validation, promotion
-ops/       jobs, units, deploy gate, heartbeat, alerts, backup
+risk/         the independent gate: limits, market guards, latches, switches
+exec/         idempotent order ids, order state machine, outbox
+learn/        datasets, training, validation, promotion
+ops/          jobs, units, deploy gate, heartbeat, alerts, backup
 ```
 
 Two boundaries are enforced by tests from the first commit:
 
-- **Only `venues/ibkr/` and `record/` may import a network library**, and only `venues/ibkr/` the broker's
-  client library. Everything else, the venue port and the fake broker included, is computation on events.
+- **Only `venues/ibkr/` may import a network library or the broker's client library.** Everything else, the
+  venue port, the fake broker, the recorder and the shadow venue included, is computation on events.
 - **Only `safety/lock.py` may name a live port or read the variables that select the trading mode.**
 
 ## Data flow

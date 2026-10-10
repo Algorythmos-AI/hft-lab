@@ -1,0 +1,21 @@
+# Scheduled macro-economic releases. Around each one, pairs that contain one of its currencies are blacked out:
+# no new entries, and the shadow venue's guards apply. Read by hftlab.calendar (load_events).
+# The list is EMPTY: no event has been entered and none is invented here. It is filled, with dates, from a
+# published economic calendar before each week.
+#
+#   defaults:
+#     before_minutes: <whole minutes>      # blackout starts this long before the release
+#     after_minutes:  <whole minutes>      # and ends this long after
+#   events:
+#     - name: <what is released>
+#       at: "<ISO-8601 time with an offset>"
+#       currencies: [USD]                  # three-letter codes; a pair with any of them is affected
+#       before_minutes: <optional override>
+#       after_minutes:  <optional override>
+#
+# The two default widths are not chosen yet. They are set by a decision record before the first event is
+# entered; until then an event must carry its own widths or the file is refused.
+defaults:
+  before_minutes: null
+  after_minutes: null
+events: []

@@ -37,8 +37,7 @@ It is public for now, by the owner's decision, and is written to be safe to read
   - the broker reported at least one managed account and every one is a paper id (`DU` and digits)
   - if a live username is declared, the configured username is known and is not that one
 - **Nothing else can turn it off.** A test scans every module of the package: only the lock may name a live
-  port or read those environment variables, network libraries may be imported only by the broker adapter and
-  the recorder, and the venue registry holds exactly `ibkr_paper` and `sim` (`tests/safety/test_isolation.py`).
+  port or read those environment variables, network libraries may be imported only by the broker adapter, and the venue registry holds exactly `ibkr_paper` and `sim` (`tests/safety/test_isolation.py`).
 - **Every order will pass an independent risk gate** that rebuilds positions from fills and owns the `KILL`
   and `FLATTEN` switches. The gate is built in a later phase; its requirements are already in
   [`docs/requirements/requirements.yaml`](docs/requirements/requirements.yaml).

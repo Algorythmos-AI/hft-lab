@@ -104,13 +104,40 @@ def test_agents_md_states_every_hard_rule():
 def test_the_design_records_exist_in_order():
     records = sorted(p.name for p in (ROOT / "docs" / "adr").glob("*.md"))
     topics = ["paper-only", "integer", "two-books", "recorder", "replay", "leak", "host", "learning"]
-    topics += ["venue-port", "access-route", "synchronous"]
+    topics += ["venue-port", "access-route", "synchronous", "recording-format", "cost-model", "sleeves"]
     assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, len(topics) + 1)]
     for name, topic in zip(records, topics, strict=True):
         text = read(f"docs/adr/{name}")
         assert topic in name and text.startswith(f"# ADR {name[:4]}: "), name
         for section in ("- **Status:** accepted", "## Context", "## Decision", "## Consequences"):
             assert section in text, f"{name} has no {section!r}"
+
+
+def test_every_design_record_that_is_cited_anywhere_exists():
+    """A docstring that sends the reader to a design record sends them to one that is there."""
+    written = {path.name[:4] for path in (ROOT / "docs" / "adr").glob("*.md")}
+    cited: dict[str, set[str]] = {}
+    for path in tracked():
+        text = (ROOT / path).read_bytes().decode("utf-8", errors="replace")
+        for number in re.findall(r"\bADR[ -]?([0-9]{4})\b", text) + re.findall(r"\badr/([0-9]{4})-", text):
+            cited.setdefault(number, set()).add(path)
+    in_code = {number for number, paths in cited.items() if any(p.startswith(("src/", "tests/")) for p in paths)}
+    assert {"0001", "0005", "0012", "0013", "0014"} <= in_code, "the scan reads the source, where the citations are"
+    assert {number: sorted(paths) for number, paths in cited.items() if number not in written} == {}
+    for path in tracked():  # and a link to a record names the file as it is called
+        for name in re.findall(r"\badr/([0-9]{4}-[a-z0-9-]+\.md)", (ROOT / path).read_text(errors="replace")):
+            assert (ROOT / "docs" / "adr" / name).is_file(), f"{path} links to docs/adr/{name}"
+
+
+def test_every_document_the_code_and_the_config_point_to_exists():
+    document = re.compile(r"\bdocs/[A-Za-z0-9_./-]+\.(?:md|yaml)\b")
+    pointed = {}
+    for path in tracked():
+        if path.startswith(("src/", "config/", "tools/", ".githooks/")) or path == "Makefile":
+            for target in document.findall((ROOT / path).read_text(errors="replace")):
+                pointed.setdefault(target, path)
+    assert "docs/runbooks/ibkr-probe.md" in pointed and "docs/architecture.md" in pointed
+    assert {target: path for target, path in pointed.items() if not (ROOT / target).is_file()} == {}
 
 
 def test_the_roadmap_has_all_eight_phases_and_the_documents_the_readme_links_exist():

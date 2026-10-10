@@ -24,8 +24,8 @@ between the trading platforms lives in that repository's `docs/trading-platforms
      file and runbooks, and it reads nobody else's.
    - No import, submodule or copied state from another trading platform's repository. A generic piece that is
      needed here is copied in and trimmed, with its origin commit noted.
-   - Network libraries are imported only under `src/hftlab/venues/ibkr/` and `src/hftlab/record/`, and the
-     broker's client library (`ib_async`) only under `src/hftlab/venues/ibkr/`.
+   - Network libraries, and the broker's client library (`ib_async`), are imported only under
+     `src/hftlab/venues/ibkr/`. The recorder, the replay and the shadow venue need none.
 3. **Pre-registration.** Every strategy or evaluation change needs a hypothesis, an experiment and a decision
    record in `research/`, written before any affected P&L is viewed.
    - Ids are `HFT-HYP-NNNN`, `HFT-EXP-NNNN` and `HFT-DEC-NNNN`, sequential and never reused.
@@ -65,11 +65,13 @@ The repository is **public**. Assume every byte committed is read by strangers a
 ## Layout
 
 ```
-src/hftlab/    core · safety · venues (port, guard, ibkr/, fake/) · record · registry
-               (later: calendar · features · labels · models · strategy · risk · exec · book · learn · ops)
+src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
+               book · strategy · shadow · feasibility · registry
+               (later: features · labels · models · risk · exec · learn · ops)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
-config/        risk limits, venue capability file, trial registry
+config/        risk limits, venue capability file, trial registry, cost model, calendar, and the settings of
+               the recorder, the shadow runner and the feasibility map
 docs/          architecture, ADRs, roadmap, requirements, runbooks, never-build list
 contracts/     versioned data contracts this platform publishes (the status snapshot), each with an example
 tests/         pytest and hypothesis (CI-safe: fixtures and tmp_path only, no network)

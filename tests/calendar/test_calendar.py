@@ -112,6 +112,14 @@ def test_the_rollover_is_at_five_in_the_afternoon_in_new_york_every_day(ts):
     assert rollover % DAY in (21 * HOUR, 22 * HOUR), "21:00 or 22:00 UTC, depending on the season"
 
 
+@given(times)
+def test_the_trading_day_in_hand_began_at_the_last_rollover_at_or_before_now(ts):
+    began = cal.last_rollover(ts)
+    assert cal.new_york(began).strftime("%H:%M:%S") == "17:00:00" and 0 <= ts - began < DAY + HOUR
+    assert cal.last_rollover(began) == began and cal.last_rollover(began - 1) < began, "the instant itself starts a day"
+    assert cal.last_rollover(ts) <= cal.last_rollover(ts + HOUR), "it never goes back as time passes"
+
+
 @given(times, st.integers(0, 120), st.integers(0, 120))
 def test_the_rollover_window_is_closed_at_both_ends_and_nowhere_else(ts, before, after):
     rollover = cal.rollover_near(ts)

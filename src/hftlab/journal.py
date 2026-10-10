@@ -106,12 +106,11 @@ class Journal:
         """Verify what is there, cut off a torn last line, and continue the chain."""
         state = verify(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        created = not self.path.exists()
         self._stream = self.path.open("ab")
         if state.torn:
             self._stream.truncate(state.good_bytes)
-        if self._fsync and (created or state.torn):
-            self._sync_directory()
+        if self._fsync:
+            self._sync_directory()  # every time: an earlier process may have died before the name was synced
         self._prev, self._count = state.last_hash, state.entries
         return state
 

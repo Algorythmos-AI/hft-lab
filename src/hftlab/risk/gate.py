@@ -139,6 +139,7 @@ class RiskGate:
         self._broken = False
         self._quotes: dict[str, Quote] = {}
         self._fresh: dict[str, int] = {}
+        self._quoted: set[str] = set()  # pairs quoted on the connection in hand; only those can be confirmed fresh
         self._pending: dict[str, _Pending] = {}
         self._admitted: dict[str, bool] = {}  # every id allowed; True once the venue's first answer was counted
         self._sent: deque[tuple[int, str]] = deque()  # (when, sleeve) of each order allowed
@@ -170,6 +171,7 @@ class RiskGate:
                 # the gate's time: after a clock set back, new quotes carry old stamps and are judged old.
                 self._quotes[event.pair] = event
                 self._fresh[event.pair] = min(now, event.recv_ts_ns)
+                self._quoted.add(event.pair)
                 if self._dirty or self._unmarked or any(pair == event.pair for _, pair in self._book.open_lines()):
                     self._evaluate(now)
         elif isinstance(event, Fill):
@@ -181,12 +183,16 @@ class RiskGate:
             self._on_order_event(event, now)
         elif isinstance(event, ConnectionEvent):
             self._state = event.state
+            if event.state is not ConnectionState.READY:
+                # A quote from before a lost or new connection says nothing about the book now. It still values
+                # positions, but it is stale, and no confirmation can freshen it: only a new quote can.
+                self._quoted.clear()
         elif isinstance(event, BreakEvent):
             self._broken = event.broken
 
     def quiet(self, pair: str, at_ns: int) -> None:
         """The venue confirmed that this pair's book has not changed: its last quote is as fresh as `at_ns`."""
-        if pair in self._quotes:
+        if pair in self._quoted:
             self._fresh[pair] = max(self._fresh[pair], min(self._tick(), at_ns))
 
     def count_cancel(self, order_id: str) -> None:
@@ -262,7 +268,7 @@ class RiskGate:
         stopping: list[Reason] = []
         if order.client_order_id in self._admitted:
             refusing.append(Reason.DUPLICATE_ORDER)
-        if sleeve_of(order.client_order_id) != order.sleeve:
+        if sleeve_of(order.client_order_id) != order.sleeve or order.sleeve == DESK:
             refusing.append(Reason.ORDER_ID)
         if self._state is not ConnectionState.READY:
             refusing.append(Reason.VENUE_NOT_READY)
@@ -288,7 +294,7 @@ class RiskGate:
             refusing.append(Reason.NO_QUOTE)
         else:
             step = instrument.price_increment
-            if now - self._fresh[order.pair] > limits.stale_quote_ns:
+            if order.pair not in self._quoted or now - self._fresh[order.pair] > limits.stale_quote_ns:
                 refusing.append(Reason.STALE_QUOTE)
             if quote.is_crossed:
                 refusing.append(Reason.CROSSED_QUOTE)

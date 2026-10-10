@@ -70,6 +70,8 @@ def test_no_order_until_the_gate_has_been_shown_a_ready_connection_and_none_afte
         desk.gate.observe(ConnectionEvent(state, T0, 0))
         assert desk.code(an_order(1)) == "VENUE_NOT_READY", state
     desk.gate.observe(ConnectionEvent(ConnectionState.READY, T0, 0))
+    assert desk.code(an_order(1)) == "STALE_QUOTE", "the quote is from before this connection was established"
+    desk.quote()
     assert desk.check(an_order(1)).allowed
     desk.gate.observe(ConnectionEvent(ConnectionState.DISCONNECTED, T0, 0))
     assert desk.code(an_order(2, SELL)) == "VENUE_NOT_READY", "not even an exit: nothing is sent while blind"
@@ -712,3 +714,33 @@ def test_the_journal_is_a_verified_chain_of_codes_and_integers(tmp_path):
     kinds = [entry["type"] for entry in desk.journal()]
     assert kinds[0] == "start" and {"mark", "trip", "reset"} <= set(kinds)
     assert desk.journal()[0]["decision"] == "HFT-DEC-9999"
+
+
+def test_a_quote_from_before_a_lost_connection_is_stale_and_no_confirmation_can_freshen_it(tmp_path):
+    desk = Desk(tmp_path)
+    desk.hold(1)
+    desk.reconnect()
+    assert desk.code(an_order(2)) == "STALE_QUOTE"
+    desk.gate.quiet("EUR.USD", desk.clock.now_ns())  # the venue answers; it has not shown this connection a book
+    assert desk.code(an_order(3)) == "STALE_QUOTE" and desk.code(an_order(4, SELL)) == "STALE_QUOTE"
+    assert desk.gate.book.open_lines() and "UNMARKED_POSITION" not in codes(desk.check(an_order(5)))
+    desk.quote(BID + 1_000, ASK + 1_000)
+    assert desk.check(an_order(6)).allowed
+    desk.gate.quiet("EUR.USD", desk.clock.now_ns())
+    assert desk.check(an_order(7)).allowed
+
+
+def test_the_books_own_names_are_not_sleeves(tmp_path):
+    from hftlab.core import Order
+    from hftlab.core.ids import client_order_id
+    from hftlab.risk import RiskConfigError, parse_risk_config
+    from tests.risk.kit import raw
+
+    desk = Desk(tmp_path)
+    desk.hold(1)
+    order_id = client_order_id(sleeve="desk", pair="EUR.USD", side=SELL, decision_seq=2)
+    posing = Order(order_id, "desk", "EUR.USD", SELL, 20_000, OrderType.MARKET, TimeInForce.FOK, T0)
+    assert desk.code(posing) == "ORDER_ID", "it would be judged on the whole desk's position, as an exit"
+    for name in ("desk", "unattributed"):
+        with pytest.raises(RiskConfigError, match="keeps for itself"):
+            parse_risk_config(raw({f"per_sleeve/{name}": raw()["per_sleeve"]["ml"]}))

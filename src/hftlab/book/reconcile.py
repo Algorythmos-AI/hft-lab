@@ -173,9 +173,9 @@ class Reconciler:
                 self._journal.write("break_opened", at_ns=now, since_ns=since, differences=_plain(found))
                 self._broken, event = True, BreakEvent(True, now, found)
         self._last = found
-        self._journal.flush()
         if event is not None:
-            self._sink(event)
+            self._sink(event)  # before the flush: a journal that cannot be written must not keep a break from the gate
+        self._journal.flush()
         return Reconciliation(now, True, recovered, found, self._broken, event)
 
     def _recover(self, fill: Fill, now: int) -> bool:

@@ -380,6 +380,7 @@ class OrderManager:
 
     def _settle(self, tracked: Tracked) -> None:
         """The venue lists no working order and its executions are booked: what an order in flight came to."""
+        tracked.reported = max(tracked.reported, tracked.booked)  # a late honest report of these fills is no fault
         if tracked.booked >= tracked.order.quantity:
             self._move(tracked, Stage.FILLED, Cause.FILLS_AT_VENUE)
         elif tracked.booked or tracked.acked or tracked.cancel_sent:

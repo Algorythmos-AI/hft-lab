@@ -337,3 +337,18 @@ def test_what_the_reconciler_asks_of_a_venue_has_nothing_in_it_that_trades():
     assert public == {"positions", "executions_since"}
     with pytest.raises(ValueError):
         Reconciler(None, Book([EURUSD]), Journal("unused"), clock=None, grace_ns=-1)
+
+
+def test_a_break_reaches_the_gate_even_when_the_journal_cannot_be_flushed(tmp_path, monkeypatch):
+    rig = Rig(tmp_path)
+    rig.broker.market.carry(EURUSD, 20_000)
+    rig.reconciler.check()
+    rig.clock.advance(GRACE)
+
+    def full_disk() -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(rig.reconciler._journal, "flush", full_disk)
+    with pytest.raises(OSError):
+        rig.reconciler.check()
+    assert rig.reconciler.broken and rig.breaks() and rig.breaks()[-1].broken

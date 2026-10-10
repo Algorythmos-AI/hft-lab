@@ -131,6 +131,8 @@ class Floor:
         for event in events:
             self.oms.handle(event)
         self.events += events
+        if any(getattr(event, "state", None) is ConnectionState.RECONCILING for event in events) and self.subscribed:
+            self.tick()  # a new connection reports the book it finds; a quote from before it is worth nothing
         if self.broker.state in UP and not self.subscribed:
             self._subscribe()
         if self.broker.state in UP and self.beat:

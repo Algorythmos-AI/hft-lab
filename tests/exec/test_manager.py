@@ -588,3 +588,18 @@ def test_the_manager_works_unchanged_against_the_shadow_venue(tmp_path):
     venue.connect()
     pump(quote=True)
     assert oms.reconcile() and not oms.blind
+
+
+def test_fills_that_land_between_two_steps_of_reconciling_and_are_reported_afterwards_are_no_fault(tmp_path):
+    floor = Floor(tmp_path, FakeConfig(outages=((T0 + 200 * MS, T0 + 800 * MS),), respect_displayed_size=True))
+    resting = floor.trade(1, quantity=60_000, limit=108_400)
+    floor.pump(200 * MS)
+    floor.pump(1_100 * MS)
+    assert floor.broker.state is RECONCILING and not floor.oms.reconcile()  # the cancel is asked for
+    floor.market.script_quote(floor.clock.now_ns(), "EUR.USD", 108_380, 108_390, 1_000_000, 20_000)
+    floor.clock.advance(5 * MS)  # the order part-fills and the cancel lands; none of it has been polled
+    assert floor.oms.reconcile() and floor.stage(resting) == "CANCELLED"
+    assert floor.oms.tracked(resting.client_order_id).booked == 20_000
+    floor.pump()
+    floor.pump(50 * MS)
+    assert floor.oms.faults == () and floor.gate.latches() == () and floor.held() == (20_000, 20_000, 20_000)

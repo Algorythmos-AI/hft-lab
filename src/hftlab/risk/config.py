@@ -40,6 +40,7 @@ MINUTE: Final = 60 * SECOND
 DECIDED: Final = "decided"
 _DECISION = re.compile(r"HFT-DEC-[0-9]{4}")
 _NOT_ENFORCED: Final = ("max_gross_exposure", "max_leverage")
+_RESERVED: Final = ("desk", "unattributed")  # the book's names for the sum of sleeves and for fills nobody here ordered
 
 _TOP: Final = frozenset(
     {"status", "in_force", "decision", "desk", "per_pair", "per_sleeve", "market_guards", "reconciliation", "switches"}
@@ -234,6 +235,9 @@ def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConf
             check_sleeve(name)
         except ValueError:
             read.problems.append(f"{where} is not a sleeve name (lower-case words joined by '-')")
+            continue
+        if name in _RESERVED:
+            read.problems.append(f"{where} is a name the book keeps for itself, not a sleeve")
             continue
         block = read.section(block, where, _SLEEVE)
         sleeves[name] = SleeveLimits(

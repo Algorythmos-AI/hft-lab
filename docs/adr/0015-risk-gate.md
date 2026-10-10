@@ -120,7 +120,8 @@ order in flight. They are proposals. Each passes `check` like any other order, a
 The gate reads the injected clock and never lets its own time go back. A quote is as fresh as its stamp
 says and never fresher than the gate's time. An unchanged book is silent on the venue port, so the trader
 confirms a quiet book with `quiet(pair, at)` when the venue has answered; without that, a quiet book goes
-stale and nothing is sent on it.
+stale and nothing is sent on it. A quote from before a lost or new connection cannot be confirmed at all:
+it still values positions, and only a new quote makes the pair tradable again.
 
 ### 7. The limits file
 

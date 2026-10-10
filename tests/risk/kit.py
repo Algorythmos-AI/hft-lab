@@ -138,6 +138,10 @@ class Desk:
             raise PermissionError("the state directory cannot be read")
         return set(self.switched)
 
+    def reconnect(self) -> None:
+        for state in (ConnectionState.DISCONNECTED, ConnectionState.RECONCILING, ConnectionState.READY):
+            self.gate.observe(ConnectionEvent(state, self.clock.now_ns(), 0))
+
     def restart(self, *, ready: bool = True) -> RiskGate:
         """A new gate on the same journal, shown the fills the outbox would replay to it."""
         self.gate = self.build()

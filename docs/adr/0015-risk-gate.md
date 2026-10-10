@@ -158,6 +158,9 @@ every limit must be set, the status must be `decided` and a decision record must
 - **The first look.** A gate with no journal takes the result it first sees as the day's opening result and
   as the high-water mark. A high-water mark that is still rising is journalled at most once a second, so a
   kill can lose the last second of it.
+- **The power going.** The gate writes its latches through the journal it is handed and flushes after
+  every trip, reset and mark. Whether that reaches the disk or only the operating system is the journal's
+  setting; the trader has to build it with fsync on.
 - **Whether the decision record named in the file exists.** The loader checks the id's form; the registry
   lint checks records.
 - **The trader.** Nothing calls the gate with real switches, real quotes and a real clock yet: the process

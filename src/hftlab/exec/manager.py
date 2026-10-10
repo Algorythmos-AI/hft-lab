@@ -452,6 +452,8 @@ class OrderManager:
                 if kind == "cancel":
                     tracked.cancel_sent = True
                     continue
+                if text(entry, "to") not in Stage.__members__:
+                    raise OutboxError(f"entry {entry.get('i')} names a stage that does not exist")
                 tracked.stage, tracked.reported = Stage(text(entry, "to")), whole(entry, "reported")
                 tracked.acked = bool(whole(entry, "acked"))
             elif kind == "fill":

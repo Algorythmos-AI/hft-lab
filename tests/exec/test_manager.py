@@ -6,6 +6,7 @@ import pytest
 from hftlab.book import DESK
 from hftlab.core import Fill, InstrumentKind, OrderEvent, OrderState, Side, TimeInForce
 from hftlab.exec import Cause, Fault, Held, OrderManager, Outbox, OutboxError, Proposal, Stage
+from hftlab.exec.outbox import order_fields
 from hftlab.journal import JournalError, verify
 from hftlab.safety import PaperOnlyError
 from hftlab.venues.fake import FakeConfig
@@ -517,16 +518,33 @@ def test_a_damaged_outbox_stops_the_start(tmp_path):
     floor.trade(1)
     path = tmp_path / "outbox.jsonl"
     path.write_bytes(path.read_bytes().replace(b'"quantity":20000', b'"quantity":20001', 1))
-    with pytest.raises(JournalError):
+    with pytest.raises(JournalError, match="does not match its own hash"):
         floor.restart(up=False)
-    lines = (tmp_path / "risk.jsonl").read_bytes()  # an outbox that is a valid chain but makes no sense is refused too
-    path.write_bytes(lines)
-    box = Outbox(tmp_path / "other.jsonl", fsync=False)
-    box.open()
-    box.record("stage", client_order_id="hft-control-0000", to="FILLED", reported=0, acked=1)
-    box.close()
+
+
+def test_an_outbox_that_is_a_valid_chain_and_makes_no_sense_stops_the_start_too(tmp_path):
+    floor = Floor(tmp_path)
+
+    def started_on(name: str, *entries: tuple[str, dict]) -> OrderManager:
+        box = Outbox(tmp_path / name, fsync=False)
+        box.open()
+        for kind, fields in entries:
+            box.record(kind, **fields)
+        box.close()
+        return OrderManager(floor.broker, floor.gate, Outbox(tmp_path / name), clock=floor.clock, instruments=TRADED)
+
+    order = floor.order(1)
+    intent = ("intent", {"at_ns": T0, "code": "ALLOW", "outcome": "ALLOW", **order_fields(order)})
+    moved = {"client_order_id": order.client_order_id, "reported": 0, "acked": 1}
+    assert started_on("good.jsonl", intent, ("stage", {**moved, "to": "SENT"})).in_flight() == (order.client_order_id,)
     with pytest.raises(OutboxError, match="never recorded"):
-        OrderManager(floor.broker, floor.gate, Outbox(tmp_path / "other.jsonl"), clock=floor.clock, instruments=TRADED)
+        started_on("orphan.jsonl", ("stage", {**moved, "to": "FILLED"}))
+    with pytest.raises(OutboxError, match="a stage that does not exist"):
+        started_on("stage.jsonl", intent, ("stage", {**moved, "to": "DONE"}))
+    with pytest.raises(OutboxError, match="is not an order"):
+        started_on("order.jsonl", ("intent", {**intent[1], "side": "HOLD"}))
+    with pytest.raises(OutboxError, match="quantity is not a whole number"):
+        started_on("float.jsonl", ("intent", {**intent[1], "quantity": "20000"}))
 
 
 # ---- the shadow venue, unchanged ------------------------------------------------------------------------------------

@@ -7,7 +7,8 @@ answered here. The model is pessimistic where a paper account is optimistic:
   * A marketable order crosses the spread, pays slippage, and gets no more than the size on display. The rest
     of an immediate order is cancelled; the rest of a resting one waits for the next quote.
   * A resting limit order fills only when the opposite side trades THROUGH its price, never at the touch, and
-    then at its own price.
+    then at its own price, for no more than the size on display on the side that came through. The rest goes
+    on resting.
   * Nothing fills on a quote the venue has not confirmed lately, nor inside the rollover window, and near the
     rollover the spread is taken as wider than quoted.
   * Commission is a rate on the order's traded value with a minimum per order.
@@ -316,18 +317,19 @@ class SimVenue:
         touch, displayed = (quote.ask, quote.ask_size) if buying else (quote.bid, quote.bid_size)
         limit, remaining = order.limit_price, order.quantity - ticket.filled
         marketable = limit is None or (limit >= touch if buying else limit <= touch)
+        available = min(remaining, displayed)
         if arriving:
             ticket.aggressive = marketable
         if not ticket.aggressive:
             if arriving:
                 return give_up("not immediately executable")
             assert limit is not None
-            if quote.ask < limit if buying else quote.bid > limit:  # traded through, not merely touched
-                self._fill(ticket, remaining, limit, Liquidity.MAKER, at)
+            through = quote.ask < limit if buying else quote.bid > limit  # traded through, not merely touched
+            if through and available > 0:
+                self._fill(ticket, available, limit, Liquidity.MAKER, at)
             return None
         price = self.model.taker_price(order.side, quote.bid, quote.ask, ticket.instrument, widened=phase == WIDENED)
         beyond = limit is not None and (price > limit if buying else price < limit)
-        available = min(remaining, displayed)
         if not marketable or beyond or available <= 0 or (order.tif is TimeInForce.FOK and available < remaining):
             return give_up("not immediately executable")
         self._fill(ticket, available, price, Liquidity.TAKER, at)

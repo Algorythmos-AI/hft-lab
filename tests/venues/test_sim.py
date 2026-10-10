@@ -177,6 +177,26 @@ def test_a_resting_sell_needs_the_bid_to_trade_through_too():
     assert of(rig.after(MS), Fill)[0].price == 108_600
 
 
+def test_a_resting_order_that_is_traded_through_gets_no_more_than_the_size_that_came_through():
+    rig = quoted()
+    rig.run(an_order(1, side=Side.BUY, quantity=70_000, limit=108_400))
+    seen = []
+    for ask, size in ((108_395, 30_000), (108_390, 0), (108_400, 10**6), (108_395, 25_000), (108_390, 10**6)):
+        rig.quote(ask - 10, ask, ask_size=size)  # through; through with nothing shown; at the touch; through twice
+        seen.append(rig.after(MS))
+    filled = [[(f.quantity, f.price, f.liquidity) for f in of(events, Fill)] for events in seen]
+    maker = Liquidity.MAKER
+    assert filled == [[(30_000, 108_400, maker)], [], [], [(25_000, 108_400, maker)], [(15_000, 108_400, maker)]]
+    assert [e.state for e in of(seen[0], OrderEvent)] == [OrderState.PARTIALLY_FILLED], "the rest goes on resting"
+    assert of(seen[-1], OrderEvent)[-1].state is OrderState.FILLED and rig.venue.open_orders() == ()
+    fees = [c.commission for events in seen for c in of(events, CommissionEvent)]
+    assert fees == [2_000_000, 0, 0], "one order, one minimum, however many pieces it filled in"
+
+    rig.run(an_order(2, side=Side.SELL, quantity=50_000, limit=108_600))
+    rig.quote(108_605, 108_615, bid_size=20_000, ask_size=10**6)
+    assert [f.quantity for f in of(rig.after(MS), Fill)] == [20_000], "a sell is held to the bid's size, not the ask's"
+
+
 def test_a_resting_order_can_be_cancelled_and_a_late_cancel_is_a_notice():
     rig = quoted()
     resting = an_order(limit=108_400)

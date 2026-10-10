@@ -1,8 +1,8 @@
 {
-  "corpus_checked": false,
+  "corpus_checked": true,
   "files": 151,
   "result": "pass",
   "schema": 1,
-  "terms_checked": false,
-  "tree": "61b18bdbf946fe4c0f1c99388b4aa50f5d090579"
+  "terms_checked": true,
+  "tree": "40e31380434e58e7934851386f2fe9fc5d894f3f"
 }

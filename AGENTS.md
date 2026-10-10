@@ -36,6 +36,9 @@ between the trading platforms lives in that repository's `docs/trading-platforms
      unchanged experiments, `repo:ID` references and trial rows. The rest is on the author and the reviewer.
 4. **Never build** anything on [`docs/never-build.md`](docs/never-build.md): no live-money path, no layering,
    quote stuffing or spoofing, no order placed with intent to cancel.
+   - An order reaches a venue only through `hftlab.exec.OrderManager`, which asks `hftlab.risk.RiskGate`
+     first. Never add another caller of `place` or `cancel` (`tests/venues/test_guard.py` fails on one), and
+     never set a limit in `config/risk.yaml` without the decision record that chose it.
 5. **Commits and PRs.**
    - Branch, open a PR, and let the `test` and `leakcheck` checks pass, then squash-merge. Keep the branch up
      to date with `main` before merging, so the tree that lands is the tree that was attested.
@@ -66,8 +69,8 @@ The repository is **public**. Assume every byte committed is read by strangers a
 
 ```
 src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
-               book · strategy · shadow · feasibility · registry
-               (later: features · labels · models · risk · exec · learn · ops)
+               book · strategy · shadow · feasibility · registry · risk · exec · journal
+               (later: features · labels · models · learn · ops)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
 config/        risk limits, venue capability file, trial registry, cost model, calendar, and the settings of

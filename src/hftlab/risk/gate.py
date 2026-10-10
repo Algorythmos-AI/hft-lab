@@ -371,8 +371,9 @@ class RiskGate:
         return held + buys + order.quantity <= 0
 
     def _forget(self, now: int) -> None:
-        for window, ages in ((MINUTE, self._sent), (self._config.desk.order_to_trade_window_ns, self._messages),
-                             (self._config.desk.order_to_trade_window_ns, self._trades)):  # fmt: skip
+        """Drop what has left its window: a minute for the order rate, the configured one for the trade ratio."""
+        ratio_window = self._config.desk.order_to_trade_window_ns
+        for window, ages in ((MINUTE, self._sent), (ratio_window, self._messages), (ratio_window, self._trades)):
             while ages and ages[0][0] <= now - window:
                 ages.popleft()
 

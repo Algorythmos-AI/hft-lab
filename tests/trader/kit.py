@@ -6,6 +6,7 @@ moves it, so a day of trading takes a moment and happens the same way every time
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from hftlab.calendar import Calendar
@@ -113,24 +114,38 @@ class Desk:
             requests=self.folder / "requests", should_stop=lambda: self.clock.now_ns() >= self.until,
             venue=self.broker if self.paper else None,
         )  # fmt: skip
+        return self.session()
+
+    def session(self) -> Trader:
+        """A new session on the connection in hand: what the process does by itself after a rollover."""
         self.trader = Trader(
             self.edge, self.settings, self.edge.open(), model=self.costs, calendar=Calendar(), risk=self.risk,
             notify=self.pages, config_digest=DIGEST, folder=self.folder,
         )  # fmt: skip
         return self.trader
 
-    def quotes(self, seconds: int, *, every_ms: int = 100) -> None:
-        """A walking EUR.USD book and a still USD.JPY one, from where the last call left off."""
+    def quotes(self, seconds: int, *, every_ms: int = 100, size: int | None = None) -> None:
+        """A walking EUR.USD book and a still USD.JPY one, from where the last call left off.
+
+        With `size`, every quote displays exactly that much on each side: too little, and a fill-or-kill order
+        fills at the fake broker, which does not look at the size, and not on the shadow venue, which does.
+        """
         count = seconds * 1_000 // every_ms
-        walk = {"count": count, "interval_ns": every_ms * MS, "mid": 108_505, "spread": 10, "step": 5}
-        self.market.generate_quotes("EUR.USD", start_ns=self.quoted + MS, **walk)
+        if size is None:
+            walk = {"count": count, "interval_ns": every_ms * MS, "mid": 108_505, "spread": 10, "step": 5}
+            self.market.generate_quotes("EUR.USD", start_ns=self.quoted + MS, **walk)
+        else:
+            for number in range(count):
+                bid = 108_500 + 5 * (number % 2)
+                at = self.quoted + MS + number * every_ms * MS
+                self.market.script_quote(at, "EUR.USD", bid, bid + 10, size, size)
         self.market.script_quote(self.quoted + MS, "USD.JPY", 151_230, 151_240)
         self.quoted += seconds * SECOND
 
-    def run(self, seconds: int, *, quotes: bool = True) -> bool:
+    def run(self, seconds: int, *, quotes: bool = True, size: int | None = None) -> bool:
         """Let the trader take its turns for this long. True when it saw the day close."""
         if quotes:
-            self.quotes(seconds)
+            self.quotes(seconds, size=size)
         self.until = self.clock.now_ns() + seconds * SECOND
         return self.trader.run()
 
@@ -165,6 +180,19 @@ class Desk:
             self.day(), scratch, self.settings, model=self.costs, calendar=Calendar(), risk=self.risk,
             config_digest=DIGEST,
         )  # fmt: skip
+
+    def ask(self, what: str, subject: str, value: str = "", operator: str = "owner") -> None:
+        """Leave a request for the running trader, as `python -m hftlab.trader --reset` or `--demote` does."""
+        folder = self.folder / "requests"
+        folder.mkdir(parents=True, exist_ok=True)
+        said = {"what": what, "subject": subject, "value": value, "operator": operator}
+        (folder / f"{len(list(folder.iterdir())) + 1:04d}-{what}.json").write_text(json.dumps(said))
+
+    def held(self, pair: str = "EUR.USD", sleeve: str = "control") -> tuple[int, int, int]:
+        """(the broker book's, the shadow book's, the broker's own) position of a sleeve's pair."""
+        broker = self.trader.broker_book.position(sleeve, pair).quantity if self.trader.broker_book else 0
+        shadow = self.trader.shadow_book.position(sleeve, pair).quantity
+        return broker, shadow, self.positions().get(pair, 0)
 
     def positions(self) -> dict[str, int]:
         """What the broker itself holds, by pair."""

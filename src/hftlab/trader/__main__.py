@@ -140,6 +140,8 @@ def fake(pairs: Sequence[tuple[str, InstrumentKind]], clock: SimClock) -> tuple[
 
 
 def run_live(args: argparse.Namespace, settings: Settings) -> int:
+    if not venue(settings.venue).needs_paper_lock:
+        raise TraderRefused(f"{settings.venue} is not a broker's paper account")
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
     stopping: list[int] = []
     for number in (signal.SIGTERM, signal.SIGINT):
@@ -162,8 +164,6 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         clock, notify = sim, Silent()
         source, full = (broker, broker) if risk else (MarketDataView(broker), None)
     else:
-        if not venue(settings.venue).needs_paper_lock:
-            raise TraderRefused(f"{settings.venue} is not a broker's paper account")
         clock = WallClock()
         if risk is not None:
             from hftlab.venues.ibkr.paper import paper_venue

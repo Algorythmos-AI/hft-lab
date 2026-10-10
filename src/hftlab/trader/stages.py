@@ -131,7 +131,7 @@ class Stages:
         self._covered: dict[int, int] = {}  # day -> time whole sessions ran in it
         self._open: tuple[int, int] | None = None  # (day, since) of a session that has not said it stopped
         self._refused: set[tuple[int, str]] = set()
-        self._started = False
+        self._first: int | None = None  # the day of the first session ever: nothing before it was missed
         for entry in read(journal.path)[1]:
             self._restore(entry)
         journal.open()
@@ -164,11 +164,11 @@ class Stages:
         day = day_of(at_ns)
         if self._open is not None:
             self._mark(self._open[0], DESK, UNCLEAN_STOP, at_ns)  # it started and never said it stopped
-        if self._started:
+        if self._first is not None:
             self._close_missed(day, at_ns)
         self._journal.write("session", event="start", day=day, at_ns=at_ns)
         self._journal.flush()
-        self._open, self._started = (day, at_ns), True
+        self._open, self._first = (day, at_ns), day if self._first is None else self._first
 
     def end(self, at_ns: int) -> None:
         """The session stops on purpose. The time it ran counts towards its day."""
@@ -188,6 +188,8 @@ class Stages:
                 break
             day = last_rollover(day - 1)
         else:
+            return
+        if self._first is None or day < self._first:
             return
         for sleeve in sorted(self._rollout):
             if not any(closed == day for closed, _, _ in self._days[sleeve]):
@@ -280,7 +282,8 @@ class Stages:
 
     def _restore(self, entry: dict[str, object]) -> None:
         kind, sleeve, day = entry.get("type"), entry.get("sleeve"), entry.get("day")
-        self._started = True
+        if kind == "session" and isinstance(day, int) and self._first is None:
+            self._first = day
         if kind == "stage" and isinstance(sleeve, str) and entry.get("to") in STAGES:
             if sleeve in self._stage:
                 self._stage[sleeve] = str(entry["to"])

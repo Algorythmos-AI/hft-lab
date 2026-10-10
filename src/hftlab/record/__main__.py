@@ -18,7 +18,7 @@ from typing import Any
 
 import yaml
 
-from hftlab.calendar import load_calendar
+from hftlab.calendar import CalendarError, load_calendar
 from hftlab.core import Clock, Instrument, InstrumentKind, SimClock, WallClock
 from hftlab.core._checks import pair as check_pair
 from hftlab.record.recorder import MS, Recorder, RecorderSettings
@@ -159,7 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"record: compressed {report.compressed}, handed over {report.handed_over}, kept {report.refused}")
             return 0
         return run_recorder(args, config)
-    except ConfigError as exc:
+    except (ConfigError, CalendarError) as exc:
         print(f"record: {exc}", file=sys.stderr)
         return 2
     except PaperOnlyError as exc:

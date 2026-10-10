@@ -158,9 +158,15 @@ def load_events(path: Path) -> tuple[MacroEvent, ...]:
 
 
 def load_calendar(directory: Path) -> Calendar:
-    """The calendar in `directory`: holidays.yaml and macro_events.yaml. A missing file is an empty list."""
+    """The calendar in `directory`: holidays.yaml and macro_events.yaml. Both must be there.
+
+    A file that is there and lists nothing is a calendar without exceptions. A directory or a file that is not
+    there is an error: a mistyped path must not switch the holidays and the macro blackouts off in silence.
+    """
+    if not directory.is_dir():
+        raise CalendarError(f"{directory} is not a directory: a calendar is holidays.yaml and macro_events.yaml in one")
     holidays, events = directory / "holidays.yaml", directory / "macro_events.yaml"
-    return Calendar(
-        load_closures(holidays) if holidays.exists() else (),
-        load_events(events) if events.exists() else (),
-    )
+    missing = [path.name for path in (holidays, events) if not path.is_file()]
+    if missing:
+        raise CalendarError(f"{directory} has no {' and no '.join(missing)}: an empty list is written, never assumed")
+    return Calendar(load_closures(holidays), load_events(events))

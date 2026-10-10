@@ -147,7 +147,28 @@ def test_the_shipped_calendar_is_empty_and_documents_its_format():
     for name, key in (("holidays.yaml", "closures: []"), ("macro_events.yaml", "events: []")):
         text = (ROOT / "config" / "calendar" / name).read_text()
         assert key in text and "EMPTY" in text and "offset" in text
-    assert cal.load_calendar(ROOT / "docs") == cal.Calendar(), "a directory without the files is an empty calendar"
+
+
+def test_a_calendar_that_is_not_where_it_was_said_to_be_is_an_error_not_an_empty_calendar(tmp_path):
+    """A wrong path would otherwise switch the holidays and the macro blackouts off without a word."""
+    with pytest.raises(cal.CalendarError, match="is not a directory"):
+        cal.load_calendar(tmp_path / "calender")
+    with pytest.raises(cal.CalendarError, match="is not a directory"):
+        cal.load_calendar(write(tmp_path, "holidays.yaml", "closures: []\n"))  # a file where a directory belongs
+    with pytest.raises(cal.CalendarError, match=r"has no macro_events\.yaml"):
+        cal.load_calendar(tmp_path)
+    (tmp_path / "holidays.yaml").unlink()
+    with pytest.raises(cal.CalendarError, match=r"has no holidays\.yaml and no macro_events\.yaml"):
+        cal.load_calendar(tmp_path)
+    write(tmp_path, "macro_events.yaml", "events: []\n")
+    with pytest.raises(cal.CalendarError, match=r"has no holidays\.yaml:"):
+        cal.load_calendar(tmp_path)
+    (tmp_path / "holidays.yaml").mkdir()
+    with pytest.raises(cal.CalendarError, match=r"has no holidays\.yaml:"):
+        cal.load_calendar(tmp_path)  # a directory by that name is not the file
+    (tmp_path / "holidays.yaml").rmdir()
+    write(tmp_path, "holidays.yaml", "closures: []\n")
+    assert cal.load_calendar(tmp_path) == cal.Calendar(), "both files there and both empty: no exceptions, said so"
 
 
 def test_a_holiday_shuts_the_market_inside_an_open_week(tmp_path):

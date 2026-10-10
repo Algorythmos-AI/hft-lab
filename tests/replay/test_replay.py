@@ -208,6 +208,9 @@ def test_the_check_command_prints_a_report_and_its_exit_code_says_whether_the_da
     assert cli.main(["--day", str(day), "--check"]) == 1
     assert json.loads(capsys.readouterr().out)["ok"] is False
     assert cli.main(["--day", str(day)]) == 1 and cli.main(["--day", str(tmp_path / "nowhere"), "--check"]) == 2
+    capsys.readouterr()
+    assert cli.main(["--day", str(day), "--check", "--calendar", str(tmp_path / "nowhere")]) == 2
+    assert "is not a directory" in capsys.readouterr().err, "a calendar that is not there is not an empty calendar"
 
 
 def test_strict_makes_an_unexplained_gap_a_failure(tmp_path, capsys):

@@ -261,7 +261,9 @@ def test_sigterm_stops_the_process_cleanly_with_everything_flushed(tmp_path):
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [(["--venue", "sim"], "no market data of its own"), (["--venue", "ibkr_live"], "no venue named"),
-     (["--config", "missing.yaml"], "cannot read")],
+     (["--config", "missing.yaml"], "cannot read"),
+     (["--dry-run-seconds", "1", "--calendar", "config/calender"], "config/calender is not a directory"),
+     (["--dry-run-seconds", "1", "--calendar", "config"], "config has no holidays.yaml and no macro_events.yaml")],
 )  # fmt: skip
 def test_the_command_refuses_what_it_cannot_record_or_read(arguments, message, tmp_path, capsys):
     assert cli.main(["--root", str(tmp_path), *arguments]) == 2

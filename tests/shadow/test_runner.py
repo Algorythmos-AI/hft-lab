@@ -466,6 +466,8 @@ def test_what_cannot_be_run_is_refused(tmp_path, capsys, monkeypatch):
         (["--venue", "sim"], "has no market data of its own"),
         (["--venue", "elsewhere"], "elsewhere"),
         (["--day", str(tmp_path), "--cost-model", str(tmp_path / "none.yaml")], "cannot read"),
+        (["--day", str(tmp_path), "--calendar", str(tmp_path / "none")], "is not a directory"),
+        (["--day", str(tmp_path), "--calendar", str(tmp_path)], "has no holidays.yaml and no macro_events.yaml"),
         (["--config", str(tmp_path / "none.yaml")], "cannot read"),
     ):
         assert cli.main([*arguments, "--config", config][: len(arguments) + (0 if "--config" in arguments else 2)]) == 2

@@ -4,8 +4,8 @@
 
 --check re-reads every block and verifies checksums, that the index has no hole, that the venue's sequence
 never goes back within a run, and that the gap journal matches the records. It prints a JSON report. Exit
-codes: 0 the day is intact, 1 it is not, 2 it could not be read. Unexplained gaps are counted in the report
-and do not by themselves fail the check; with --strict they do.
+codes: 0 the day is intact, 1 it is not, 2 the day or the calendar could not be read. Unexplained gaps are
+counted in the report and do not by themselves fail the check; with --strict they do.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 
-from hftlab.calendar import load_calendar
+from hftlab.calendar import CalendarError, load_calendar
 from hftlab.record.format import CorruptSegment
 from hftlab.replay.reader import check, events
 
@@ -35,7 +35,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"replay: {args.day} is not a day folder", file=sys.stderr)
         return 2
     if args.check:
-        report = check(args.day, load_calendar(args.calendar), args.gap_threshold_s * SECOND)
+        try:
+            calendar = load_calendar(args.calendar)
+        except CalendarError as exc:
+            print(f"replay: {exc}", file=sys.stderr)
+            return 2
+        report = check(args.day, calendar, args.gap_threshold_s * SECOND)
         print(json.dumps(report.as_dict(), indent=2))
         return 0 if report.ok and not (args.strict and report.unexplained) else 1
     try:

@@ -21,8 +21,7 @@ from typing import Any
 
 import yaml
 
-from hftlab.calendar import load_calendar
-from hftlab.calendar.events import CalendarError
+from hftlab.calendar import CalendarError, load_calendar
 from hftlab.core import Instrument, InstrumentKind, WallClock
 from hftlab.core._checks import pair as check_pair
 from hftlab.record.format import CorruptSegment, RecordedEvent

@@ -603,3 +603,50 @@ def test_fills_that_land_between_two_steps_of_reconciling_and_are_reported_after
     floor.pump()
     floor.pump(50 * MS)
     assert floor.oms.faults == () and floor.gate.latches() == () and floor.held() == (20_000, 20_000, 20_000)
+
+
+# ---- a restart is not a reset of the gate's counts (ADR 0015, addendum) --------------------------------------------
+
+
+def test_a_restart_does_not_empty_the_order_rate_window(tmp_path):
+    floor = Floor(tmp_path, changes={"per_sleeve/control/max_orders_per_minute": 3})
+    for number in (1, 2, 3):
+        floor.trade(number)
+    assert floor.oms.propose(floor.order(4)).code == "ORDER_RATE_SLEEVE"
+    for number in (5, 6, 7):  # a crash loop: every start finds the window as it was left
+        floor.restart()
+        assert floor.oms.propose(floor.order(number)).code == "ORDER_RATE_SLEEVE"
+    floor.pump(60 * SECOND)
+    floor.tick()
+    floor.pump(MS)
+    assert floor.oms.propose(floor.order(8)).sent, "time empties the window; a restart does not"
+
+
+def test_a_restart_does_not_forget_the_orders_that_never_traded(tmp_path):
+    floor = Floor(tmp_path, changes={"desk/max_order_to_trade_ratio": 3})
+    resting = [floor.trade(number, limit=108_400) for number in (1, 2)]
+    assert floor.oms.withdraw(resting[0].client_order_id)
+    floor.pump(50 * MS)
+    assert floor.oms.propose(floor.order(3)).code == "ORDER_TO_TRADE_SLEEVE", "two orders and a cancel: three messages"
+    floor.restart()
+    assert floor.oms.propose(floor.order(4)).code == "ORDER_TO_TRADE_SLEEVE"
+
+
+def test_a_restart_goes_on_counting_the_venues_rejects(tmp_path):
+    floor = Floor(tmp_path, changes={"desk/reject_streak_breaker": 3}, reject=lambda order: "margin")
+    floor.trade(1)
+    floor.trade(2)
+    assert floor.gate.latches() == ()
+    floor.restart()
+    floor.trade(3)
+    assert floor.gate.latches() == ("REJECT_STREAK",)
+
+
+def test_an_order_in_flight_at_a_restart_holds_its_size_at_the_gate_until_the_venue_has_been_asked(tmp_path):
+    floor = Floor(tmp_path, changes={"per_pair/EUR.USD/max_position": 20_000})
+    resting = floor.trade(1, limit=108_400)
+    floor.restart(up=False)
+    assert floor.gate._reserved("EUR.USD", "desk") == (20_000, 0), "it may still fill: the limit counts it"
+    floor.up()
+    assert floor.stage(resting) == "CANCELLED" and floor.gate._reserved("EUR.USD", "desk") == (0, 0)
+    assert floor.oms.propose(floor.order(2)).sent

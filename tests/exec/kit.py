@@ -26,6 +26,7 @@ WIDE = {
     "per_pair/EUR.USD/max_position": 10**9, "per_pair/EUR.USD/max_order_size": 10**9,
     "per_pair/USD.JPY/max_position": 10**9, "per_pair/USD.JPY/max_order_size": 10**9,
     "per_pair/EUR.USD/price_collar_ticks": 1_000, "per_pair/USD.JPY/price_collar_ticks": 1_000,
+    "per_pair/EUR.USD/exit_collar_ticks": 1_000, "per_pair/USD.JPY/exit_collar_ticks": 1_000,
     "per_sleeve/control/max_position": 10**9, "per_sleeve/ml/max_position": 10**9,
     "per_sleeve/control/max_orders_per_minute": 10**6, "per_sleeve/ml/max_orders_per_minute": 10**6,
     "desk/max_orders_per_minute": 10**6, "desk/max_order_to_trade_ratio": 10**6, "desk/reject_streak_breaker": 10**6,

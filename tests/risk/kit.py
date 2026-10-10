@@ -37,7 +37,8 @@ def _latches() -> dict:
 
 def _pair() -> dict:
     return {
-        "max_position": 100_000, "max_order_size": 60_000, "price_collar_ticks": 10, "max_spread_ticks": 4,
+        "max_position": 100_000, "max_order_size": 60_000, "price_collar_ticks": 10, "exit_collar_ticks": 40,
+        "max_spread_ticks": 4,
         "stale_quote_ms": 2_000,
     }  # fmt: skip
 
@@ -63,7 +64,7 @@ def _limits() -> dict:
             "weekly_close_no_entry_minutes": 30,
         },
         "reconciliation": {"grace_seconds": 5},
-        "switches": {"kill": KILL, "flatten": FLATTEN},
+        "switches": {"kill": KILL, "flatten": FLATTEN, "flatten_retry_seconds": 5},
     }  # fmt: skip
 
 

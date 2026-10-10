@@ -188,35 +188,34 @@ def test_across_the_weekend_gap_entries_stop_before_the_close_and_nothing_is_sen
     assert floor.held() == (20_000, 20_000, 20_000) and floor.oms.faults == ()
 
 
-def test_a_spread_that_blows_out_at_the_rollover_takes_no_order_and_exits_pass_when_it_comes_back(tmp_path):
+def test_a_spread_that_blows_out_at_the_rollover_takes_no_entry_and_still_lets_a_position_be_closed(tmp_path):
     rollover = rollover_near(T0 + 12 * HOUR)
-    floor = Floor(tmp_path, changes={"per_pair/EUR.USD/price_collar_ticks": 10}, at_ns=rollover - 15 * MINUTE)
+    collars = {"per_pair/EUR.USD/price_collar_ticks": 10, "per_pair/EUR.USD/exit_collar_ticks": 100}
+    floor = Floor(tmp_path, changes=collars, at_ns=rollover - 15 * MINUTE)
     floor.trade(1)
     floor.pump(5 * MINUTE)
     assert floor.oms.propose(floor.order(2)).code == "ROLLOVER_WINDOW", "ten minutes before: exits only"
     floor.pump(10 * MINUTE)
     floor.tick(BID - 300, ASK + 300, pair="EUR.USD")  # the rollover: sixty times the usual spread
     floor.pump(MS)
-    entry, out = floor.gate.check(floor.order(3)), floor.gate.check(floor.order(4, SELL))
+    entry = floor.gate.check(floor.order(3))
     assert [r.value for r in entry.reasons] == ["PRICE_COLLAR", "SPREAD_TOO_WIDE", "ROLLOVER_WINDOW"]
-    assert out.code == "PRICE_COLLAR" and not out.allowed, "nothing is sold into a blown-out book, not even an exit"
+    assert floor.gate.check(floor.order(4, SELL, 40_000)).code == "PRICE_COLLAR", "a sell through zero is no exit"
     floor.switched.add(FLATTEN)
-    for close in floor.gate.flatten_orders():
-        assert floor.oms.propose(close).code == "PRICE_COLLAR"
-    assert len(floor.at_broker()) == 1 and floor.held()[0] == 20_000
-    floor.pump(2 * MINUTE)
-    floor.tick(BID, ASK, pair="EUR.USD")  # the spread comes back, still inside the window
-    floor.pump(MS)
     (close,) = floor.gate.flatten_orders()
-    assert floor.oms.propose(close).sent
+    assert floor.oms.propose(close).sent, "the close is inside the exit collar: the blown-out book does not hold it"
     floor.pump(50 * MS)
     assert floor.held() == (0, 0, 0) and floor.gate.flatten_orders() == ()
     floor.switched.clear()
-    assert floor.oms.propose(floor.order(5)).code == "ROLLOVER_WINDOW"
+    assert floor.oms.propose(floor.order(5)).code == "PRICE_COLLAR"
+    floor.pump(2 * MINUTE)
+    floor.tick(BID, ASK, pair="EUR.USD")  # the spread comes back, still inside the window
+    floor.pump(MS)
+    assert floor.oms.propose(floor.order(6)).code == "ROLLOVER_WINDOW"
     floor.pump(18 * MINUTE)
     floor.tick(BID + 5, ASK + 5, pair="EUR.USD")
     floor.pump(MS)
-    assert floor.oms.propose(floor.order(6)).sent
+    assert floor.oms.propose(floor.order(7)).sent
 
 
 # ---- the books ------------------------------------------------------------------------------------------------------

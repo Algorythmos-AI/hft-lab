@@ -440,18 +440,27 @@ class OrderManager:
             self._gate.observe(OrderEvent(order_id, state, now, 0, filled_quantity=tracked.booked))
 
     def _replay(self, entries: list[dict[str, object]]) -> None:
-        """Rebuild from the outbox: every order, every booked fill, and the stage each order was last seen in."""
+        """Rebuild from the outbox: every order, every booked fill, and the stage each order was last seen in.
+
+        The gate is handed back what it would otherwise have forgotten: when each order was allowed, each
+        cancel sent and each order first traded, and which orders may still fill (ADR 0015, addendum).
+        """
+        allowed: list[tuple[int, Order]] = []
+        cancels: list[tuple[int, str]] = []
+        trades: list[tuple[int, str]] = []
         for entry in entries:
             kind = entry.get("type")
             if kind == "intent":
                 order = order_from(entry)
                 self._orders[order.client_order_id] = Tracked(order, Stage.JOURNALLED)
+                allowed.append((whole(entry, "at_ns"), order))
             elif kind in ("stage", "cancel"):
                 tracked = self._orders.get(text(entry, "client_order_id"))
                 if tracked is None:
                     raise OutboxError(f"entry {entry.get('i')} is about an order the outbox never recorded")
                 if kind == "cancel":
                     tracked.cancel_sent = True
+                    cancels.append((whole(entry, "at_ns"), tracked.order.client_order_id))
                     continue
                 if text(entry, "to") not in Stage.__members__:
                     raise OutboxError(f"entry {entry.get('i')} names a stage that does not exist")
@@ -467,6 +476,8 @@ class OrderManager:
                 self._latest_fill_ns = max(self._latest_fill_ns, fill.venue_ts_ns or fill.ts_ns)
                 owner = self._orders.get(fill.client_order_id)
                 if booked and owner is not None:
+                    if not owner.fills:
+                        trades.append((fill.ts_ns, owner.order.sleeve))
                     owner.fills.add(fill.fill_id)
                     owner.booked += fill.quantity
             elif kind == "commission":
@@ -475,6 +486,13 @@ class OrderManager:
                 self._gate.observe(charge)
                 self._charged[charge.fill_id] = (charge.commission, charge.currency)
         lost = [tracked for tracked in self._orders.values() if tracked.stage in IN_FLIGHT]
+        self._gate.recall(
+            allowed=allowed,
+            in_flight={tracked.order.client_order_id: tracked.booked for tracked in lost},
+            unanswered={tracked.order.client_order_id for tracked in lost if not tracked.acked},
+            cancels=cancels,
+            trades=trades,
+        )
         for tracked in lost:
             self._move(tracked, Stage.UNKNOWN, Cause.RESTART)
         self._outbox.record("start", at_ns=self._clock.now_ns(), orders=len(self._orders), in_flight=len(lost))

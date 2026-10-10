@@ -34,6 +34,7 @@ per_pair:                           # one block per traded pair, from config/ven
     max_position: null              # PLACEHOLDER: long or short, for the desk and for each sleeve, orders in flight counted in full
     max_order_size: null            # PLACEHOLDER
     price_collar_ticks: null        # PLACEHOLDER: a limit price, or the touch a market order would take, further than this from the mid is refused
+    exit_collar_ticks: null         # PLACEHOLDER: the collar of an order that can only reduce the sleeve's position. Never narrower than price_collar_ticks
     max_spread_ticks: null          # PLACEHOLDER: no entries while the quoted spread is wider
     stale_quote_ms: null            # PLACEHOLDER: no order on a quote the venue has not confirmed for this long
 
@@ -57,3 +58,4 @@ reconciliation:
 switches:                           # files in the platform's state directory; read before every verdict
   kill: KILL                        # no new entries, exits still managed
   flatten: FLATTEN                  # no new entries, and every open position is closed
+  flatten_retry_seconds: null       # PLACEHOLDER: how long before a close that was refused is proposed again

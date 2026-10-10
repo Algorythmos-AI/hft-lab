@@ -60,7 +60,7 @@ holds that for generated scripts.
 | `KILL`, `FLATTEN`, or switches that cannot be read | `KILL_SWITCH`, `FLATTEN_SWITCH`, `SWITCHES_UNREADABLE` | exits only |
 | The market is open | `MARKET_SHUT` | refuse |
 | There is a quote, the venue confirmed it lately, and it is not crossed | `NO_QUOTE`, `STALE_QUOTE`, `CROSSED_QUOTE` | refuse |
-| The price is within the collar of the mid | `PRICE_COLLAR` | refuse |
+| The price is within the collar of the mid: the entry collar, or the wider exit collar for an order that can only reduce | `PRICE_COLLAR` | refuse |
 | The spread is within its guard | `SPREAD_TOO_WIDE` | exits only |
 | No macro-event blackout for the pair's currencies | `MACRO_BLACKOUT` | exits only |
 | Outside the window around the 17:00 New York rollover | `ROLLOVER_WINDOW` | exits only |
@@ -83,7 +83,8 @@ Details that decide outcomes:
   has not seen yet. Time never releases it. So a FILLED report that overtakes its fill does not free room
   the position is about to take.
 - **Collar.** A limit order is measured at its limit price. A market order is measured at the touch it
-  would take, so a book whose half-spread is beyond the collar takes no market order at all.
+  would take, so a book whose half-spread is beyond the collar takes no market order at all. An order that
+  can only reduce the sleeve's position is measured against `exit_collar_ticks` instead (addendum 1).
 - **Rates and the trade ratio.** Every allowed order counts, entry or exit, and so does every cancel. The
   ratio allows `ratio` messages per order that traded in the window, and `ratio` before the first trade.
   There is no exemption: these limits are also what makes the patterns on the
@@ -138,8 +139,9 @@ every limit must be set, the status must be `decided` and a decision record must
 - A quote is old unless the venue has said otherwise lately, and the clock cannot make it younger.
 - A switch it cannot read is a switch that is on.
 - A loss is not forgiven by time, by a restart, or by the price coming back.
-- An exit still has to respect the venue: rate limits, the trade ratio, the collar and the stale-quote stop
-  hold for exits too. A stuck exit waits for the window or the book; it is not forced through.
+- An exit still has to respect the venue: rate limits, the trade ratio, a collar and the stale-quote stop
+  hold for exits too. A stuck exit waits for the window or the book; it is not forced through. Its collar
+  is wider than an entry's (addendum 1).
 - Its own book refusing a fill, or the order manager reporting a fault, stops entries until an operator has
   looked.
 
@@ -153,9 +155,8 @@ every limit must be set, the status must be `decided` and a decision record must
 - **Closing a position.** A latch stops entries. It sends nothing. Getting flat is a sleeve's exit or an
   operator's `FLATTEN`, and the closes `FLATTEN` proposes still have to be passed on by the trader.
 - **A loss between two quotes.** A result is only as recent as the last quote.
-- **Memory across a restart, beyond the latches and their marks.** The orders-per-minute windows, the trade
-  ratio, the running count of rejects and the ids already ruled on start empty. The order manager's outbox
-  is what keeps an id from being sent twice.
+- **Memory across a restart** is no longer a gap (addendum 2). What is still lost with the process is the
+  last second of a rising high-water mark, as below.
 - **The first look.** A gate with no journal takes the result it first sees as the day's opening result and
   as the high-water mark. A high-water mark that is still rising is journalled at most once a second, so a
   kill can lose the last second of it.
@@ -169,3 +170,26 @@ every limit must be set, the status must be `decided` and a decision record must
 
 A daily latch that does not clear with the day is stricter than its name. That is deliberate: the first
 runs on a paper account are where a loss should bring a person, not a calendar.
+
+## Addendum, 2026-10-11: two defects of the first version, settled with the trader
+
+1. **Exits have a collar of their own.** The first version measured every order against one collar, so a
+   spread that blew out refused the `FLATTEN` closes together with the entries: the guard blocked the very
+   orders that take risk off. Now an order that can only reduce the sleeve's position is measured against
+   `per_pair.<pair>.exit_collar_ticks`. It is a collar, never none, and the loader refuses a file in which
+   it is narrower than `price_collar_ticks`. "Can only reduce" is the meaning of section 1, with every order
+   of the sleeve still in flight counted as filled, so the wider collar cannot be used to open a position,
+   to go through zero, or by a second exit behind a first. A `FLATTEN` close that was not allowed is proposed
+   again for its line only after `switches.flatten_retry_seconds`; a close that was allowed is followed by
+   the rest as soon as it has ended. Tests: `tests/risk/test_gate.py` (the exit collar and the interval) and
+   `tests/faults/test_faults.py` (the rollover blow-out).
+2. **A restart is not a reset.** The first version kept the orders-per-minute windows, the trade ratio, the
+   running count of rejects and the ids already ruled on in memory only, so a crash loop emptied them. Now
+   the order manager, which replays its outbox at every start, hands the gate back when each order was
+   allowed, each cancel sent and each order first traded, and which orders may still fill
+   (`RiskGate.recall`): the windows hold what they held, an id is ruled on once across restarts, and an
+   order in flight holds its size against the position limit until reconciliation has settled it. The
+   running count of rejects is written to the gate's own journal whenever it changes, beside the latches.
+   The outbox is the one record of what was sent, and it is on the disk before every send, so nothing is
+   written twice. Tests: `tests/risk/test_gate.py` and `tests/exec/test_manager.py` (a restart is not a
+   reset).

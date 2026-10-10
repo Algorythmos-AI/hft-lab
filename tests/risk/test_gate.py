@@ -744,3 +744,155 @@ def test_the_books_own_names_are_not_sleeves(tmp_path):
     for name in ("desk", "unattributed"):
         with pytest.raises(RiskConfigError, match="keeps for itself"):
             parse_risk_config(raw({f"per_sleeve/{name}": raw()["per_sleeve"]["ml"]}))
+
+
+# ---- exits have their own collar; a close that was refused waits its interval (ADR 0015, addendum) ------------------
+
+
+def test_an_order_that_only_reduces_the_position_is_held_to_the_wider_exit_collar_and_still_to_a_collar(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/EUR.USD/max_spread_ticks": 10_000})  # entry collar 10 increments, exit collar 40
+    desk.hold(1)
+    desk.quote(108_355, 108_655)  # each touch is thirty increments from the mid
+    assert desk.code(an_order(2)) == "PRICE_COLLAR", "a buy would add: the entry collar holds"
+    assert desk.check(an_order(3, SELL)).allowed, "a sell of what is held is inside the exit collar"
+    desk.end(an_order(3, SELL))
+    desk.quote(108_300, 108_710)  # forty-one increments: beyond the exit collar too
+    assert desk.code(an_order(4, SELL)) == "PRICE_COLLAR", "wider is not absent"
+    assert desk.code(an_order(5, SELL, limit=108_300)) == "PRICE_COLLAR", "and it holds for a limit price as well"
+
+
+def test_the_exit_collar_cannot_be_used_to_open_or_to_go_through_zero(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/EUR.USD/max_spread_ticks": 10_000})
+    desk.quote(108_355, 108_655)
+    assert desk.code(an_order(1, SELL)) == "PRICE_COLLAR", "flat: a sell opens a short"
+    desk.quote()
+    desk.hold(2)
+    desk.quote(108_355, 108_655)
+    assert desk.code(an_order(3, SELL, 40_000)) == "PRICE_COLLAR", "a sell of more than is held ends short"
+    first = an_order(4, SELL)
+    assert desk.check(first).allowed
+    assert desk.code(an_order(5, SELL)) == "PRICE_COLLAR", "with the first exit in flight a second could go through"
+    desk.end(first)
+    assert desk.check(an_order(6, SELL)).allowed
+    assert desk.code(an_order(7, sleeve="ml", side=SELL)) == "PRICE_COLLAR", "another sleeve's position is not its exit"
+
+
+def test_a_file_whose_exit_collar_is_narrower_than_its_entry_collar_is_refused():
+    with pytest.raises(RiskConfigError, match=r"per_pair\.EUR\.USD\.exit_collar_ticks is narrower"):
+        limits({"per_pair/EUR.USD/exit_collar_ticks": 9})
+    assert limits({"per_pair/EUR.USD/exit_collar_ticks": 10}).pairs["EUR.USD"].exit_collar_ticks == 10
+
+
+def test_a_flatten_close_that_was_refused_is_proposed_again_only_after_the_configured_interval(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/EUR.USD/max_spread_ticks": 10_000})  # the interval is five seconds
+    desk.hold(1)
+    desk.switched.add(FLATTEN)
+    desk.quote(108_300, 108_710)  # beyond the exit collar
+    (close,) = desk.gate.flatten_orders()
+    assert desk.code(close) == "PRICE_COLLAR"
+    assert desk.gate.flatten_orders() == (), "not again at once: a book that stays bad costs one refusal an interval"
+    desk.after(5 * SECOND - 1)
+    desk.quote(108_300, 108_710)
+    assert desk.gate.flatten_orders() == ()
+    desk.after(1)
+    (again,) = desk.gate.flatten_orders()
+    assert again.client_order_id != close.client_order_id and desk.code(again) == "PRICE_COLLAR"
+    desk.after(5 * SECOND)
+    desk.quote(108_355, 108_655)  # inside the exit collar
+    (third,) = desk.gate.flatten_orders()
+    assert desk.check(third).allowed
+    desk.fill(third, 108_355)
+    assert desk.gate.flatten_orders() == () and desk.gate.book.open_lines() == {}
+
+
+def test_a_close_that_was_allowed_is_followed_by_the_rest_without_waiting(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/EUR.USD/max_order_size": 20_000})
+    desk.hold(1)
+    desk.hold(2)
+    desk.switched.add(FLATTEN)
+    (first,) = desk.gate.flatten_orders()
+    assert desk.check(first).allowed
+    desk.fill(first, BID)
+    (rest,) = desk.gate.flatten_orders()
+    assert rest.quantity == 20_000 and desk.check(rest).allowed
+
+
+# ---- a restart is not a reset (ADR 0015, addendum) ------------------------------------------------------------------
+
+
+def test_the_running_count_of_rejects_is_in_the_journal_and_a_restart_goes_on_counting(tmp_path):
+    desk = Desk(tmp_path, ROOMY)  # the breaker trips at three
+
+    def rejected(number: int) -> None:
+        order = an_order(number, limit=108_500)
+        assert desk.check(order).allowed
+        desk.end(order, OrderState.REJECTED)
+
+    rejected(1)
+    rejected(2)
+    assert [e["rejects"] for e in desk.journal() if e["type"] == "streak"] == [1, 2]
+    desk.restart()
+    desk.quote()
+    assert desk.gate.latches() == ()
+    rejected(3)
+    assert desk.gate.latches() == ("REJECT_STREAK",), "two before the restart and one after are three"
+    desk.gate.reset("REJECT_STREAK", operator="owner")
+    desk.restart()
+    desk.quote()
+    rejected(4)
+    rejected(5)
+    assert desk.gate.latches() == (), "the reset is in the journal too: the count started again from nothing"
+
+
+def test_what_the_outbox_hands_back_fills_the_rate_windows_again_and_they_empty_at_the_same_moments(tmp_path):
+    desk = Desk(tmp_path, {**ROOMY, "per_sleeve/control/max_orders_per_minute": 3})
+    before = [(desk.clock.now_ns() + n * 10 * SECOND, an_order(n + 1)) for n in (0, 1, 2)]
+    desk.after(30 * SECOND)
+    desk.restart()
+    desk.quote()
+    assert desk.check(an_order(9)).allowed, "a gate that is told nothing starts with empty windows"
+    desk.restart()
+    desk.quote()
+    desk.gate.recall(allowed=before, in_flight={}, unanswered=(), cancels=(), trades=())
+    assert desk.code(an_order(4)) == "ORDER_RATE_SLEEVE", "three were allowed in the last minute, before the restart"
+    assert desk.code(an_order(1)) == "DUPLICATE_ORDER", "and an id is ruled on once, across restarts"
+    desk.after(30 * SECOND)
+    desk.quote()
+    assert desk.check(an_order(5)).allowed, "sixty seconds after the first of them, it no longer counts"
+    assert desk.code(an_order(6)) == "ORDER_RATE_SLEEVE"
+
+
+def test_what_the_outbox_hands_back_counts_towards_the_trade_ratio(tmp_path):
+    desk = Desk(tmp_path, {**ROOMY, "desk/max_order_to_trade_ratio": 2})
+    now = desk.clock.now_ns()
+    first, second = an_order(1, limit=108_500), an_order(2)
+    desk.restart()
+    desk.quote()
+    desk.gate.recall(
+        allowed=[(now, first), (now, second)], in_flight={}, unanswered=(),
+        cancels=[(now, first.client_order_id)], trades=(),
+    )  # fmt: skip
+    assert desk.code(an_order(3)) == "ORDER_TO_TRADE_SLEEVE", "two orders and a cancel, and nothing traded"
+    desk.gate.recall(allowed=(), in_flight={}, unanswered=(), cancels=(), trades=[(now, "control"), (now, "control")])
+    assert desk.check(an_order(4)).allowed, "two orders that traded allow four messages"
+    assert desk.code(an_order(5)) == "ORDER_TO_TRADE_SLEEVE"
+
+
+def test_an_order_in_flight_before_the_restart_holds_its_size_and_its_first_answer_is_still_counted(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/EUR.USD/max_position": 40_000, "desk/reject_streak_breaker": 1})
+    now = desk.clock.now_ns()
+    resting, part = an_order(1, limit=108_500), an_order(2, quantity=40_000)
+    desk.restart()
+    desk.quote()
+    desk.gate.recall(allowed=[(now, resting)], in_flight={resting.client_order_id: 0}, unanswered=(), cancels=(),
+                     trades=())  # fmt: skip
+    assert desk.code(an_order(3, quantity=40_000)) == "POSITION_LIMIT", "it may still fill: its size is held"
+    desk.end(resting, OrderState.REJECTED)
+    assert desk.gate.latches() == (), "the venue had answered it before the restart: no second count"
+    assert desk.check(an_order(4, quantity=40_000)).allowed
+    desk.end(an_order(4, quantity=40_000))
+    desk.gate.recall(allowed=[(now, part)], in_flight={part.client_order_id: 20_000},
+                     unanswered={part.client_order_id}, cancels=(), trades=())  # fmt: skip
+    assert desk.code(an_order(5, quantity=40_000)) == "POSITION_LIMIT", "half of it is booked, half may still fill"
+    desk.end(part, OrderState.REJECTED)
+    assert desk.gate.latches() == ("REJECT_STREAK",), "never answered before the restart: its reject counts now"

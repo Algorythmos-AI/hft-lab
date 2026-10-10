@@ -13,6 +13,9 @@ The loader is strict because a limit that was mistyped is a limit that is not th
 Money in different currencies is never added, so a loss latch is written per currency, and the file must set
 one for the quote currency of every pair it configures, for the desk and for every sleeve.
 
+An order that can only reduce a position has a collar of its own, `exit_collar_ticks`, which the loader refuses
+when it is narrower than the pair's `price_collar_ticks`: wider, never absent (ADR 0015, addendum).
+
 Two keys are kept and must stay null: `desk.max_gross_exposure` and `desk.max_leverage`. Both need a position
 valued in the account currency, and nothing in the platform converts a currency. A value there would be a
 limit nobody enforces, so the loader refuses one.
@@ -51,14 +54,17 @@ _DESK: Final = frozenset(
         "order_to_trade_window_seconds", "reject_streak_breaker", "loss_latches",
     }
 )  # fmt: skip
-_PAIR: Final = frozenset({"max_position", "max_order_size", "price_collar_ticks", "max_spread_ticks", "stale_quote_ms"})
+_PAIR: Final = frozenset(
+    {"max_position", "max_order_size", "price_collar_ticks", "exit_collar_ticks", "max_spread_ticks", "stale_quote_ms"}
+)
 _SLEEVE: Final = frozenset({"max_position", "max_orders_per_minute", "loss_latches"})
 _LATCH: Final = frozenset({"daily_loss", "drawdown"})
 _GUARDS: Final = frozenset(
     {"rollover_no_entry_minutes_before", "rollover_no_entry_minutes_after", "weekly_close_no_entry_minutes"}
 )
 _RECONCILIATION: Final = frozenset({"grace_seconds"})
-_SWITCHES: Final = frozenset({"kill", "flatten"})
+_SWITCHES: Final = frozenset({"kill", "flatten", "flatten_retry_seconds"})
+_SWITCH_FILES: Final = ("flatten", "kill")
 
 
 class RiskConfigError(ValueError):
@@ -82,6 +88,7 @@ class PairLimits:
     max_position: int  # base-currency units, long or short; holds for the desk and for each sleeve
     max_order_size: int
     price_collar_ticks: int  # price increments from the mid
+    exit_collar_ticks: int  # the same, for an order that can only reduce the sleeve's position; never the narrower
     max_spread_ticks: int  # price increments
     stale_quote_ns: int
 
@@ -122,6 +129,7 @@ class RiskConfig:
     reconciliation_grace_ns: int
     kill_switch: str
     flatten_switch: str
+    flatten_retry_ns: int  # the least time between two closes proposed for a line whose last one was refused
 
 
 class _Reader:
@@ -222,9 +230,13 @@ def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConf
             max_position=read.whole(block, where, "max_position"),
             max_order_size=read.whole(block, where, "max_order_size"),
             price_collar_ticks=read.whole(block, where, "price_collar_ticks", least=0),
+            exit_collar_ticks=read.whole(block, where, "exit_collar_ticks", least=0),
             max_spread_ticks=read.whole(block, where, "max_spread_ticks", least=0),
             stale_quote_ns=read.whole(block, where, "stale_quote_ms") * MS,
         )
+        both_set = not {f"{where}.exit_collar_ticks", f"{where}.price_collar_ticks"} & set(read.nulls)
+        if both_set and pairs[name].exit_collar_ticks < pairs[name].price_collar_ticks:
+            read.problems.append(f"{where}.exit_collar_ticks is narrower than price_collar_ticks: wider, never tighter")
     if not pairs:
         read.problems.append("per_pair must configure at least one pair")
 
@@ -267,7 +279,8 @@ def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConf
 
     switches = read.section(top.get("switches"), "switches", _SWITCHES)
     names = []
-    for key in sorted(_SWITCHES):
+    retry_ns = read.whole(switches, "switches", "flatten_retry_seconds") * SECOND
+    for key in _SWITCH_FILES:
         try:
             names.append(check_token(f"switches.{key}", switches.get(key)))
         except ValueError:
@@ -294,6 +307,7 @@ def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConf
         reconciliation_grace_ns=grace_ns,
         kill_switch=kill,
         flatten_switch=flatten,
+        flatten_retry_ns=retry_ns,
     )
 
 

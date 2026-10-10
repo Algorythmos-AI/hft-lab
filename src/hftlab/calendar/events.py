@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-from hftlab.calendar.week import MINUTE, SECOND, in_rollover_window, is_week_open
+from hftlab.calendar.week import MINUTE, SECOND, in_rollover_window, is_week_open, next_close, next_open
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
@@ -78,14 +78,22 @@ class Calendar:
             return "weekend"
         return next((c.name for c in self.closures if c.start_ns <= ts_ns < c.end_ns), None)
 
-    def open_ns_between(self, start_ns: int, end_ns: int, step_ns: int = MINUTE) -> int:
-        """How long the market was open in `[start_ns, end_ns)`, to within `step_ns`. Enough to explain a gap."""
+    def open_ns_between(self, start_ns: int, end_ns: int) -> int:
+        """Exactly how long the market was open in `[start_ns, end_ns)`."""
         total, at = 0, start_ns
         while at < end_ns:
-            span = min(step_ns, end_ns - at)
-            if self.is_open(at):
-                total += span
-            at += span
+            if not is_week_open(at):
+                at = min(end_ns, next_open(at))
+                continue
+            until = min(end_ns, next_close(at))
+            shut, covered = 0, at
+            for closure in sorted(self.closures, key=lambda c: c.start_ns):
+                begin, finish = max(closure.start_ns, covered), min(closure.end_ns, until)
+                if finish > begin:
+                    shut += finish - begin
+                    covered = finish
+            total += until - at - shut
+            at = until
         return total
 
     def in_blackout(self, ts_ns: int, pair: str | None = None) -> bool:

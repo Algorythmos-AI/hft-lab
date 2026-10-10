@@ -232,3 +232,18 @@ def test_the_same_instant_written_with_two_offsets_is_one_instant():
     assert ev.parse_instant("2026-11-06T13:30:00Z", "at") == ev.parse_instant("2026-11-07T00:30:00+11:00", "at")
     assert ev.parse_instant("2026-11-06T13:30:00.250Z", "at") % SECOND == 250_000_000
     assert timedelta(0) == timedelta(0)
+
+
+@given(times, st.integers(0, 14 * 24 * 3600), st.integers(-3 * 24 * 3600, 3 * 24 * 3600), st.integers(0, 24 * 3600))
+def test_open_time_is_exact_to_the_nanosecond_and_adds_up(start, length, closure_offset, closure_length):
+    """Counted second by second it would take for ever; instead check it against its own parts and its bounds."""
+    end = start + length * SECOND
+    shut = start + closure_offset * SECOND
+    calendar = cal.Calendar(closures=(cal.Closure("x", shut, shut + closure_length * SECOND),))
+    whole, plain = calendar.open_ns_between(start, end), cal.Calendar().open_ns_between(start, end)
+    middle = start + (length // 3) * SECOND
+    assert whole == calendar.open_ns_between(start, middle) + calendar.open_ns_between(middle, end)
+    assert 0 <= plain - whole <= closure_length * SECOND and 0 <= whole <= end - start
+    if calendar.open_ns_between(start, start + 1) == 1:
+        assert calendar.is_open(start)
+    assert calendar.open_ns_between(start, start + 1) == (1 if calendar.is_open(start) else 0)

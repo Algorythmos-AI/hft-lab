@@ -1,0 +1,11 @@
+[Unit]
+Description=Start HFT Lab backup: nightly, after the other desks' evening jobs
+
+[Timer]
+OnCalendar=*-*-* 22:30:00 America/New_York
+AccuracySec=10s
+Persistent=true
+Unit=hft-backup.service
+
+[Install]
+WantedBy=timers.target

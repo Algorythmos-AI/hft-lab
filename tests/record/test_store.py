@@ -1,26 +1,33 @@
 """The store: hourly segments, recovery after a kill, a quota that is never broken, and no deletion before a copy."""
 from __future__ import annotations
 
+import errno
 import os
 import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 from hftlab.record import format as fmt
+from hftlab.record.segment import count_records
 from hftlab.record.store import (
+    JOURNAL,
     DirectoryOffload,
     Housekeeper,
     QuotaExceeded,
+    StoreIOError,
     StoreSettings,
+    append_line,
     days,
     file_sha256,
+    measure,
     read_journal,
     segments,
 )
-from tests.record.kit import HOUR, MS, ROOMY, SECOND, T0, a_store, everything, indices, quote
+from tests.record.kit import HOUR, MS, ROOMY, SECOND, T0, a_disk, a_store, everything, indices, quote
 from tests.support import ROOT
 
 
@@ -184,6 +191,159 @@ def test_room_made_by_the_offload_lets_recording_continue(tmp_path):
     kept, sent = names(tmp_path / "rec"), sorted(p.name for p in (tmp_path / "away" / "2026-10-14").iterdir())
     assert kept and sent and all(name.endswith(".seg.gz") for name in sent)
     assert len(kept) + len(sent) == 6, "every hour is in exactly one place"
+
+
+# ---- a write the operating system refuses ---------------------------------------------------------------------------
+
+
+def test_a_write_the_disk_refuses_is_named_taken_back_and_ends_the_stores_writing(tmp_path):
+    disk = a_disk()
+    store = a_store(tmp_path, writer=disk)
+    for i in range(12):  # blocks of 8: one block is on disk, four records are still in memory
+        quote(store, T0 + i * MS)
+    path = tmp_path / "2026-10-14" / "03.seg"
+    size = path.stat().st_size
+    disk.full = True
+    with pytest.raises(StoreIOError, match="ENOSPC") as refused:
+        for i in range(12, 20):
+            quote(store, T0 + i * MS)
+    assert refused.value.code == "ENOSPC" and not isinstance(refused.value, QuotaExceeded | OSError)
+    assert path.stat().st_size == size, "the half of a block that got out was taken back"
+    assert store.failed and store.buffered == 0, "what was buffered is dropped, not kept for a later try"
+    disk.full = False  # there is room again, but not for this process
+    with pytest.raises(StoreIOError, match="ENOSPC"):
+        quote(store, T0 + SECOND)
+    store.flush()
+    store.close()
+    assert indices(tmp_path) == list(range(8)), "nothing was appended after the refusal"
+
+    second = a_store(tmp_path)
+    assert second.next_index == 8 and not second.failed
+    quote(second, T0 + 2 * SECOND)
+    second.close()
+    assert indices(tmp_path) == list(range(9))
+
+
+def test_a_block_the_disk_would_not_take_back_is_cut_off_by_the_next_writer(tmp_path, monkeypatch):
+    disk = a_disk(errno.EIO)
+    store = a_store(tmp_path, writer=disk)
+    for i in range(8):
+        quote(store, T0 + i * MS)
+    path = tmp_path / "2026-10-14" / "03.seg"
+    size = path.stat().st_size
+
+    def refuse(fd: int, length: int) -> None:
+        raise OSError(errno.EIO, os.strerror(errno.EIO))
+
+    disk.full = True
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "ftruncate", refuse)
+        with pytest.raises(StoreIOError, match="EIO"):
+            for i in range(8, 16):
+                quote(store, T0 + i * MS)
+        store.close()
+    assert path.stat().st_size > size, "the torn half of a block is still in the file"
+    assert indices(tmp_path) == list(range(8)), "and a reader stops before it"
+    second = a_store(tmp_path)
+    quote(second, T0 + SECOND)
+    second.close()
+    assert indices(tmp_path) == list(range(9)) and path.stat().st_size > size
+
+
+def test_a_disk_that_refuses_the_very_first_write_fails_the_open_by_name(tmp_path):
+    disk = a_disk(half=False)
+    disk.full = True
+    store = a_store(tmp_path, writer=disk)  # opening an empty store writes only the run counter
+    with pytest.raises(StoreIOError, match="ENOSPC"):
+        quote(store, T0)  # the segment's header is the first thing the disk is asked to take
+    assert store.failed and indices(tmp_path) == []
+
+
+def test_a_journal_line_the_disk_cuts_short_is_taken_back(tmp_path, monkeypatch):
+    path = tmp_path / JOURNAL
+    append_line(path, b'{"n": 1}\n')
+    real = os.write
+
+    def short(fd: int, data: bytes) -> int:
+        real(fd, bytes(data)[:4])
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "write", short)
+        with pytest.raises(OSError, match="No space"):
+            append_line(path, b'{"n": 2}\n')
+    assert path.read_bytes() == b'{"n": 1}\n'
+    append_line(path, b'{"n": 3}\n')
+    assert read_journal(tmp_path) == [{"n": 1}, {"n": 3}]
+
+
+def test_a_torn_last_journal_line_is_skipped_by_the_reader_and_cut_off_by_the_next_append(tmp_path):
+    store = a_store(tmp_path)
+    quote(store, T0)
+    store.close()
+    day = tmp_path / "2026-10-14"
+    whole = read_journal(day)
+    with (day / JOURNAL).open("ab") as journal:
+        journal.write(b'{"type": "ga')  # a line the last process never finished
+    assert read_journal(day) == whole
+
+    second = a_store(tmp_path)  # opens although the journal ends in the middle of a line
+    quote(second, T0 + SECOND)
+    second.note({"type": "note", "n": 1})
+    second.close()
+    assert read_journal(day)[: len(whole)] == whole and read_journal(day)[-1] == {"type": "note", "n": 1}
+    assert b'"ga{' not in (day / JOURNAL).read_bytes() and (day / JOURNAL).read_bytes().endswith(b"\n")
+
+
+def test_a_refused_journal_line_ends_the_writing_too_and_no_record_outlives_its_gap_line(tmp_path, monkeypatch):
+    """A record whose gap could not be journalled must not reach the disk: the day check compares the two."""
+    store = a_store(tmp_path)
+    quote(store, T0)
+    store.flush()
+
+    def refuse(path: Path, line: bytes) -> None:
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    with monkeypatch.context() as patch:
+        patch.setattr("hftlab.record.store.append_line", refuse)
+        with pytest.raises(StoreIOError, match="ENOSPC"):
+            quote(store, T0 + 60 * SECOND)  # closes a gap of a minute, which has to be journalled
+        with pytest.raises(StoreIOError):
+            store.note({"type": "note"})
+    store.close()
+    assert indices(tmp_path) == [0], "the quote that closed the gap was dropped with the line that explains it"
+    assert [line for line in read_journal(tmp_path / "2026-10-14") if line["type"] == "gap"] == []
+
+
+def test_measuring_the_store_skips_a_file_that_goes_away_meanwhile(tmp_path, monkeypatch):
+    (tmp_path / "d").mkdir()
+    (tmp_path / "d" / "03.seg").write_bytes(b"x" * 10)
+    (tmp_path / "d" / "04.seg").write_bytes(b"y" * 5)
+    assert measure(tmp_path) == 15 and measure(tmp_path / "nothing-here") == 0
+    real = Path.is_file
+
+    def taken_away(self: Path) -> bool:
+        if self.name == "03.seg":  # housekeeping compressed it between the listing and the look
+            self.unlink(missing_ok=True)
+        return real(self)
+
+    monkeypatch.setattr(Path, "is_file", taken_away)
+    assert measure(tmp_path) == 5
+
+
+def test_counting_a_segments_records_from_its_block_heads_agrees_with_reading_it(tmp_path):
+    store = a_store(tmp_path / "rec")
+    for i in range(21):
+        quote(store, T0 + i * MS)
+    store.close()
+    path = tmp_path / "rec" / "2026-10-14" / "03.seg"
+    assert count_records(path) == 21 == len(everything(tmp_path / "rec"))
+    whole = path.read_bytes()
+    path.write_bytes(whole[:-100])  # a torn last block is not counted
+    assert count_records(path) == 16
+    path.write_bytes(whole)
+    Housekeeper(tmp_path / "rec", ROOMY).run(T0 + 2 * HOUR)
+    assert count_records(path.with_name("03.seg.gz")) == 21
 
 
 # ---- housekeeping ---------------------------------------------------------------------------------------------------

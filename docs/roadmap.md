@@ -17,6 +17,12 @@ approved plan, unchanged.
 Recording starts as early as possible (F2), because data only accumulates with time. Real money,
 co-location and anything on the [never-build list](never-build.md) are out of scope.
 
+One line of the plan has been overtaken. F7 speaks of an HFT section on the status site "after its refactor".
+The site already has a page for this desk, which says that nothing has been published yet, and the publisher
+on this side is written ([ADR 0018](adr/0018-snapshot-publish.md)). What is left of that line is the first
+send, which waits for the owner's signing key and for the site to accept this desk's key id and schema, and
+then the parts of the snapshot that later phases make real. More pairs and a second venue are unchanged.
+
 ## Where things stand
 
 **The gates of F1, F2 and F3 are all open.** The code of those three phases is written and passes its tests
@@ -50,7 +56,8 @@ That is all it has been run against:
 | Exit gate: the random control loses about the modelled cost | On synthetic streams: exact on a still book, within 3% in the mean over 30 seeds on a walk. Open on recorded data |
 
 Not built yet in F3: the tool that compares the control run trip by trip with the recording (the registered
-experiment needs it), and the runbook for a shadow run.
+experiment needs it). The [runbook for a shadow run](runbooks/shadow-run.md) is written and has not been
+followed on the host.
 
 ## Where F2 stands
 
@@ -60,8 +67,28 @@ experiment needs it), and the runbook for a shadow run.
 | Recording format and store | Written: `src/hftlab/record/` ([ADR 0012](adr/0012-recording-format.md)). Tested with a kill at every byte of a block, restarts, a full quota and an offload that does not confirm |
 | Recorder process | Written: `python -m hftlab.record`, on a market-data view that has no order methods. Run so far only against the fake broker (`--dry-run-seconds`) |
 | Replay and the day check | Written: `python -m hftlab.replay --day DIR --check`. Replay parity is tested on recordings of the fake broker |
-| Recording 24 hours on weekdays | **Not started.** It needs the probe to have been run, the host's pre-flight measurement ([ADR 0007](adr/0007-shared-host-isolation.md)), the install, and a runbook for the recorder. None of those has happened yet |
+| Recording 24 hours on weekdays | **Not started.** It needs three things the owner does, in this order: the capability probe, the host's pre-flight day of measurements ([ADR 0007](adr/0007-shared-host-isolation.md)), and the install. None of the three has been run. What they need from this repository is written: see "Where the host layer stands" |
 | Exit gate: five days, every gap accounted for, replay parity, memory and disk inside budget | Open. The quota in `config/recorder.yaml` is a placeholder until the host's disk budget is measured |
+
+## Where the host layer stands
+
+What F2 needs in order to run on the shared host ([ADR 0017](adr/0017-host-layer.md)). **All of it is written
+and tested off the host. None of it is installed, and none of it has run on any host.**
+
+| Part | State |
+|---|---|
+| Units | Rendered from code (`python -m hftlab.ops.units`) and committed in `deploy/systemd/`: the slice with its 1.2 GB cap, the recorder, housekeeping, the shadow runner, the publisher, the backup, and a placeholder for the gateway that cannot be enabled. Tested as text. **Never loaded by a service manager** |
+| Pre-flight gate | Written: a shell sampler for the host and `python -m hftlab.ops.preflight --check`, with thresholds in `config/preflight.json`. Tested on made-up samples. **No day has been measured on the host** |
+| Install | Written: `deploy/bin/hft-install`, which refuses without a passing pre-flight and enables nothing unasked. Tested in dry runs against a temporary directory. **Never run for real** |
+| Status and the dead-man rule | Written: `python -m hftlab.ops.status`, tested against the files a real recorder writes over the fake broker |
+| Alerts | Written: once per problem, keys prefixed `hft:`. **No page has been sent**: the address is the owner's to configure |
+| Status snapshot | Written: `python -m hftlab.publish` ([ADR 0018](adr/0018-snapshot-publish.md)). **Nothing has been sent.** The signing key and the key id the site accepts are the owner's open decisions |
+| Backup | Written: `python -m hftlab.ops.backup`, into a directory or to a tool; it never deletes. **No backup directory exists** |
+| Recorder hardening | Done: a write the system refuses stops the recorder by name instead of crashing it, and the loop's time away from the feed is in the status file ([ADR 0012](adr/0012-recording-format.md), addendum) |
+| Runbooks | Written for the owner: [install](runbooks/install.md), [recorder](runbooks/recorder.md), [shadow run](runbooks/shadow-run.md), [weekly login](runbooks/weekly-login.md), [gateway down](runbooks/gateway-down.md), [switches](runbooks/kill-and-flatten.md), [backup](runbooks/backup.md), [rollback](runbooks/rollback.md), [publish](runbooks/publish.md). **None has been followed on the host** |
+
+Every number in the units that is not the plan's (the per-service memory fuses, the weights, the restart
+waits, the timer times) is a first choice, marked as one where it is written.
 
 ## Where F1 stands
 
@@ -86,6 +113,6 @@ not check offline is listed at the end of the runbook.
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
 | Registry | Done: lint and trial count. The first two records came with F3 |
-| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0014 |
+| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0014, and the host layer 0017 and 0018 |
 | Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Eleven of the first file's are verified by tests they name; the other eleven and all 68 of the second are open |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

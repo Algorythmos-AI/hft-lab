@@ -1,0 +1,275 @@
+#!/bin/sh
+# hft-install: put HFT Lab on the shared host. OWNER ONLY, with sudo. Runbook: docs/runbooks/install.md
+#
+#   sudo sh deploy/bin/hft-install --preflight FILE --dry-run    print every step, change nothing
+#   sudo sh deploy/bin/hft-install --preflight FILE              install; enable nothing, start nothing
+#   sudo sh deploy/bin/hft-install --enable hft-recorder.service --enable hft-housekeep.timer --start
+#
+# The steps, in this order. Each is printed before it is done and skipped when it is already done, so a
+# second run changes nothing.
+#   1. the gate          the pre-flight samples must pass (python3 -m hftlab.ops.preflight --check FILE).
+#                        A fail refuses the install. The passing report is kept in /etc/hft, and later
+#                        runs find it there.
+#   2. the user          `hft`, a system user without a login shell
+#   3. the code          /home/hft/hft-lab, cloned at the commit this script is run from. That commit
+#                        must be on origin/main and its checkout must have no uncommitted change.
+#   4. the environment   .venv from requirements.lock.txt, every package checked against its hash. It is
+#                        rebuilt only when that file has changed, and never under a running service.
+#   5. the directories   var/ and what is under it, and /etc/hft
+#   6. the units         the files of deploy/systemd into /etc/systemd/system, hft-status into /usr/local/bin
+#   7. enabling          ONLY the units named with --enable, and started only with --start
+#
+# It never logs in to the broker, never writes a secret, never touches a unit that is not this platform's,
+# and never enables or starts anything it was not told to.
+#
+#   --preflight FILE   what hft-preflight-sample wrote. Needed until the gate has been passed once
+#   --enable UNIT      enable this unit; may be given several times. Only a unit with an install section
+#   --start            also start the units named with --enable
+#   --dry-run          print every step and change nothing. Needs no sudo
+#   --root DIR         plan an install under DIR instead of /. Only with --dry-run: it is for tests
+#
+#   HFT_PYTHON3        the Python that judges the samples (default python3; it must be 3.12 or newer)
+set -eu
+
+user=hft
+preflight=""
+enable=""
+start=0
+dry=0
+root=""
+python3=${HFT_PYTHON3:-python3}
+
+refuse() {
+    printf 'hft-install: REFUSED: %s\n' "$*" >&2
+    exit 2
+}
+step() { printf '\n== %s\n' "$*"; }
+skip() { printf '   = %s\n' "$*"; }
+note() { printf '   %s\n' "$*"; }
+# Print a command, and run it unless this is a dry run.
+run() {
+    printf '   + %s\n' "$*"
+    if [ "$dry" -eq 0 ]; then
+        "$@"
+    fi
+}
+as_user() { run runuser -u "$user" -- "$@"; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --preflight) [ $# -ge 2 ] || refuse "--preflight needs the file of samples"; preflight=$2; shift 2 ;;
+        --enable) [ $# -ge 2 ] || refuse "--enable needs a unit name"; enable="$enable $2"; shift 2 ;;
+        --start) start=1; shift ;;
+        --dry-run) dry=1; shift ;;
+        --root) [ $# -ge 2 ] || refuse "--root needs a directory"; root=$2; shift 2 ;;
+        -h | --help) sed -n '2,/^set -eu$/p' "$0" | sed -e '/^set -eu$/d' -e 's/^# \{0,1\}//'; exit 0 ;;
+        *) refuse "unknown option $1 (see --help)" ;;
+    esac
+done
+
+here=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
+home="$root/home/$user"
+dest="$home/hft-lab"
+etc="$root/etc/hft"
+unit_dir="$root/etc/systemd/system"
+bin_dir="$root/usr/local/bin"
+passed="$etc/preflight-passed.json"
+units="$here/deploy/systemd"
+git_here() { git -c safe.directory="$here" -C "$here" "$@"; }
+
+# ---- everything that can refuse is checked before anything is changed ---------------------------------------
+
+[ -z "$root" ] || [ "$dry" -eq 1 ] || refuse "--root is for --dry-run: nothing installed under $root could run"
+[ "$start" -eq 0 ] || [ -n "$enable" ] || refuse "--start starts the units named with --enable, and none was named"
+[ -d "$units" ] || refuse "$units is missing: run this from a checkout of the repository"
+
+allowed=$(cd "$units" && grep -l '^\[Install\]$' hft-*.service hft-*.timer | tr '\n' ' ')
+for unit in $enable; do
+    case " $allowed " in
+        *" $unit "*) ;;
+        *) refuse "$unit cannot be enabled. The units with an install section are: $allowed" ;;
+    esac
+done
+
+commit=$(git_here rev-parse HEAD 2>/dev/null) || refuse "$here is not a git checkout: install from a clone"
+git_here diff --quiet HEAD -- 2>/dev/null \
+    || refuse "$here has uncommitted changes: what would be installed is not what was reviewed"
+git_here merge-base --is-ancestor "$commit" origin/main 2>/dev/null \
+    || refuse "commit $commit is not on origin/main: only a reviewed commit is installed"
+repo=$(git_here config --get remote.origin.url) || refuse "$here has no origin to clone the code from"
+
+if [ "$dry" -eq 0 ]; then
+    [ "$(id -u)" -eq 0 ] || refuse "run it with sudo (or with --dry-run to only look)"
+    for tool in systemctl runuser useradd install cmp; do
+        command -v "$tool" >/dev/null 2>&1 || refuse "$tool was not found: this is for a Linux host with systemd"
+    done
+fi
+uv=$(command -v uv 2>/dev/null) || uv=""
+if [ -z "$uv" ]; then
+    [ "$dry" -eq 1 ] || refuse "uv was not found. Install it for every user first (the owner's step), then run this again"
+    uv=uv
+fi
+
+# The environment is current when it was built from this very requirements.lock.txt. Rebuilding it under a
+# running service would pull the interpreter out from under the recorder, so that is refused, not done.
+lock=$(cksum < "$here/requirements.lock.txt")
+rebuild=1
+if [ -x "$dest/.venv/bin/python" ] && [ "$(cat "$dest/.venv/.hft-lock" 2>/dev/null)" = "$lock" ]; then
+    rebuild=0
+fi
+running=""
+if [ "$rebuild" -eq 1 ] && [ -d "$dest/.venv" ] && command -v systemctl >/dev/null 2>&1; then
+    for unit in hft-recorder.service hft-shadow.service; do
+        if systemctl is-active --quiet "$unit" 2>/dev/null; then
+            running="$running $unit"
+        fi
+    done
+fi
+if [ -n "$running" ] && [ "$dry" -eq 0 ]; then
+    refuse "the environment has to be rebuilt and these are running:$running. Stop them first (docs/runbooks/rollback.md)"
+fi
+
+if [ "$dry" -eq 1 ]; then
+    echo "hft-install: DRY RUN. Nothing is changed; every step is only printed."
+    if [ -z "$root" ] && [ "$(id -u)" -ne 0 ]; then
+        echo "   (run as $(id -un): what only root may read is shown as not there yet)"
+    fi
+fi
+echo "hft-install: commit $commit of $repo, into ${root:-/}"
+
+# ---- 1. the gate ------------------------------------------------------------------------------------------------
+
+gate() {
+    (cd "$here" && PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 "$python3" -S -m hftlab.ops.preflight --check "$preflight" "$@")
+}
+
+step "1. the gate: may the platform be installed on this host at all?"
+if [ -f "$passed" ]; then
+    skip "passed at the first install; the report is $passed"
+    preflight=""
+else
+    [ -n "$preflight" ] || refuse "no pre-flight samples: run hft-preflight-sample for a day, then pass --preflight FILE"
+    case "$preflight" in /*) ;; *) preflight="$PWD/$preflight" ;; esac
+    [ -r "$preflight" ] || refuse "cannot read $preflight"
+    "$python3" -c 'import sys; sys.exit(0 if sys.version_info[:2] >= (3, 12) else 1)' 2>/dev/null \
+        || refuse "$python3 is missing or older than 3.12, and the gate needs it. Set HFT_PYTHON3 to a newer one"
+    if gate; then
+        note "the samples pass"
+    else
+        refuse "the pre-flight gate did not pass (above). The platform is NOT installed on this host"
+    fi
+fi
+
+# ---- 2. the user ------------------------------------------------------------------------------------------------
+
+step "2. the user $user"
+if id -u "$user" >/dev/null 2>&1; then
+    skip "$user exists"
+else
+    run useradd --system --create-home --home-dir "$home" --shell /usr/sbin/nologin "$user"
+fi
+
+# ---- 3. the code ------------------------------------------------------------------------------------------------
+
+step "3. the code in $dest"
+if [ -d "$dest/.git" ]; then
+    installed=$(git -c safe.directory="$dest" -C "$dest" rev-parse HEAD 2>/dev/null) || installed=unknown
+    if [ "$installed" = "$commit" ]; then
+        skip "already at $commit"
+    else
+        refuse "$dest is at $installed and this script is from $commit. Deploy first (docs/runbooks/rollback.md), then run the installed copy: sudo sh $dest/deploy/bin/hft-install"
+    fi
+else
+    as_user git clone --quiet "$repo" "$dest"
+    as_user git -C "$dest" checkout --quiet --detach "$commit"
+fi
+
+# ---- 4. the environment -------------------------------------------------------------------------------------------
+
+step "4. the environment $dest/.venv, from the hash-locked requirements"
+if [ "$rebuild" -eq 0 ]; then
+    skip "built from this requirements.lock.txt already"
+else
+    if [ -n "$running" ]; then
+        note "a real run would REFUSE here: the environment has to be rebuilt and these are running:$running"
+    fi
+    if [ -d "$dest/.venv" ]; then
+        as_user "$uv" venv --quiet --clear --python 3.12 "$dest/.venv"
+    else
+        as_user "$uv" venv --quiet --python 3.12 "$dest/.venv"
+    fi
+    as_user "$uv" pip install --quiet --require-hashes --python "$dest/.venv/bin/python" -r "$dest/requirements.lock.txt"
+    as_user sh -c 'cksum < "$1/requirements.lock.txt" > "$1/.venv/.hft-lock"' sh "$dest"
+fi
+
+# ---- 5. the directories -------------------------------------------------------------------------------------------
+
+step "5. the state directories and $etc"
+for directory in var var/record var/shadow var/alerts; do
+    if [ -d "$dest/$directory" ]; then
+        skip "$dest/$directory exists"
+    else
+        run install -d -o "$user" -g "$user" -m 0750 "$dest/$directory"
+    fi
+done
+if [ -d "$etc" ]; then
+    skip "$etc exists"
+else
+    run install -d -o root -g "$user" -m 0750 "$etc"
+fi
+if [ -n "$preflight" ]; then
+    printf '   + keep the passing report in %s\n' "$passed"
+    if [ "$dry" -eq 0 ]; then
+        gate --json > "$passed.partial"
+        chmod 0644 "$passed.partial"
+        mv "$passed.partial" "$passed"
+    fi
+fi
+note "the secrets file $etc/secrets.env is yours to write. This script never creates it"
+
+# ---- 6. the units -------------------------------------------------------------------------------------------------
+
+step "6. the unit files and the hft-status helper"
+changed=0
+for file in "$units"/hft.slice "$units"/hft-*.service "$units"/hft-*.timer; do
+    name=$(basename "$file")
+    if cmp -s "$file" "$unit_dir/$name" 2>/dev/null; then
+        skip "$name is installed and current"
+    else
+        run install -m 0644 "$file" "$unit_dir/$name"
+        changed=1
+    fi
+done
+if cmp -s "$here/deploy/bin/hft-status" "$bin_dir/hft-status" 2>/dev/null; then
+    skip "hft-status is installed and current"
+else
+    run install -m 0755 "$here/deploy/bin/hft-status" "$bin_dir/hft-status"
+fi
+if [ "$changed" -eq 1 ]; then
+    run systemctl daemon-reload
+else
+    skip "no unit changed: systemd is not reloaded"
+fi
+
+# ---- 7. enabling --------------------------------------------------------------------------------------------------
+
+step "7. enabling"
+if [ -z "$enable" ]; then
+    skip "nothing was named with --enable: nothing is enabled and nothing is started"
+    note "to start recording, when you are ready:"
+    note "  sudo systemctl enable --now hft-recorder.service hft-housekeep.timer"
+elif [ "$start" -eq 1 ]; then
+    # shellcheck disable=SC2086  # the unit names are checked above and are split on purpose
+    run systemctl enable --now $enable
+else
+    # shellcheck disable=SC2086
+    run systemctl enable $enable
+    note "enabled, not started: they start at the next boot, or with  sudo systemctl start$enable"
+fi
+
+echo
+if [ "$dry" -eq 1 ]; then
+    echo "hft-install: DRY RUN finished. Nothing was changed."
+else
+    echo "hft-install: done. Look at it with:  sudo hft-status"
+fi

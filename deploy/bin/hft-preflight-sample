@@ -1,0 +1,84 @@
+#!/bin/sh
+# hft-preflight-sample: one line a minute for a day, for the pre-flight gate (ADR 0007, decision 3).
+#
+# OWNER ONLY. Run it on the host BEFORE anything of HFT Lab is installed, as your own user. No sudo.
+#
+#   nohup sh deploy/bin/hft-preflight-sample --out "$HOME/hft-preflight.log" >/dev/null 2>&1 &
+#
+# It reads /proc/meminfo, /proc/loadavg and the free space on /, and appends one line to its own log.
+# It writes nowhere else, starts nothing, and stops by itself after --samples lines (1440: one day).
+# Judge the log with:  python3 -m hftlab.ops.preflight --check FILE
+#
+#   --out FILE      the log to append to (default: hft-preflight.log in the current directory)
+#   --samples N     how many lines to write (default 1440)
+#   --interval S    seconds between two lines (default 60)
+#   --root DIR      read DIR/proc/... and measure the disk DIR is on, instead of /. For tests
+#   --dry-run       say what would be done and print the one line it would write now; write nothing
+set -eu
+
+out=hft-preflight.log
+samples=1440
+interval=60
+root=""
+dry=0
+
+refuse() {
+    echo "hft-preflight-sample: $*" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --out) [ $# -ge 2 ] || refuse "--out needs a file"; out=$2; shift 2 ;;
+        --samples) [ $# -ge 2 ] || refuse "--samples needs a number"; samples=$2; shift 2 ;;
+        --interval) [ $# -ge 2 ] || refuse "--interval needs a number of seconds"; interval=$2; shift 2 ;;
+        --root) [ $# -ge 2 ] || refuse "--root needs a directory"; root=$2; shift 2 ;;
+        --dry-run) dry=1; shift ;;
+        -h | --help) sed -n '2,/^set -eu$/p' "$0" | sed -e '/^set -eu$/d' -e 's/^# \{0,1\}//'; exit 0 ;;
+        *) refuse "unknown option $1 (see --help)" ;;
+    esac
+done
+case "$samples" in "" | *[!0-9]*) refuse "--samples must be a whole number, not '$samples'" ;; esac
+case "$interval" in "" | *[!0-9]*) refuse "--interval must be a whole number of seconds, not '$interval'" ;; esac
+[ -r "$root/proc/meminfo" ] || refuse "cannot read $root/proc/meminfo: this is for a Linux host"
+[ -r "$root/proc/loadavg" ] || refuse "cannot read $root/proc/loadavg: this is for a Linux host"
+
+# One sample, as one line. Numbers are passed through as text: nothing is rounded here.
+sample() {
+    at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    memory=$(awk '
+        $1 == "MemAvailable:" { available = $2 }
+        $1 == "MemTotal:" { total = $2 }
+        $1 == "SwapFree:" { swap = $2 }
+        END {
+            if (available == "" || total == "" || swap == "") exit 1
+            printf "mem_available_kb=%s mem_total_kb=%s swap_free_kb=%s", available, total, swap
+        }' "$root/proc/meminfo") || return 1
+    load=$(awk '{ printf "load1=%s load5=%s load15=%s", $1, $2, $3 }' "$root/proc/loadavg") || return 1
+    disk=$(df -Pk "${root:-/}" | awk 'NR == 2 { print $4 }') || return 1
+    [ -n "$disk" ] || return 1
+    printf '%s %s %s disk_free_kb=%s\n' "$at" "$memory" "$load" "$disk"
+}
+
+if [ "$dry" -eq 1 ]; then
+    echo "hft-preflight-sample: DRY RUN, nothing is written"
+    echo "  would append $samples lines, one every $interval s, to $out"
+    echo "  would read $root/proc/meminfo, $root/proc/loadavg and the free space on ${root:-/}"
+    echo "  the line it would write now:"
+    sample || refuse "a sample could not be taken"
+    exit 0
+fi
+
+echo "# hft-preflight-sample: $samples samples, one every $interval s, from $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$out"
+count=0
+while [ "$count" -lt "$samples" ]; do
+    if line=$(sample); then
+        printf '%s\n' "$line" >> "$out"
+    else
+        echo "# a sample could not be taken at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$out"
+    fi
+    count=$((count + 1))
+    if [ "$count" -lt "$samples" ]; then
+        sleep "$interval"
+    fi
+done

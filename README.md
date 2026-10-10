@@ -8,9 +8,9 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | Code for F1 to F3 is written and tested against a fake broker and synthetic streams only · the F1, F2 and F3 gates are open · nothing has recorded or traded yet · paper only · no live trading |
+| **Status**      | Code for F1 to F3 is written and tested against a fake broker and synthetic streams only · the F1, F2 and F3 gates are open · nothing has recorded or traded yet · the host layer is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
-| **Runs at**     | Nothing runs yet. Target: a shared Linux host, against an Interactive Brokers **paper** account              |
+| **Runs at**     | Nothing runs yet and nothing is installed on any host. Target: a shared Linux host, against an Interactive Brokers **paper** account. The units, the pre-flight gate and the install script are written and tested off the host only |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
 | **Context**     | [Architecture](docs/architecture.md) · [Roadmap](docs/roadmap.md) · [ADRs](docs/adr/) · [Requirements](docs/requirements/requirements.yaml) · [Research registry](research/README.md) · [Runbooks](docs/runbooks/README.md) · [Never build](docs/never-build.md) · [Security](SECURITY.md) · [Licence](LICENSE) |
 
@@ -58,7 +58,9 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The feasibility map: moves against the modelled cost, by pair and holding time | `src/hftlab/feasibility/` |
 | The research registry: its lint, the trial count, one hypothesis and one experiment, registered and not run | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
-| The status snapshot contract (nothing publishes it yet) | `contracts/` |
+| The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
+| The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
+| What the owner runs on the host: the pre-flight sampler, the install script, the status wrapper, the unit files | `deploy/` |
 | Design records | `docs/` |
 
 What that does and does not mean:
@@ -69,6 +71,11 @@ What that does and does not mean:
   experiment has been run on real data. There is no order manager yet. The recorder and the shadow runner
   cannot place a broker order; the one thing that can is the capability probe, on the paper account, when
   the owner runs it with `--orders`.
+- **The host layer exists and is tested off the host only:** the units as text, the scripts in dry runs
+  against a temporary directory, the publisher against a stand-in for the network. Nothing is installed on
+  any host, no unit has been loaded by a service manager, and nothing has been published. Recording starts
+  only after the owner has run the capability probe, the pre-flight day and the install
+  ([runbook](docs/runbooks/install.md)).
 - **F1 is open** until the owner runs the capability probe against the real paper account
   ([runbook](docs/runbooks/ibkr-probe.md)).
 - **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days.

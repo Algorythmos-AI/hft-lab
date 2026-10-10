@@ -1,4 +1,6 @@
-"""`python -m hftlab.shadow`: run the sleeves on quotes, their orders on the shadow venue. No runbook yet.
+"""`python -m hftlab.shadow`: run the sleeves on quotes, their orders on the shadow venue.
+
+Its runbook is docs/runbooks/shadow-run.md.
 
     python -m hftlab.shadow --day var/record/2026-10-14      over a recorded day (several days: one session)
     python -m hftlab.shadow --venue ibkr_paper               over live quotes from the paper gateway

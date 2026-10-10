@@ -1,0 +1,11 @@
+[Unit]
+Description=Start HFT Lab publish: every five minutes
+
+[Timer]
+OnCalendar=*:0/5:20
+AccuracySec=10s
+Persistent=false
+Unit=hft-publish.service
+
+[Install]
+WantedBy=timers.target

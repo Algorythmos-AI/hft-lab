@@ -1,0 +1,60 @@
+[Unit]
+Description=HFT Lab shadow: the sleeves on quotes from the paper gateway, their orders on the shadow venue. No broker order
+Documentation=file:///home/hft/hft-lab/docs/runbooks/README.md
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+After=hft-gateway.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=hft
+Group=hft
+Slice=hft.slice
+WorkingDirectory=/home/hft/hft-lab
+Environment=MODE=paper
+Environment=PYTHONPATH=src
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=UTC
+Environment=HFT_STATE_DIR=/home/hft/hft-lab/var
+ExecStart=/home/hft/hft-lab/.venv/bin/python -m hftlab.shadow --venue ibkr_paper
+Restart=on-failure
+RestartSec=5
+RestartSteps=6
+RestartMaxDelaySec=300
+RestartPreventExitStatus=1 2
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+Nice=5
+MemoryMax=300M
+OOMScoreAdjust=400
+ReadWritePaths=/home/hft/hft-lab/var
+InaccessiblePaths=-/home/wt
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitCORE=0
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=multi-user.target

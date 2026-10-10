@@ -1,10 +1,13 @@
 """Shared pieces for the recording tests."""
 from __future__ import annotations
 
+import errno
+import os
 from pathlib import Path
 
 from hftlab.calendar import Calendar
 from hftlab.record import format as fmt
+from hftlab.record.segment import SegmentWriter
 from hftlab.record.store import Store, StoreSettings, days, read_day
 
 SECOND = 1_000_000_000
@@ -33,3 +36,22 @@ def everything(root: Path) -> list[fmt.Record]:
 
 def indices(root: Path) -> list[int]:
     return [record.index for record in everything(root)]
+
+
+def a_disk(refuses: int = errno.ENOSPC, *, half: bool = True) -> type[SegmentWriter]:
+    """A segment writer for a disk that can fill up. Set `.full` on the class it returns and the next block gets
+
+    half-way out (or not at all) before the write is refused with `refuses`.
+    """
+
+    class Disk(SegmentWriter):
+        full = False
+
+        def _write(self, data: bytes) -> None:
+            if Disk.full:
+                if half:
+                    super()._write(data[: len(data) // 2])
+                raise OSError(refuses, os.strerror(refuses))
+            super()._write(data)
+
+    return Disk

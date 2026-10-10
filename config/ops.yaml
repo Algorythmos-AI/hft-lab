@@ -1,0 +1,32 @@
+# The host and operations layer's settings. Read by hftlab.ops (status, backup) and hftlab.publish.
+#
+# Where the recorder records and where the shadow runner keeps its journal are NOT set here. They are read from
+# config/recorder.yaml (`root`) and config/shadow.yaml (`journal_dir`), so this file cannot disagree with them.
+# No address and no key is here either: those come from the environment (docs/runbooks/publish.md).
+status:
+  dead_man_seconds: 60          # ENGINEERING DEFAULT. The recorder writes its status every 5 s. A status that
+                                # still says "recording" and is older than this, while the market is open,
+                                # means the recorder is dead: the dead-man rule
+  disk_warn_percent: 90         # ENGINEERING DEFAULT. Warn when the recording has used this much of its quota
+
+publish:
+  timeout_seconds: 20           # ENGINEERING DEFAULT. How long one send of the snapshot may take
+
+backup:
+  tool: null                    # null: copy into the backup directory (HFT_BACKUP_DIR). Otherwise a command, as
+                                # a list of words, that is handed the tag and a file listing what to back up:
+                                #   [restic, backup, --tag, "{tag}", --files-from, "{list}"]
+                                # A command that forgets, prunes or deletes is refused.
+
+# The state of each phase of docs/roadmap.md, as the status snapshot reports it: `done` when the phase's exit
+# gate is met, `open` when its code is written and its gate is not met, `not_started` otherwise. It changes in
+# the same pull request as the roadmap, and a test compares the two.
+phases:
+  F0: done
+  F1: open
+  F2: open
+  F3: open
+  F4: not_started
+  F5: not_started
+  F6: not_started
+  F7: not_started

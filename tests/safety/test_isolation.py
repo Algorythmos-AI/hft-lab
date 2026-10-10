@@ -6,7 +6,8 @@ A scan of every module under src/hftlab, in the spirit of a broker-isolation tes
   * holds a "live" trading-mode literal or a name that is exactly `live`;
   * touches the process environment in any way but reading a constant key that cannot enable live trading;
   * imports a network library or the broker's client library outside hftlab.venues.ibkr, by any static or
-    dynamic route;
+    dynamic route (one module of the host layer may import five names of the standard library's HTTP client:
+    see `POST` below);
   * imports by a computed name, or runs code from text, which no scan can follow;
   * rebinds or edits the venue registry.
 
@@ -35,6 +36,15 @@ REGISTRY = "src/hftlab/safety/venues.py"
 NETWORK_OK = ("src/hftlab/venues/ibkr/",)
 BROKER_OK = ("src/hftlab/venues/ibkr/",)
 BROKER_LIBRARIES = frozenset({"ib_async", "ib_insync", "ibapi", "ibind"})
+# One module outside the adapter may open a connection: the host layer's HTTPS POST, which pages the owner and
+# sends the status snapshot (ADR 0017). It may import these five names of the standard library's HTTP client,
+# with `from`, and nothing else that opens a socket: no socket module, no event loop, never the broker's
+# library. It has no other exemption, and it is one file, not a package.
+POST = "src/hftlab/ops/post.py"
+POST_MAY_IMPORT = frozenset({
+    "urllib.request.Request", "urllib.request.build_opener", "urllib.request.HTTPRedirectHandler",
+    "urllib.error.HTTPError", "urllib.error.URLError",
+})  # fmt: skip
 
 LIVE_PORTS = frozenset({4001, 7496})
 # Not after a digit or a decimal point: 1.4001 and 0.7496 are prices, and prices appear in this code base.
@@ -169,7 +179,7 @@ def network_violations(rel: str, tree: ast.AST) -> list[str]:
         elif name.split(".")[0] in BROKER_LIBRARIES:
             if not rel.startswith(BROKER_OK):
                 out.append(f"{rel}: imports the broker library {name} ({how})")
-        elif rel.startswith(NETWORK_OK):
+        elif rel.startswith(NETWORK_OK) or (rel == POST and how == "from" and name in POST_MAY_IMPORT):
             continue
         elif is_network(name):
             out.append(f"{rel}: imports the network library {name} ({how})")
@@ -395,6 +405,37 @@ def test_the_adapter_may_use_the_network_and_the_broker_library():
 )  # fmt: skip
 def test_everything_else_including_the_recorder_and_the_shadow_venue_may_use_neither(module):
     assert len(violations(f"src/hftlab/{module}", ast.parse(NETWORK_SOURCE))) == 4
+
+
+HTTP_CLIENT = (
+    "from urllib.request import HTTPRedirectHandler, Request, build_opener\n"
+    "from urllib.error import HTTPError, URLError"
+)
+
+
+def test_the_host_layers_post_may_import_the_http_client_by_name_and_nothing_else():
+    assert violations(POST, ast.parse(HTTP_CLIENT)) == []
+    for src in (
+        "import socket", "import ssl", "import asyncio", "import http.client", "import urllib.request",
+        "from urllib import request", "from urllib.request import urlopen", "import requests", "import httpx",
+        "from ib_async import IB", "import importlib\nr = importlib.import_module('urllib.request')",
+        "s = __import__('socket')",
+    ):  # fmt: skip
+        assert violations(POST, ast.parse(src)), src
+
+
+def test_that_exemption_is_one_file_and_it_is_used_exactly():
+    for rel in ("src/hftlab/ops/alerts.py", "src/hftlab/ops/status.py", "src/hftlab/publish/send.py",
+                "src/hftlab/ops/post/other.py", "src/hftlab/record/post.py"):  # fmt: skip
+        assert len(violations(rel, ast.parse(HTTP_CLIENT))) == 5, rel
+    reached = {name for _, name in imports(dict(sources())[POST], POST) if is_network(name)}
+    assert reached == POST_MAY_IMPORT, "the list allows what the module imports, no more and no less"
+
+
+def test_the_post_module_gets_no_other_exemption():
+    for name in ("live port as a number", "live mode literal", "reads MODE", "takes the whole environment",
+                 "imports by a computed name", "executes text", "rebinds the registry by name"):  # fmt: skip
+        assert violations(POST, ast.parse(BYPASSES[name])), name
 
 
 @pytest.mark.parametrize("library", sorted(BROKER_LIBRARIES))

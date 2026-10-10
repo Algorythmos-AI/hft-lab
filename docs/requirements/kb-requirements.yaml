@@ -1,0 +1,1071 @@
+# Requirements drawn from the private knowledge base.
+#
+# Each requirement is a rule for this platform, written in our own words, that rests on claims which a second
+# reader has checked against their sources. The claims themselves, and the works they come from, are held in
+# the private knowledge base; here they are cited by id only.
+#
+#   id                 KBREQ-NNN, as numbered in the knowledge base. Numbers missing here apply to other platforms.
+#   area               data | features | labels | models | evaluation | simulation | execution | risk | ops | governance
+#   statement          What the platform must or should do.
+#   strength_of_basis  strong | moderate | weak: the best evidence among the claims cited.
+#   sources            Citation keys of the works the claims come from.
+#   kb_claims          Claim ids in the private knowledge base.
+#   status             open (nothing here proves it yet) | verified (the tests in verified_by prove it)
+#   verified_by        Repository paths of the tests that prove it.
+#
+# The release these were taken from is recorded in kb.lock.json at the repository root. Most of the evidence is
+# from equity markets between 2008 and 2015; a requirement says what to do, not that the evidence transfers to
+# currencies unchanged.
+version: 1
+requirements:
+- id: KBREQ-001
+  area: data
+  statement: The platform must store raw bid and ask quotes with sizes for every instrument it trades or models,
+    alongside any derived features, so that features can be recomputed and the observed spread charged at each decision
+    time.
+  strength_of_basis: moderate
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0004
+  - CLM-jaddu2023-0020
+  status: open
+  verified_by: []
+- id: KBREQ-002
+  area: data
+  statement: The platform must stamp every inbound market-data message and outbound order message with a single
+    clock at one capture point, and must store the venue's or broker's own timestamp beside the local receipt time.
+  strength_of_basis: weak
+  sources:
+  - aquilina2021
+  - johnson2017
+  kb_claims:
+  - CLM-aquilina2021-0013
+  - CLM-aquilina2021-0016
+  - CLM-johnson2017-0036
+  status: open
+  verified_by: []
+- id: KBREQ-003
+  area: data
+  statement: The platform must validate every market-data update for staleness, crossed or out-of-band prices and
+    gaps before any strategy acts on it, and must pause new orders automatically while those checks fail.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - biais2014
+  - monson2013
+  kb_claims:
+  - CLM-bell2014-0078
+  - CLM-biais2014-0023
+  - CLM-monson2013-0020
+  status: open
+  verified_by: []
+- id: KBREQ-004
+  area: data
+  statement: The platform must record which feed each price came from (direct, consolidated or broker-aggregated)
+    and must not treat the time an event appeared on a public or consolidated feed as the earliest moment it was
+    knowable.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  - gomber2011
+  - johnson2017
+  kb_claims:
+  - CLM-aquilina2021-0025
+  - CLM-gomber2011-0012
+  - CLM-johnson2017-0034
+  status: open
+  verified_by: []
+- id: KBREQ-005
+  area: data
+  statement: The platform must check each instrument's configured tick size and pip unit against the smallest price
+    increment observed in its own recorded data.
+  strength_of_basis: strong
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0014
+  - CLM-jaddu2023-0058
+  status: open
+  verified_by: []
+- id: KBREQ-006
+  area: features
+  statement: The platform must build every feature only from data stamped strictly before the label window starts,
+    and must enforce this with an automated look-ahead test on each feature.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0005
+  status: open
+  verified_by: []
+- id: KBREQ-007
+  area: features
+  statement: The platform must fit scalers and other normalisation statistics on the training window only, store
+    them with the model, and apply them unchanged to validation, test and live data.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0003
+  - CLM-ferrouhi2024-0006
+  status: open
+  verified_by: []
+- id: KBREQ-008
+  area: features
+  statement: The platform must check that an order-book feature behaves as expected on its own feed (sign balance
+    and activity by depth level) before reusing a method proven on exchange data.
+  strength_of_basis: moderate
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0007
+  - CLM-jaddu2023-0055
+  - CLM-jaddu2023-0056
+  status: open
+  verified_by: []
+- id: KBREQ-009
+  area: features
+  statement: The platform must not pass a forecast horizon to a downstream policy or sizing rule unless that horizon's
+    out-of-sample skill is positive.
+  strength_of_basis: moderate
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0028
+  - CLM-jaddu2023-0051
+  status: open
+  verified_by: []
+- id: KBREQ-010
+  area: labels
+  statement: The platform must state the prediction horizon of every forecasting experiment and must use a price
+    change or return over that horizon as the target, never a price level.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0005
+  - CLM-ferrouhi2024-0011
+  - CLM-ferrouhi2024-0018
+  status: open
+  verified_by: []
+- id: KBREQ-011
+  area: labels
+  statement: The platform must tag every label, teacher signal or result computed from realised future values as
+    hindsight, keep it out of the inputs available at decision time, and never report it as strategy profit.
+  strength_of_basis: strong
+  sources:
+  - gomber2011
+  - jaddu2023
+  - qin2024
+  kb_claims:
+  - CLM-gomber2011-0045
+  - CLM-jaddu2023-0034
+  - CLM-qin2024-0006
+  - CLM-qin2024-0007
+  status: open
+  verified_by: []
+- id: KBREQ-012
+  area: models
+  statement: The platform must fit any stacking or blending layer on out-of-fold predictions from the training window
+    only and score the whole stack on untouched data.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0010
+  status: open
+  verified_by: []
+- id: KBREQ-013
+  area: models
+  statement: The platform must tune and select models on a validation window that precedes an untouched test window,
+    and must repeat the comparison over several splits or seeds before ranking models.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  - qin2024
+  kb_claims:
+  - CLM-ferrouhi2024-0028
+  - CLM-qin2024-0012
+  - CLM-qin2024-0013
+  status: open
+  verified_by: []
+- id: KBREQ-014
+  area: models
+  statement: The platform must test that exploration, learning-rate and similar schedules reach their stated values
+    at the stated step and that each network's output range can represent its training target.
+  strength_of_basis: strong
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0022
+  - CLM-jaddu2023-0024
+  status: open
+  verified_by: []
+- id: KBREQ-015
+  area: evaluation
+  statement: 'The platform must score every model and strategy on the same split and under identical costs against
+    naive baselines: last-value and simple linear forecasts for predictors, and no-trade, hold-one-position or buy-and-hold
+    for strategies.'
+  strength_of_basis: strong
+  sources:
+  - ferrouhi2024
+  - jaddu2023
+  - qin2024
+  kb_claims:
+  - CLM-ferrouhi2024-0011
+  - CLM-jaddu2023-0044
+  - CLM-qin2024-0025
+  status: open
+  verified_by: []
+- id: KBREQ-016
+  area: evaluation
+  statement: The platform must record the exact training, validation and test boundaries of every run as dates and
+    row counts.
+  strength_of_basis: strong
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0011
+  status: open
+  verified_by: []
+- id: KBREQ-017
+  area: evaluation
+  statement: The platform must record how many candidate models, agents or parameter sets were tried in every selection
+    and must not report as out-of-sample a result chosen on the window being reported.
+  strength_of_basis: strong
+  sources:
+  - brogaard2010
+  - freeman2000
+  - jaddu2023
+  - qin2024
+  kb_claims:
+  - CLM-brogaard2010-0076
+  - CLM-freeman2000-0008
+  - CLM-jaddu2023-0053
+  - CLM-qin2024-0013
+  status: open
+  verified_by: []
+- id: KBREQ-018
+  area: evaluation
+  statement: The platform must require a configured minimum number of out-of-sample days and a confidence interval
+    on the mean result that excludes zero before a strategy moves to forward testing or promotion.
+  strength_of_basis: strong
+  sources:
+  - jaddu2023
+  - qin2024
+  kb_claims:
+  - CLM-jaddu2023-0039
+  - CLM-jaddu2023-0043
+  - CLM-qin2024-0013
+  status: open
+  verified_by: []
+- id: KBREQ-019
+  area: evaluation
+  statement: 'The platform must recompute each reported statistic from the stored predictions and fills, and must
+    reject a report whose figures disagree with one another: the fit measure against error and variance, the squared-error
+    measures against each other, sub-period results against the whole period, and worst drawdown against cumulative
+    loss.'
+  strength_of_basis: strong
+  sources:
+  - ferrouhi2024
+  - jaddu2023
+  kb_claims:
+  - CLM-ferrouhi2024-0024
+  - CLM-ferrouhi2024-0025
+  - CLM-jaddu2023-0029
+  - CLM-jaddu2023-0040
+  status: open
+  verified_by: []
+- id: KBREQ-020
+  area: evaluation
+  statement: The platform must report every Sharpe ratio with its return interval and annualisation factor, on capital
+    actually committed and after all costs, and must not annualise one from a window of a few days.
+  strength_of_basis: moderate
+  sources:
+  - biais2014
+  - brogaard2010
+  - qin2024
+  kb_claims:
+  - CLM-biais2014-0020
+  - CLM-brogaard2010-0033
+  - CLM-qin2024-0020
+  status: open
+  verified_by: []
+- id: KBREQ-021
+  area: evaluation
+  statement: The platform must report forecast errors in price units (pips or basis points) beside the prevailing
+    spread, score each horizon with a model trained for that horizon, and define how every metric is aggregated.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0016
+  - CLM-ferrouhi2024-0027
+  status: open
+  verified_by: []
+- id: KBREQ-022
+  area: evaluation
+  statement: The platform must report model comparisons period by period (win counts and dispersion) as well as
+    pooled, split forecast error into bias and variance by period, and alarm on persistent bias.
+  strength_of_basis: strong
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0018
+  - CLM-ferrouhi2024-0026
+  status: open
+  verified_by: []
+- id: KBREQ-023
+  area: evaluation
+  statement: A model may be promoted only after a simulation that charges spread, fees and latency on an instrument
+    that can really be traded; forecast error alone is never grounds for promotion.
+  strength_of_basis: moderate
+  sources:
+  - ferrouhi2024
+  kb_claims:
+  - CLM-ferrouhi2024-0030
+  status: open
+  verified_by: []
+- id: KBREQ-024
+  area: evaluation
+  statement: The platform must report oracle, model and random-policy results side by side under identical costs
+    for each instrument, and must not model an instrument on which a perfect-foresight oracle at the trading horizon
+    fails to clear the all-in cost.
+  strength_of_basis: moderate
+  sources:
+  - gomber2011
+  - jaddu2023
+  kb_claims:
+  - CLM-gomber2011-0045
+  - CLM-jaddu2023-0034
+  - CLM-jaddu2023-0035
+  - CLM-jaddu2023-0041
+  status: open
+  verified_by: []
+- id: KBREQ-025
+  area: evaluation
+  statement: The platform must judge a strategy on expectancy (win rate together with payoff ratio, net of costs)
+    and must not accept one on win rate alone.
+  strength_of_basis: weak
+  sources:
+  - jaddu2023
+  - ketmanee2023
+  kb_claims:
+  - CLM-jaddu2023-0036
+  - CLM-ketmanee2023-0011
+  status: open
+  verified_by: []
+- id: KBREQ-026
+  area: evaluation
+  statement: The platform must compute profit and loss from fills on every venue and account and mark open inventory
+    at executable prices, never at a day-average price.
+  strength_of_basis: moderate
+  sources:
+  - brogaard2010
+  - qin2024
+  kb_claims:
+  - CLM-brogaard2010-0032
+  - CLM-qin2024-0005
+  status: open
+  verified_by: []
+- id: KBREQ-027
+  area: evaluation
+  statement: The platform must report passive and market-making results at more than one markout horizon and split
+    them into spread capture, fees or rebates, and adverse-selection loss.
+  strength_of_basis: strong
+  sources:
+  - aquilina2021
+  - biais2014
+  - brogaard2010
+  - gomber2011
+  kb_claims:
+  - CLM-aquilina2021-0049
+  - CLM-aquilina2021-0095
+  - CLM-biais2014-0019
+  - CLM-brogaard2010-0053
+  - CLM-brogaard2010-0070
+  - CLM-gomber2011-0017
+  - CLM-gomber2011-0022
+  status: open
+  verified_by: []
+- id: KBREQ-028
+  area: evaluation
+  statement: The platform must rerun the backtest with measured latency and observed costs whenever live results
+    diverge from it, before the gap is attributed to infrastructure or to the model.
+  strength_of_basis: moderate
+  sources:
+  - jaddu2023
+  kb_claims:
+  - CLM-jaddu2023-0047
+  - CLM-jaddu2023-0048
+  - CLM-jaddu2023-0049
+  status: open
+  verified_by: []
+- id: KBREQ-029
+  area: simulation
+  statement: The platform must price simulated taker orders by walking the recorded depth level by level and adding
+    fees, and must never fill them at the mid or last price.
+  strength_of_basis: moderate
+  sources:
+  - brogaard2010
+  - qin2024
+  kb_claims:
+  - CLM-brogaard2010-0067
+  - CLM-qin2024-0002
+  status: open
+  verified_by: []
+- id: KBREQ-030
+  area: simulation
+  statement: The platform must charge the spread observed at each decision time, model slippage and partial or missed
+    fills, and print its cost assumptions, trade count and turnover with every simulated result.
+  strength_of_basis: moderate
+  sources:
+  - jaddu2023
+  - johnson2017
+  - ketmanee2023
+  - qin2024
+  kb_claims:
+  - CLM-jaddu2023-0019
+  - CLM-jaddu2023-0020
+  - CLM-johnson2017-0028
+  - CLM-ketmanee2023-0012
+  - CLM-qin2024-0022
+  status: open
+  verified_by: []
+- id: KBREQ-031
+  area: simulation
+  statement: The platform must place its measured delay between the data behind a decision and the resulting fill,
+    let the market move while it computes, sample broker or venue response time from a distribution that has a tail,
+    and report how results change with that delay.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  - biais2014
+  - gomber2011
+  - jaddu2023
+  - qin2024
+  - woodward2017
+  kb_claims:
+  - CLM-aquilina2021-0090
+  - CLM-biais2014-0006
+  - CLM-gomber2011-0007
+  - CLM-jaddu2023-0047
+  - CLM-qin2024-0003
+  - CLM-woodward2017-0014
+  status: open
+  verified_by: []
+- id: KBREQ-032
+  area: simulation
+  statement: The platform must never credit itself in simulation with reaching a stale quote first or with capturing
+    a cross-venue, cross-feed or triangular price gap unless both sides were observable and reachable within its
+    measured latency.
+  strength_of_basis: strong
+  sources:
+  - aquilina2021
+  - biais2014
+  - gomber2011
+  kb_claims:
+  - CLM-aquilina2021-0007
+  - CLM-aquilina2021-0024
+  - CLM-aquilina2021-0029
+  - CLM-aquilina2021-0034
+  - CLM-biais2014-0005
+  - CLM-gomber2011-0040
+  status: open
+  verified_by: []
+- id: KBREQ-033
+  area: simulation
+  statement: The platform must penalise simulated passive fills for adverse selection using post-fill markouts,
+    costing fills inside bursts of executions at a negative realized spread instead of the quoted half-spread.
+  strength_of_basis: strong
+  sources:
+  - aquilina2021
+  - biais2012
+  - brogaard2010
+  kb_claims:
+  - CLM-aquilina2021-0031
+  - CLM-aquilina2021-0052
+  - CLM-aquilina2021-0057
+  - CLM-aquilina2021-0061
+  - CLM-aquilina2021-0089
+  - CLM-aquilina2021-0101
+  - CLM-biais2012-0011
+  - CLM-biais2012-0012
+  - CLM-brogaard2010-0058
+  status: open
+  verified_by: []
+- id: KBREQ-034
+  area: simulation
+  statement: The platform must not treat all displayed depth as fillable in simulation and must model resting liquidity
+    being cancelled before its order arrives.
+  strength_of_basis: weak
+  sources:
+  - bell2014
+  - biais2014
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0054
+  - CLM-biais2014-0002
+  - CLM-woodward2017-0004
+  status: open
+  verified_by: []
+- id: KBREQ-035
+  area: simulation
+  statement: The platform must model fees by side (maker, taker, rebates, per-message and regulatory charges) for
+    each venue from a dated fee schedule at the account's actual tier, and must rerun every liquidity-taking strategy
+    at stressed fees.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  - biais2014
+  - brogaard2010
+  - gomber2011
+  - monson2013
+  - narotzki2016
+  - qin2024
+  kb_claims:
+  - CLM-aquilina2021-0022
+  - CLM-biais2014-0016
+  - CLM-brogaard2010-0030
+  - CLM-brogaard2010-0036
+  - CLM-gomber2011-0006
+  - CLM-gomber2011-0013
+  - CLM-monson2013-0054
+  - CLM-narotzki2016-0017
+  - CLM-qin2024-0022
+  status: open
+  verified_by: []
+- id: KBREQ-036
+  area: simulation
+  statement: The platform must model the broker or its liquidity provider as the counterparty to every currency
+    fill, record whether the broker deals as principal or routes orders onward, and must not assume that a paper
+    account reproduces either or that fills follow strict time priority.
+  strength_of_basis: weak
+  sources:
+  - bell2014
+  - ketmanee2023
+  kb_claims:
+  - CLM-bell2014-0016
+  - CLM-ketmanee2023-0003
+  - CLM-ketmanee2023-0012
+  - CLM-ketmanee2023-0019
+  status: open
+  verified_by: []
+- id: KBREQ-037
+  area: simulation
+  statement: The platform must test every strategy under a liquidity-withdrawal scenario in which spreads widen,
+    displayed size shrinks and other participants trade in the same direction, and must not reuse cost assumptions
+    measured in calm markets for stressed periods.
+  strength_of_basis: moderate
+  sources:
+  - biais2014
+  - brogaard2010
+  - monson2013
+  kb_claims:
+  - CLM-biais2014-0033
+  - CLM-brogaard2010-0051
+  - CLM-monson2013-0016
+  - CLM-monson2013-0019
+  - CLM-monson2013-0040
+  status: open
+  verified_by: []
+- id: KBREQ-038
+  area: simulation
+  statement: The platform must structure any venue simulator with checks at a gateway stage, one serial queue per
+    symbol, a book built from confirmed responses, private acknowledgements kept apart from the public feed, and
+    random jitter between arrival order and processing order.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  kb_claims:
+  - CLM-aquilina2021-0014
+  - CLM-aquilina2021-0018
+  - CLM-aquilina2021-0025
+  - CLM-aquilina2021-0030
+  status: open
+  verified_by: []
+- id: KBREQ-039
+  area: execution
+  statement: The platform must attach a limit price or a price collar relative to a recent reference price to every
+    order, and must never rest placeholder orders far from the market that it would not want filled.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - gomber2011
+  - monson2013
+  kb_claims:
+  - CLM-bell2014-0073
+  - CLM-gomber2011-0062
+  - CLM-monson2013-0021
+  status: open
+  verified_by: []
+- id: KBREQ-040
+  area: execution
+  statement: The platform must give every participation or slicing algorithm an explicit price limit and a time
+    or size cap, and should randomise slice size and timing.
+  strength_of_basis: moderate
+  sources:
+  - biais2014
+  - gomber2011
+  - monson2013
+  kb_claims:
+  - CLM-biais2014-0007
+  - CLM-gomber2011-0015
+  - CLM-gomber2011-0025
+  - CLM-monson2013-0084
+  status: open
+  verified_by: []
+- id: KBREQ-041
+  area: execution
+  statement: The platform must fire a taker signal only when the expected move at the forecast horizon exceeds spread
+    plus commission plus expected slippage, and an arbitrage signal only when the price gap exceeds the summed fees
+    of both legs plus expected slippage.
+  strength_of_basis: moderate
+  sources:
+  - gomber2011
+  - jaddu2023
+  kb_claims:
+  - CLM-gomber2011-0023
+  - CLM-gomber2011-0024
+  - CLM-jaddu2023-0059
+  status: open
+  verified_by: []
+- id: KBREQ-042
+  area: execution
+  statement: The platform must timestamp its resting quotes, treat them as stale after a jump in a highly correlated
+    instrument, and size them on the assumption that they are hit before a cancel can arrive.
+  strength_of_basis: strong
+  sources:
+  - aquilina2021
+  - biais2014
+  - gomber2011
+  - johnson2017
+  kb_claims:
+  - CLM-aquilina2021-0002
+  - CLM-aquilina2021-0035
+  - CLM-aquilina2021-0062
+  - CLM-aquilina2021-0076
+  - CLM-biais2014-0004
+  - CLM-gomber2011-0082
+  - CLM-johnson2017-0021
+  status: open
+  verified_by: []
+- id: KBREQ-043
+  area: execution
+  statement: The platform must prevent its own orders from matching each other across strategies and accounts.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  kb_claims:
+  - CLM-bell2014-0025
+  - CLM-bell2014-0073
+  status: open
+  verified_by: []
+- id: KBREQ-045
+  area: risk
+  statement: The platform must pass every order through automated pre-trade checks under its own control (order
+    size, price band, exposure and credit limits) on every order path before it leaves for the broker, should repeat
+    them at a second independent layer, and must not count a post-trade drop copy as a control.
+  strength_of_basis: strong
+  sources:
+  - bell2014
+  - gomber2011
+  - johnson2017
+  - narotzki2016
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0028
+  - CLM-bell2014-0042
+  - CLM-bell2014-0068
+  - CLM-gomber2011-0005
+  - CLM-gomber2011-0053
+  - CLM-johnson2017-0056
+  - CLM-narotzki2016-0005
+  - CLM-woodward2017-0040
+  status: open
+  verified_by: []
+- id: KBREQ-046
+  area: risk
+  statement: The platform must cap order rate, per-order size, order count per interval and cumulative open notional
+    for each strategy, and halt the strategy automatically when any cap is hit.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - gomber2011
+  kb_claims:
+  - CLM-bell2014-0037
+  - CLM-bell2014-0072
+  - CLM-bell2014-0075
+  - CLM-gomber2011-0054
+  status: open
+  verified_by: []
+- id: KBREQ-047
+  area: risk
+  statement: The platform must provide a kill switch that cancels all working orders, blocks new ones and hands
+    open positions to a human operator, together with cancel-on-disconnect and heartbeat monitoring of every connection.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - johnson2017
+  kb_claims:
+  - CLM-bell2014-0075
+  - CLM-johnson2017-0020
+  status: open
+  verified_by: []
+- id: KBREQ-048
+  area: risk
+  statement: The platform must run a price-move guard that tests both the tick-to-tick jump and the cumulative move
+    over a rolling window, pauses new entries in the instrument for a cool-off period on either breach, and applies
+    the pause on every venue or broker where the instrument is traded.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - gomber2011
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0068
+  - CLM-gomber2011-0060
+  - CLM-gomber2011-0061
+  - CLM-gomber2011-0078
+  - CLM-gomber2011-0079
+  - CLM-gomber2011-0080
+  - CLM-woodward2017-0026
+  status: open
+  verified_by: []
+- id: KBREQ-049
+  area: risk
+  statement: The platform must maintain net and gross exposure per instrument and in total from fills in real time,
+    priced at the latest market price, in a component independent of the strategies, and must hold net position
+    inside a configured bound.
+  strength_of_basis: weak
+  sources:
+  - lockwood2012
+  kb_claims:
+  - CLM-lockwood2012-0016
+  - CLM-lockwood2012-0017
+  - CLM-lockwood2012-0024
+  status: open
+  verified_by: []
+- id: KBREQ-050
+  area: risk
+  statement: The platform must cap its own leverage by policy, independently of the maximum its broker offers.
+  strength_of_basis: weak
+  sources:
+  - ketmanee2023
+  kb_claims:
+  - CLM-ketmanee2023-0005
+  - CLM-ketmanee2023-0018
+  status: open
+  verified_by: []
+- id: KBREQ-051
+  area: risk
+  statement: The platform must apply position and loss limits to every strategy, including arbitrage-like and near-mechanical
+    ones.
+  strength_of_basis: strong
+  sources:
+  - aquilina2021
+  kb_claims:
+  - CLM-aquilina2021-0075
+  status: open
+  verified_by: []
+- id: KBREQ-052
+  area: risk
+  statement: The platform must define and test in advance what each strategy does when data latency or system health
+    degrades (pull quotes, flatten or hold), and that path must not default to aggressive liquidity taking.
+  strength_of_basis: moderate
+  sources:
+  - gomber2011
+  - monson2013
+  kb_claims:
+  - CLM-gomber2011-0077
+  - CLM-monson2013-0020
+  status: open
+  verified_by: []
+- id: KBREQ-053
+  area: risk
+  statement: The platform must measure order-to-trade ratio, message rate, cancel-to-submit ratio and order lifetimes
+    per strategy and venue, enforce an outbound orders-per-second limiter on every connection, and alert before
+    a venue threshold is reached.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  - bell2014
+  - biais2012
+  - biais2014
+  - brogaard2010
+  - gomber2011
+  - narotzki2016
+  - woodward2017
+  kb_claims:
+  - CLM-aquilina2021-0022
+  - CLM-bell2014-0010
+  - CLM-bell2014-0034
+  - CLM-bell2014-0072
+  - CLM-biais2012-0007
+  - CLM-biais2014-0040
+  - CLM-brogaard2010-0085
+  - CLM-gomber2011-0069
+  - CLM-narotzki2016-0050
+  - CLM-woodward2017-0046
+  status: open
+  verified_by: []
+- id: KBREQ-054
+  area: risk
+  statement: The platform must hold for each model a written operating envelope (volatility, spread, depth, message-burst
+    and data-quality ranges), track live profit and loss, fill rates and slippage against the model's expectation,
+    and cut risk or halt automatically when either leaves its tolerance.
+  strength_of_basis: weak
+  sources:
+  - biais2014
+  - johnson2017
+  - woodward2017
+  kb_claims:
+  - CLM-biais2014-0034
+  - CLM-johnson2017-0017
+  - CLM-johnson2017-0018
+  - CLM-woodward2017-0015
+  status: open
+  verified_by: []
+- id: KBREQ-055
+  area: ops
+  statement: The platform must write every order event (creation, amendment, cancellation, routing, acknowledgement,
+    reject, unfilled expiry and execution) with timestamps and the originating strategy to one queryable log, retained
+    for at least two years and sufficient to rebuild the order book and own-order state after a disorderly period.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  - bell2014
+  - gomber2011
+  kb_claims:
+  - CLM-aquilina2021-0008
+  - CLM-bell2014-0036
+  - CLM-bell2014-0064
+  - CLM-gomber2011-0063
+  - CLM-gomber2011-0065
+  status: open
+  verified_by: []
+- id: KBREQ-056
+  area: ops
+  statement: The platform must persist every algorithm decision with its inputs and outputs (market data seen, parameters
+    and orders sent) so that any action can be replayed and explained.
+  strength_of_basis: weak
+  sources:
+  - gomber2011
+  - woodward2017
+  kb_claims:
+  - CLM-gomber2011-0073
+  - CLM-woodward2017-0041
+  status: open
+  verified_by: []
+- id: KBREQ-057
+  area: ops
+  statement: The platform must stamp every order with the identifier and version of the algorithm or model that
+    generated it.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  kb_claims:
+  - CLM-bell2014-0011
+  - CLM-bell2014-0077
+  status: open
+  verified_by: []
+- id: KBREQ-058
+  area: ops
+  statement: The platform must measure and record its own order round-trip latency per broker or venue as a distribution
+    (shortest, average, longest and percentiles) with the measurement method and load, and must not rely on vendor
+    latency figures.
+  strength_of_basis: strong
+  sources:
+  - aquilina2021
+  - gomber2011
+  - lockwood2012
+  kb_claims:
+  - CLM-aquilina2021-0090
+  - CLM-gomber2011-0056
+  - CLM-lockwood2012-0021
+  status: open
+  verified_by: []
+- id: KBREQ-059
+  area: ops
+  statement: The platform should reconcile its own order and fill records against the broker's independent record
+    of every order and execution after each session.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  kb_claims:
+  - CLM-bell2014-0074
+  status: open
+  verified_by: []
+- id: KBREQ-060
+  area: ops
+  statement: The platform should keep written, tested procedures for capacity, integrity, resilience and security,
+    test its recovery plan and the whole trading system at least once a year including a message-burst load test,
+    and record and remediate every systems incident.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - gomber2011
+  - johnson2017
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0036
+  - CLM-gomber2011-0065
+  - CLM-johnson2017-0055
+  - CLM-woodward2017-0024
+  status: open
+  verified_by: []
+- id: KBREQ-061
+  area: ops
+  statement: The platform must report daily execution-quality metrics for its own trading (effective spread, price
+    impact, realized spread, order-to-fill ratio, rejection ratio and execution speed), split passive fills by whether
+    they occurred inside a burst of executions, and report its own lost-race rate from rejected cancels and unfilled
+    marketable orders.
+  strength_of_basis: moderate
+  sources:
+  - aquilina2021
+  - bell2014
+  kb_claims:
+  - CLM-aquilina2021-0019
+  - CLM-aquilina2021-0056
+  - CLM-aquilina2021-0057
+  - CLM-aquilina2021-0089
+  - CLM-bell2014-0079
+  status: open
+  verified_by: []
+- id: KBREQ-062
+  area: ops
+  statement: The platform must attribute the losses of every losing period to spread and fees, slippage, position
+    size and rule breaches before any other explanation is accepted.
+  strength_of_basis: moderate
+  sources:
+  - jaddu2023
+  - ketmanee2023
+  kb_claims:
+  - CLM-jaddu2023-0049
+  - CLM-ketmanee2023-0018
+  status: open
+  verified_by: []
+- id: KBREQ-063
+  area: governance
+  statement: The platform must forbid any order placed without intent to execute, and with it layering, spoofing,
+    quote stuffing, momentum ignition, marking the close, wash trading and quoting to move a reference price used
+    for fills elsewhere.
+  strength_of_basis: strong
+  sources:
+  - bell2014
+  - biais2014
+  - gomber2011
+  - johnson2017
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0012
+  - CLM-bell2014-0013
+  - CLM-bell2014-0025
+  - CLM-biais2014-0009
+  - CLM-gomber2011-0028
+  - CLM-gomber2011-0066
+  - CLM-johnson2017-0050
+  - CLM-johnson2017-0052
+  - CLM-woodward2017-0027
+  - CLM-woodward2017-0031
+  status: open
+  verified_by: []
+- id: KBREQ-064
+  area: governance
+  statement: The platform must run surveillance on its own order flow that flags one-sided stacks of orders cancelled
+    after an opposite-side fill, bursts of aggressive orders followed by exits on the other side, aggressive orders
+    concentrated before the close, and message bursts.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - biais2012
+  - brogaard2010
+  - gomber2011
+  - johnson2017
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0013
+  - CLM-biais2012-0009
+  - CLM-brogaard2010-0040
+  - CLM-gomber2011-0067
+  - CLM-johnson2017-0004
+  - CLM-woodward2017-0027
+  - CLM-woodward2017-0036
+  status: open
+  verified_by: []
+- id: KBREQ-065
+  area: governance
+  statement: The platform must keep a current written description of every strategy and algorithm covering its design,
+    purpose, parameters and risk controls.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - gomber2011
+  kb_claims:
+  - CLM-bell2014-0009
+  - CLM-bell2014-0011
+  - CLM-bell2014-0064
+  - CLM-gomber2011-0068
+  status: open
+  verified_by: []
+- id: KBREQ-066
+  area: governance
+  statement: The platform must keep strategy and model code under version control with its change history, separate
+    development from the live environment, and enable no algorithm or change for trading without a recorded test
+    run and approval.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0069
+  - CLM-bell2014-0076
+  - CLM-woodward2017-0041
+  status: open
+  verified_by: []
+- id: KBREQ-067
+  area: governance
+  statement: The platform must have a named person able to stop trading reachable whenever strategies run, must
+    let no algorithm open new risk when nobody is reachable, and must log and escalate every breach of an algorithm's
+    design limits or failure of a risk control.
+  strength_of_basis: moderate
+  sources:
+  - bell2014
+  - gomber2011
+  kb_claims:
+  - CLM-bell2014-0077
+  - CLM-gomber2011-0074
+  status: open
+  verified_by: []
+- id: KBREQ-068
+  area: governance
+  statement: The platform must run every documented control and classification method exactly as described and must
+    log and review each manual override.
+  strength_of_basis: moderate
+  sources:
+  - johnson2017
+  kb_claims:
+  - CLM-johnson2017-0041
+  - CLM-johnson2017-0042
+  status: open
+  verified_by: []
+- id: KBREQ-069
+  area: governance
+  statement: The platform must hold every regulatory or venue parameter it relies on (price bands, halt levels,
+    fee rates, message thresholds) as dated configuration with a reference to the current primary text, and must
+    not derive a rule from these sources unchecked.
+  strength_of_basis: strong
+  sources:
+  - bell2014
+  - gomber2011
+  - monson2013
+  - woodward2017
+  kb_claims:
+  - CLM-bell2014-0071
+  - CLM-bell2014-0080
+  - CLM-gomber2011-0098
+  - CLM-monson2013-0002
+  - CLM-woodward2017-0039
+  status: open
+  verified_by: []

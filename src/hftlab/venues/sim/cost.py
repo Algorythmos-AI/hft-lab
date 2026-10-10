@@ -77,6 +77,11 @@ class CostModel:
         by_rate = -(-notional_micro * self.commission_rate_bps_x100 // _BPS_X100)
         return max(by_rate, self.commission_minimum[currency])
 
+    def minimum_size(self, instrument: Instrument) -> int:
+        """The smallest order it takes: the larger of the venue's and the model's minimum, on the size grid."""
+        smallest = max(instrument.min_order_size, self.min_order_size)
+        return -(-smallest // instrument.size_increment) * instrument.size_increment
+
     def phase(self, at_ns: int) -> str:
         """NO_FILL close to the daily rollover, WIDENED further out, NORMAL the rest of the day."""
         if in_rollover_window(at_ns, self.no_fill_before_ns, self.no_fill_after_ns):

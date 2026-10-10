@@ -71,11 +71,7 @@ def parse_pair(entry: object) -> tuple[str, InstrumentKind]:
 
 def minimum_sizes(traded: Sequence[Instrument], model: CostModel) -> dict[str, int]:
     """The smallest order each pair takes: the larger of the venue's and the cost model's minimum, on the size grid."""
-    out = {}
-    for instrument in traded:
-        smallest = max(instrument.min_order_size, model.min_order_size)
-        out[instrument.pair] = -(-smallest // instrument.size_increment) * instrument.size_increment
-    return out
+    return {instrument.pair: model.minimum_size(instrument) for instrument in traded}
 
 
 def make_sleeves(entries: Sequence[object], sizes: Mapping[str, int]) -> list[Sleeve[Any]]:

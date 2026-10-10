@@ -35,6 +35,8 @@ class FakeConfig:
     commission_currency: str = "USD"
     duplicate_every: int = 0  # every Nth execution report is delivered twice
     reorder_every: int = 0  # every Nth execution report changes places with the one after it
+    late_ack_every: int = 0  # every Nth acknowledgement is delivered after its order's execution reports in the batch
+    echo_every: int = 0  # every Nth execution report is delivered once more, with the batch after its own
     outages: tuple[tuple[int, int], ...] = ()  # [start, end) spans when the link to the broker is down
     depth_levels: int = 0  # 0: the venue offers no depth
     history: bool = True
@@ -155,6 +157,9 @@ class FakeMarket:
         self._executions: list[Executed] = []
         self._commissions: dict[str, Commissioned] = {}
         self._reports = 0
+        self._acks = 0
+        self._echoes: list[Happening] = []
+        self._carried: dict[tuple[str, InstrumentKind], int] = {}
 
     # ---- what is traded, and the link --------------------------------------------------------------------------
 
@@ -240,8 +245,16 @@ class FakeMarket:
     def commission_of(self, exec_id: str) -> Commissioned | None:
         return self._commissions.get(exec_id)
 
+    def carry(self, instrument: Instrument, quantity: int) -> None:
+        """A position the account already held: it is in `positions` and in no list of executions.
+
+        What a broker shows of a position opened on an earlier day, or by another hand. Nothing here explains it.
+        """
+        key = (instrument.pair, instrument.kind)
+        self._carried[key] = self._carried.get(key, 0) + quantity
+
     def positions(self) -> dict[tuple[str, InstrumentKind], int]:
-        out: dict[tuple[str, InstrumentKind], int] = {}
+        out = dict(self._carried)
         for booked in self._orders.values():
             if booked.executed:
                 key = (booked.instrument.pair, booked.instrument.kind)
@@ -259,7 +272,8 @@ class FakeMarket:
             self._now = item.at_ns
             item.run(item.at_ns)
         self._now = to_ns
-        out, self._out = self._faulted(self._out), []
+        late, self._echoes = self._echoes, []
+        out, self._out = late + self._faulted(self._out), []
         return out
 
     def _at(self, at_ns: int, run: Callable[[int], None]) -> None:
@@ -345,7 +359,8 @@ class FakeMarket:
     def _faulted(self, happenings: list[Happening]) -> list[Happening]:
         """Delivery faults: duplicate every Nth execution report, and swap every Nth with the one after it."""
         every_dup, every_swap = self.config.duplicate_every, self.config.reorder_every
-        if not (every_dup or every_swap):
+        every_ack, every_echo = self.config.late_ack_every, self.config.echo_every
+        if not (every_dup or every_swap or every_ack or every_echo):
             return happenings
         units: list[list[Happening]] = []
         for happening in happenings:
@@ -361,4 +376,17 @@ class FakeMarket:
                 units[index], units[other] = units[other], units[index]
             if every_dup and self._reports % every_dup == 0:
                 units[index] = [*units[index], units[index][0]]
+            if every_echo and self._reports % every_echo == 0:
+                self._echoes.append(units[index][0])
+        for unit in [unit for unit in units if isinstance(unit[0], Acked)]:
+            self._acks += 1
+            ack = unit[0]
+            assert isinstance(ack, Acked)
+            mine = [
+                i for i, other in enumerate(units)
+                if isinstance(other[0], Executed) and other[0].client_order_id == ack.client_order_id
+            ]  # fmt: skip
+            if every_ack and self._acks % every_ack == 0 and mine and mine[-1] > units.index(unit):
+                units.remove(unit)
+                units.insert(mine[-1], unit)  # the list is one shorter now, so this is just after the last report
         return [happening for unit in units for happening in unit]

@@ -324,6 +324,60 @@ def test_execution_reports_can_arrive_out_of_order():
     assert [f.fill_id[-1] for f in of(events, Fill)] == ["2", "1"] and filled(events) == 40_000
 
 
+def test_an_acknowledgement_can_arrive_after_the_fill_it_should_have_come_before():
+    events, broker = run(FakeConfig(late_ack_every=1), an_order())
+    assert brief(events) == [
+        ("order", "SUBMITTED", 0),
+        ("fill", "BUY", 20_000, ASK, "TAKER"),
+        ("order", "FILLED", 20_000),
+        ("commission", 2_000_000, "USD"),
+        ("order", "WORKING", 0),
+    ]
+    assert broker.positions()[0].quantity == 20_000
+    one_by_one = a_broker(FakeConfig(late_ack_every=1))
+    one_by_one[1].place(an_order(), EURUSD)
+    one_by_one[1].poll()
+    in_time = brief(after(one_by_one[0], one_by_one[1], 3 * MS) + after(one_by_one[0], one_by_one[1], 50 * MS))
+    assert in_time[0] == ("order", "WORKING", 0), "polled before the fill happened, it has nothing to come after"
+
+
+def test_an_execution_report_can_be_delivered_again_later_and_never_fills_twice():
+    clock, broker = a_broker(FakeConfig(fill_chunks=2, echo_every=2))
+    broker.place(an_order(quantity=40_000), EURUSD)
+    first = broker.poll() + after(clock, broker, 50 * MS)
+    assert len(of(first, Fill)) == 2 and filled(first) == 40_000
+    late = after(clock, broker, 5 * SECOND)
+    assert brief(late) == [("fill", "BUY", 20_000, ASK, "TAKER")], "the second report, once more, long after"
+    assert late[0].fill_id == of(first, Fill)[1].fill_id and late[0].ts_ns > of(first, Fill)[1].ts_ns
+    assert after(clock, broker, 5 * SECOND) == [], "once more, not for ever"
+    assert broker.positions()[0].quantity == 40_000 and len(broker.executions_since(0)) == 2
+
+
+def test_a_late_copy_of_an_earlier_report_brings_its_stale_order_status_with_it():
+    clock, broker = a_broker(FakeConfig(fill_chunks=2, echo_every=1))
+    broker.place(an_order(quantity=40_000), EURUSD)
+    broker.poll()
+    after(clock, broker, 50 * MS)
+    assert brief(after(clock, broker, SECOND)) == [
+        ("fill", "BUY", 20_000, ASK, "TAKER"),
+        ("order", "PARTIALLY_FILLED", 20_000),  # after the order was already reported FILLED
+        ("fill", "BUY", 20_000, ASK, "TAKER"),
+        ("order", "FILLED", 40_000),
+    ]
+
+
+def test_a_position_the_account_already_held_is_in_its_positions_and_in_no_execution_list():
+    clock, broker = a_broker()
+    broker.market.carry(EURUSD, -30_000)
+    assert [(p.pair, p.quantity) for p in broker.positions()] == [("EUR.USD", -30_000)]
+    assert broker.executions_since(0) == () and broker.open_orders() == ()
+    broker.place(an_order(quantity=40_000), EURUSD)
+    after(clock, broker, 50 * MS)
+    assert broker.positions()[0].quantity == 10_000 and len(broker.executions_since(0)) == 1
+    broker.market.carry(EURUSD, -10_000)
+    assert broker.positions() == (), "a flat position is not listed"
+
+
 # ---- outages --------------------------------------------------------------------------------------------------------
 
 

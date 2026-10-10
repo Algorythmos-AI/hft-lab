@@ -74,3 +74,26 @@ its end is ambiguous. A text log passes it and fails the second.
 - The format has been exercised on the fake broker's quotes and on synthetic streams, including a kill at
   every byte of a block. It has not yet recorded the real feed: the F2 exit gate needs five recorded trading
   days and cannot be closed by code.
+
+## Addendum (host layer): a write the operating system refuses
+
+A review before the first install found three things the decision above did not say.
+
+1. **A full disk is not the quota.** The quota is this platform's own limit and is reached on purpose. A write
+   the operating system refuses (no space left, an I/O error) is something else. It used to leave the recorder
+   as a crash, which a service manager answers with a restart loop. It now ends the store's writing for that
+   process: `StoreIOError`, the status `io-error`, a line in the journal when the disk still takes one, and
+   exit code 4. The unit's restart back-off does the rest.
+2. **Nothing is appended after a write that failed.** The piece of a block that got out is taken back if the
+   disk allows it, what was buffered is dropped, and no STOP record is written. A good block after a torn one
+   would turn the torn one into corruption (decision 4), so the next writer of that file is a new process.
+   The journal follows the same rule: a line is appended whole or taken back, a reader skips a last line
+   that has no newline, and the next append cuts it off. A record whose gap could not be journalled does not
+   reach the disk, so the day check still finds the journal and the records in agreement.
+3. **A segment appears with its header whole or not at all.** The header is written beside the segment and
+   moved into place in one step. A header cut short by a kill or a full disk would have been a file that
+   nothing could read, and the store could not have been opened again.
+
+The loop also reports how long it is away from the source between two polls, the longest and the recent one,
+in the status file. The flush syncs to disk on the loop's own thread (decision 2), and what that costs in
+receive time is now measured. The flush policy itself is unchanged.

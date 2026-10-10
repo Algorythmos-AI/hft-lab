@@ -102,7 +102,7 @@ def test_agents_md_states_every_hard_rule():
 
 
 def test_the_design_records_exist_in_order():
-    records = sorted(p.name for p in (ROOT / "docs" / "adr").glob("*.md"))
+    records = sorted(p.name for p in (ROOT / "docs" / "adr").glob("*.md") if p.name[:4] not in GIVEN_AHEAD)
     topics = ["paper-only", "integer", "two-books", "recorder", "replay", "leak", "host", "learning"]
     topics += ["venue-port", "access-route", "synchronous", "recording-format", "cost-model", "sleeves"]
     topics += ["risk-gate", "order-manager"]
@@ -128,6 +128,20 @@ def test_every_design_record_that_is_cited_anywhere_exists():
     for path in tracked():  # and a link to a record names the file as it is called
         for name in re.findall(r"\badr/([0-9]{4}-[a-z0-9-]+\.md)", (ROOT / path).read_text(errors="replace")):
             assert (ROOT / "docs" / "adr" / name).is_file(), f"{path} links to docs/adr/{name}"
+
+
+# Numbers handed out ahead of the run above, to work that was written in parallel with the records before them.
+# When every number below them exists, these move into `topics` and this goes.
+GIVEN_AHEAD = {"0017": "host-layer", "0018": "snapshot-publish"}
+
+
+def test_the_design_records_given_a_number_ahead_are_there_and_well_formed():
+    for number, topic in GIVEN_AHEAD.items():
+        (path,) = (ROOT / "docs" / "adr").glob(f"{number}-*.md")
+        text = path.read_text(encoding="utf-8")
+        assert topic in path.name and text.startswith(f"# ADR {number}: "), path.name
+        for section in ("- **Status:** accepted", "## Context", "## Decision", "## Consequences"):
+            assert section in text, f"{path.name} has no {section!r}"
 
 
 def test_every_document_the_code_and_the_config_point_to_exists():

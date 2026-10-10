@@ -35,6 +35,11 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 | `hft-train`, `hft-promote` | Weekend learning and the weekly promotion decision |
 | `hft-report`, `hft-backup` | Summaries; journal and model backups |
 
+Six of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
+as a placeholder that cannot be enabled, the recorder with its hourly `hft-housekeep`, `hft-shadow`,
+`hft-publish` (the status check, the pages and the status snapshot) and `hft-backup`. None is installed on
+any host. The others arrive with their phases.
+
 ## Package map
 
 `src/hftlab/`. A package marked with a phase exists today; the others arrive with the phase that needs them
@@ -61,13 +66,16 @@ risk/         the independent gate: limits, market guards, latches, switches    
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets, training, validation, promotion
-ops/          jobs, units, deploy gate, heartbeat, alerts, backup
+ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
+publish/      the status snapshot: built from the status reading, checked, signed and sent                 F2
 ```
 
 Two boundaries are enforced by tests from the first commit:
 
 - **Only `venues/ibkr/` may import a network library or the broker's client library.** Everything else, the
-  venue port, the fake broker, the recorder and the shadow venue included, is computation on events.
+  venue port, the fake broker, the recorder and the shadow venue included, is computation on events. The one
+  exception is `ops/post.py`, the host layer's HTTPS POST for pages and the status snapshot: it may import
+  five names of the standard library's HTTP client, sends to `https` addresses only, and never to this machine.
 - **Only `safety/lock.py` may name a live port or read the variables that select the trading mode.**
 
 ## Data flow

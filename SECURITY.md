@@ -19,6 +19,10 @@ It is public for now, by the owner's decision, and is written to be safe to read
 
 - **Where they live.** Nowhere in this repository and nowhere in CI. The broker's paper login will live only on
   the host that runs the platform, in a file readable by the platform's own Unix user, installed by the owner.
+- **On the host,** two files, both written by the owner and neither in this repository: the gateway
+  controller's own configuration, which holds the paper login, and `/etc/hft/secrets.env`, which holds the
+  status snapshot's signing key and the address pages are sent to. Only the publishing job loads the second;
+  the recorder and the shadow runner load no such file at all.
 - **Who handles them.** The owner. Automated contributors never log in to the broker, never type credentials
   and never place an order by hand.
 - **What must not exist.** A live broker login on the host. The platform uses a separate paper-only username,
@@ -37,7 +41,10 @@ It is public for now, by the owner's decision, and is written to be safe to read
   - the broker reported at least one managed account and every one is a paper id (`DU` and digits)
   - if a live username is declared, the configured username is known and is not that one
 - **Nothing else can turn it off.** A test scans every module of the package: only the lock may name a live
-  port or read those environment variables, network libraries may be imported only by the broker adapter, and the venue registry holds exactly `ibkr_paper` and `sim` (`tests/safety/test_isolation.py`).
+  port or read those environment variables, network libraries may be imported only by the broker adapter, and the venue registry holds exactly `ibkr_paper` and `sim` (`tests/safety/test_isolation.py`). The one
+  exception to the network rule is `src/hftlab/ops/post.py`, which sends pages and the status snapshot over
+  HTTPS: it may import five names of the standard library's HTTP client, and it refuses any address on this
+  machine, so it cannot be pointed at the gateway.
 - **Every order will pass an independent risk gate** that rebuilds positions from fills and owns the `KILL`
   and `FLATTEN` switches. The gate is built in a later phase; its requirements are already in
   [`docs/requirements/requirements.yaml`](docs/requirements/requirements.yaml).

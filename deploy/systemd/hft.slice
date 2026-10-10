@@ -1,0 +1,10 @@
+[Unit]
+Description=HFT Lab: one capped slice for every unit of the platform, so the other desks win under pressure
+
+[Slice]
+MemoryHigh=1000M
+MemoryMax=1200M
+MemorySwapMax=0
+CPUWeight=20
+IOWeight=20
+TasksMax=512

@@ -26,6 +26,8 @@ between the trading platforms lives in that repository's `docs/trading-platforms
      needed here is copied in and trimmed, with its origin commit noted.
    - Network libraries, and the broker's client library (`ib_async`), are imported only under
      `src/hftlab/venues/ibkr/`. The recorder, the replay and the shadow venue need none.
+   - The host layer's one HTTPS POST, for pages and the status snapshot, is `src/hftlab/ops/post.py`. It may
+     import five names of the standard library's HTTP client and nothing else that opens a socket.
 3. **Pre-registration.** Every strategy or evaluation change needs a hypothesis, an experiment and a decision
    record in `research/`, written before any affected P&L is viewed.
    - Ids are `HFT-HYP-NNNN`, `HFT-EXP-NNNN` and `HFT-DEC-NNNN`, sequential and never reused.
@@ -69,14 +71,22 @@ The repository is **public**. Assume every byte committed is read by strangers a
 
 ```
 src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
+<<<<<<< HEAD
                book · strategy · shadow · feasibility · registry · risk · exec · journal
                (later: features · labels · models · learn · ops)
+=======
+               book · strategy · shadow · feasibility · registry
+               ops (the host layer) · publish (the status snapshot)
+               (later: features · labels · models · risk · exec · learn)
+>>>>>>> origin/main
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
 config/        risk limits, venue capability file, trial registry, cost model, calendar, and the settings of
                the recorder, the shadow runner and the feasibility map
 docs/          architecture, ADRs, roadmap, requirements, runbooks, never-build list
 contracts/     versioned data contracts this platform publishes (the status snapshot), each with an example
+deploy/        what the owner runs on the host: systemd/ (unit files rendered from hftlab.ops.units, never
+               edited by hand) and bin/ (the pre-flight sampler, the install script, the status wrapper)
 tests/         pytest and hypothesis (CI-safe: fixtures and tmp_path only, no network)
 ```
 

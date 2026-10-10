@@ -23,7 +23,8 @@ taken from, and checks what it receives against that copy.
    from New York time (the currency week runs from Sunday evening to Friday 17:00 there). A consumer treats silence inside
    a window as a fault and silence outside one as normal.
 
-`tests/unit/test_snapshot_contract.py` holds the file to rules 1 to 3 and checks the example.
+`tests/unit/test_snapshot_contract.py` holds the file to rules 1 to 3 and checks the example. The publisher
+checks every snapshot it builds with the same code, before the snapshot is printed or sent.
 
 ## Changing a contract
 
@@ -34,4 +35,8 @@ taken from, and checks what it receives against that copy.
 - A published contract file is never edited in a way that keeps its name and changes what conforms
   without the two steps above.
 
-Nothing publishes this snapshot yet. The publisher arrives with the recorder's host installation.
+The publisher is `python -m hftlab.publish` ([ADR 0018](../docs/adr/0018-snapshot-publish.md)). It prints
+the snapshot unless it is told to send it. **Nothing has been sent yet**: the signing key, and the key id the
+site accepts for this desk, are the owner's decisions and are still open
+([runbook](../docs/runbooks/publish.md)). This round it sends identity, windows, stage, phases and health,
+and the recorder part once something has been recorded; pairs, sleeves, books and learning stay absent.

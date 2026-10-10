@@ -1,0 +1,28 @@
+[Unit]
+Description=HFT Lab gateway (PLACEHOLDER, never enabled from the repository): the broker's gateway in paper mode, kept alive by a standard third-party controller
+Documentation=file:///home/hft/hft-lab/docs/runbooks/gateway-down.md
+ConditionPathExists=/etc/hft/gateway/config.ini
+ConditionFileIsExecutable=/etc/hft/gateway/start
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=exec
+User=hft
+Group=hft
+Slice=hft.slice
+WorkingDirectory=/home/hft
+Environment=MODE=paper
+Environment=HFT_GATEWAY_CONFIG=/etc/hft/gateway/config.ini
+ExecStart=/etc/hft/gateway/start
+Restart=on-failure
+RestartSec=30
+RestartSteps=6
+RestartMaxDelaySec=300
+TimeoutStopSec=60
+MemoryMax=900M
+OOMScoreAdjust=300
+NoNewPrivileges=yes
+PrivateTmp=yes
+InaccessiblePaths=-/home/wt
+LimitCORE=0

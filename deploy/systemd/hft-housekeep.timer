@@ -1,0 +1,11 @@
+[Unit]
+Description=Start HFT Lab housekeep: hourly, a few minutes after the hour has closed
+
+[Timer]
+OnCalendar=*:07:00
+AccuracySec=10s
+Persistent=false
+Unit=hft-housekeep.service
+
+[Install]
+WantedBy=timers.target

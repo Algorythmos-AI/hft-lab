@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "about": "The pre-flight gate: one day of measurements on the host decides whether the platform may be installed at all (ADR 0007, decision 3). Read by `python -m hftlab.ops.preflight`, which runs before anything of ours is installed and so needs nothing but the standard library: that is why this one file is JSON. Sizes are in kB as /proc/meminfo and df count them (1024 bytes). `decided_by: plan` is a number of the approved plan and changes only with a decision record; `decided_by: engineering` is a first choice made in this repository.",
+  "thresholds": {
+    "headroom_min_kb": {
+      "value": 1500000,
+      "decided_by": "plan",
+      "source": "ADR 0007, decision 3: less than about 1.5 GB of memory available at the other desks' peak means the platform is not installed"
+    },
+    "disk_floor_kb": {
+      "value": 3000000,
+      "decided_by": "plan",
+      "source": "The other desks' free-disk floor of 3 GB, which this platform may never push them below (ADR 0007, decision 4)"
+    },
+    "span_min_seconds": {
+      "value": 86100,
+      "decided_by": "plan",
+      "source": "ADR 0007, decision 3: one day of measurements. Five minutes short of 24 hours is still a day"
+    },
+    "disk_budget_kb": {
+      "value": 3000000,
+      "decided_by": "engineering",
+      "source": "What this platform may take from the disk: the recording quota of config/recorder.yaml, which is still a placeholder, and about 1 GB for the install, the journals and the logs. A test keeps it above that quota"
+    },
+    "samples_min": {
+      "value": 1380,
+      "decided_by": "engineering",
+      "source": "One sample a minute for a day is 1440. An hour of them, in all, may be missing"
+    },
+    "gap_max_seconds": {
+      "value": 600,
+      "decided_by": "engineering",
+      "source": "A hole of more than ten minutes between two samples could hide the other desks' peak"
+    },
+    "age_max_seconds": {
+      "value": 604800,
+      "decided_by": "engineering",
+      "source": "A measurement more than a week old says little about the host as it is now"
+    }
+  }
+}

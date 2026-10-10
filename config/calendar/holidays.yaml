@@ -1,0 +1,12 @@
+# Spans when the currency market is shut although the forex week is open: holidays.
+# Read by hftlab.calendar (load_closures). The list is EMPTY: no closure has been entered, and none is assumed.
+# Fill it from the broker's own holiday notices, one entry per closure, before the first week that has one.
+#
+#   closures:
+#     - name: <what it is>
+#       from: "<ISO-8601 time with an offset>"     # the market shuts at this instant
+#       to:   "<ISO-8601 time with an offset>"     # and reopens at this one
+#
+# Every time carries its own UTC offset ("Z" or "+HH:MM"). A time without one is refused: the market follows
+# New York, the owner lives elsewhere, and a bare local time would be read in the wrong zone half the year.
+closures: []

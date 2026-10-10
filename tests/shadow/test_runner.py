@@ -13,7 +13,7 @@ from hftlab.shadow import __main__ as cli
 from hftlab.shadow.journal import read
 from hftlab.strategy import Cancel, ControlSleeve, IdleSleeve, Intent, Placed
 from hftlab.venues.fake import FakeConfig, build
-from hftlab.venues.port import ConnectionEvent, ConnectionState, VenueUnavailable
+from hftlab.venues.port import CommissionEvent, ConnectionEvent, ConnectionState, VenueUnavailable
 from hftlab.venues.supervisor import Backoff
 from hftlab.venues.view import MarketDataView
 from tests.shadow.kit import BIG, TRADED, constant, kinds, session, walk
@@ -78,7 +78,7 @@ def test_a_round_trip_is_decided_placed_filled_booked_and_journalled(tmp_path):
     pair = result["sleeves"]["hand"]["pairs"]["EUR.USD"]
     assert pair == {
         "currency": "USD", "quantity": 0, "realised": 20 * 20_000, "unrealised": 0, "price_scale": 5,
-        "fees_micro": 4_000_000, "net_micro": 0,
+        "fees_micro": 4_000_000, "net_micro": 0, "fees_not_netted_micro": {},
     }, "bought 20,000 at 1.08510, sold at 1.08530: 4.00 USD made, 4.00 USD of fees"  # fmt: skip
     counts = {"decisions": 2, "orders": 2, "refused": 0, "fills": 2}
     assert result["sleeves"]["hand"] == {**counts, "pairs": result["sleeves"]["hand"]["pairs"]}
@@ -98,6 +98,21 @@ def test_an_open_position_is_valued_at_the_side_it_would_be_closed_on(tmp_path):
     result, _, _ = session(tmp_path / "short.jsonl", [Script("hand", {2: (sell(),)})], quotes)
     pair = result["sleeves"]["hand"]["pairs"]["EUR.USD"]
     assert (pair["quantity"], pair["unrealised"]) == (-20_000, -30 * 20_000), "short from 1.08500, valued at the ask"
+
+
+def test_a_fee_in_a_currency_the_book_cannot_net_is_printed_beside_the_result_not_left_out_in_silence(tmp_path):
+    shadow = Shadow(TRADED, plain_costs(), [Script("hand", {2: (buy(),)})], Journal(tmp_path / "j.jsonl"))
+    for quote in constant(5):
+        shadow.handle(quote)
+    (fill_id,) = shadow.book.snapshot()["fills"]
+    # The shadow venue charges in the quote currency. A broker charges in the account's: say 3.00 AUD for this fill.
+    shadow.book.charge(CommissionEvent(fill_id, 3_000_000, "AUD", 0, 0))
+    result = shadow.close()
+    pair = result["sleeves"]["hand"]["pairs"]["EUR.USD"]
+    assert (pair["fees_micro"], pair["fees_not_netted_micro"]) == (0, {"AUD": 3_000_000})
+    assert pair["net_micro"] == -(10 * 20_000 * 10), "the spread on the open position, and no fee: the AUD is not in it"
+    assert result["sleeves"]["hand"]["pairs"]["USD.JPY"]["fees_not_netted_micro"] == {}
+    assert read(tmp_path / "j.jsonl")[1][-1]["summary"] == result, "and the journal keeps it with the result"
 
 
 def test_a_sleeve_is_told_of_its_own_orders_before_it_sees_the_next_quote(tmp_path):

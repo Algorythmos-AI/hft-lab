@@ -39,9 +39,9 @@ def test_a_sleeve_that_never_trades_earns_exactly_zero(tmp_path, seed):
         "decisions": 0, "orders": 0, "refused": 0, "fills": 0,
         "pairs": {
             "EUR.USD": {"currency": "USD", "quantity": 0, "realised": 0, "unrealised": 0, "price_scale": 5,
-                        "fees_micro": 0, "net_micro": 0},
+                        "fees_micro": 0, "net_micro": 0, "fees_not_netted_micro": {}},
             "USD.JPY": {"currency": "JPY", "quantity": 0, "realised": 0, "unrealised": 0, "price_scale": 3,
-                        "fees_micro": 0, "net_micro": 0},
+                        "fees_micro": 0, "net_micro": 0, "fees_not_netted_micro": {}},
         },
     }  # fmt: skip
     assert kinds(entries) == ["start", "stop"], "and it left nothing in the journal but the session itself"

@@ -223,7 +223,9 @@ class Shadow:
     def summary(self) -> dict[str, object]:
         """Each sleeve's result per pair, in exact integers. Money is in millionths of the pair's quote currency;
 
-        an open position is valued at the last quote seen, a long at the bid and a short at the ask.
+        an open position is valued at the last quote seen, a long at the bid and a short at the ask. `net_micro`
+        is net of the fees in that currency only: `fees_not_netted_micro` lists, by currency, any that were
+        charged in another and are in no net figure here.
         """
         sleeves: dict[str, object] = {}
         for name, counts in self._counts.items():
@@ -239,6 +241,7 @@ class Shadow:
                     "price_scale": instrument.price_scale,
                     "fees_micro": result.fees_micro,
                     "net_micro": result.net_micro,
+                    "fees_not_netted_micro": dict(result.fees_not_netted_micro),
                 }
             sleeves[name] = {**counts, "pairs": pairs}
         return {"session": self.session, "events": self.events, "last_event": self._n, "sleeves": sleeves}

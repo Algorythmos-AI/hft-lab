@@ -7,7 +7,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from hftlab.book import DESK, UNATTRIBUTED, Book, BookError
+from hftlab.book import DESK, UNATTRIBUTED, Book, BookError, PnL
 from hftlab.core import Fill, Position, Side, client_order_id
 from hftlab.venues.port import CommissionEvent
 from tests.venues.kit import EURUSD, USDJPY
@@ -126,6 +126,26 @@ def test_a_round_trip_by_hand():
     pnl = book.pnl("control", "EUR.USD", 108_500, 108_510)
     assert (pnl.realised, pnl.unrealised) == (20_000 * 20, 0), "20 price units on 20,000 units: 4.00 USD at scale 5"
     assert pnl.fees_micro == 4_000_000 and pnl.net_micro == 4_000_000 - 4_000_000
+
+
+def test_a_fee_in_another_currency_is_not_netted_not_converted_and_not_hidden():
+    yen = a_fill(3, Side.BUY, 20_000, 151_230, pair="USD.JPY")
+    book = booked([a_fill(1, Side.BUY, 20_000, 108_510), a_fill(2, Side.SELL, 20_000, 108_530), yen])
+    book.charge(CommissionEvent("x1", 3_000_000, "AUD", 0, 0))  # as a broker charges it: in the account's currency
+    book.charge(CommissionEvent("x2", 2_000_000, "USD", 0, 0))
+    book.charge(CommissionEvent("x3", 0, "AUD", 0, 0))
+    pnl = book.pnl("control", "EUR.USD", 108_500, 108_510)
+    assert pnl.fees_micro == 2_000_000 and pnl.fees_not_netted_micro == {"AUD": 3_000_000}
+    assert pnl.net_micro == 4_000_000 - 2_000_000, "4.00 USD made, less the 2.00 USD fee: the 3.00 AUD is not in it"
+    assert book.pnl(DESK, "EUR.USD", 108_500, 108_510).fees_not_netted_micro == {"AUD": 3_000_000}
+    assert book.pnl("control", "USD.JPY", 151_230, 151_240).fees_not_netted_micro == {}, "a fee of zero is no fee"
+    assert book.pnl("ml", "EUR.USD", 108_500, 108_510).fees_not_netted_micro == {}, "and it is the payer's alone"
+    with pytest.raises(TypeError):
+        pnl.fees_not_netted_micro["AUD"] = 0
+    with pytest.raises(TypeError, match="fees_not_netted_micro"):
+        PnL(0, 0, 0, 0)  # a result cannot be made without saying what it left out
+    said = " ".join((PnL.__doc__ or "").split())
+    assert "`net_micro` is net of quote-currency fees only" in said and "NOT in `net_micro`" in said
 
 
 def test_first_in_first_out_and_marking_at_the_side_that_would_close():

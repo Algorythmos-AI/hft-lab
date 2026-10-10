@@ -14,6 +14,9 @@ Everything is an exact integer.
 The identity that ties them together, and that the tests hold for any sequence of fills: at any single mark
 price, realised + unrealised equals the position's cash plus its quantity valued at that price. Amounts in
 different currencies are never added; a desk total is per pair and per currency.
+
+No currency is converted here. A net result is therefore net of the fees charged in the pair's quote currency
+and of no others: a fee in any other currency is carried beside the net, by currency, for whoever has a rate.
 """
 from __future__ import annotations
 
@@ -36,12 +39,20 @@ class BookError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PnL:
-    """Profit and loss of one sleeve (or the desk) in one pair. `net_micro` is in millionths of the quote currency."""
+    """Profit and loss of one sleeve (or the desk) in one pair.
+
+    `realised` and `unrealised` are at the pair's price scale. `fees_micro` and `net_micro` are in millionths of
+    the pair's quote currency, and `net_micro` is net of quote-currency fees only. A fee charged in any other
+    currency, as a broker charges forex commission in the account's base currency, is not converted and is NOT
+    in `net_micro`: it is in `fees_not_netted_micro`, in millionths of each currency. While that is not empty,
+    `net_micro` is too high by those amounts.
+    """
 
     realised: int
     unrealised: int
     fees_micro: int
     net_micro: int
+    fees_not_netted_micro: Mapping[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,14 +163,20 @@ class Book:
         return out
 
     def pnl(self, sleeve: str, pair: str, bid: int, ask: int) -> PnL:
-        """Realised, unrealised (long at the bid, short at the ask), fees and the net, for one pair."""
+        """Realised, unrealised (long at the bid, short at the ask), fees and the net, for one pair.
+
+        The net takes off the fees charged in the pair's quote currency. Fees in other currencies are returned
+        beside it, not converted and not taken off (see `PnL`).
+        """
         lines = self._selected(sleeve, pair)
         instrument = self._instruments[pair]
         realised = sum(line.realised for line in lines)
         unrealised = sum(line.unrealised(bid, ask) for line in lines)
-        fees = self.fees(sleeve, pair).get(instrument.quote, 0)
+        charged = self.fees(sleeve, pair)
+        fees = charged.pop(instrument.quote, 0)
+        others = MappingProxyType({currency: amount for currency, amount in sorted(charged.items()) if amount})
         to_micro = 10 ** (CASH_SCALE - instrument.price_scale)
-        return PnL(realised, unrealised, fees, (realised + unrealised) * to_micro - fees)
+        return PnL(realised, unrealised, fees, (realised + unrealised) * to_micro - fees, others)
 
     def view(self, sleeve: str) -> SleeveView:
         mine = {pair: line for (owner, pair), line in self._lines.items() if owner == sleeve}

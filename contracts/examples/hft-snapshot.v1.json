@@ -1,0 +1,90 @@
+{
+  "schema": "hft-lab/snapshot",
+  "schema_version": 1,
+  "run_id": "20261009T143000Z-fixture",
+  "as_of": "2026-10-09T14:30:00+00:00",
+  "generated_at": "2026-10-09T14:30:02+00:00",
+  "version": "0f1e2d3",
+  "expected_windows": [
+    { "session": "2026-W41", "start": "2026-10-04T21:00:00+00:00", "end": "2026-10-09T21:00:00+00:00" },
+    { "session": "2026-W42", "start": "2026-10-11T21:00:00+00:00", "end": "2026-10-16T21:00:00+00:00" }
+  ],
+  "desk": {
+    "mode": "paper",
+    "stage": "shadow",
+    "venue": "ibkr_paper",
+    "market_open": true,
+    "kill": false,
+    "flatten": false
+  },
+  "phases": [
+    { "id": "F0", "state": "done" },
+    { "id": "F1", "state": "done" },
+    { "id": "F2", "state": "done" },
+    { "id": "F3", "state": "open" },
+    { "id": "F4", "state": "not_started" },
+    { "id": "F5", "state": "not_started" },
+    { "id": "F6", "state": "not_started" },
+    { "id": "F7", "state": "not_started" }
+  ],
+  "health": { "level": "ok", "reasons": [] },
+  "recorder": {
+    "state": "running",
+    "events_today": 398740,
+    "last_event_at": "2026-10-09T14:29:59+00:00",
+    "gaps_unexplained_today": 0,
+    "disk_used_mb": 1843.5
+  },
+  "pairs": [
+    {
+      "pair": "EUR.USD",
+      "form": "cash",
+      "last_quote_at": "2026-10-09T14:29:59+00:00",
+      "updates_per_second": 4.2,
+      "spread_median": 0.00008,
+      "spread_unit": "price_units"
+    },
+    {
+      "pair": "USD.JPY",
+      "form": "cash",
+      "last_quote_at": "2026-10-09T14:29:58+00:00",
+      "updates_per_second": 3.6,
+      "spread_median": 0.011,
+      "spread_unit": "price_units"
+    }
+  ],
+  "sleeves": [
+    {
+      "name": "control",
+      "stage": "shadow",
+      "trades_today": 6,
+      "trades_total": 41,
+      "net_today": -3.2,
+      "net_total": 12.85,
+      "currency": "USD"
+    },
+    {
+      "name": "directional_change",
+      "stage": "shadow",
+      "trades_today": 9,
+      "trades_total": 57,
+      "net_today": 5.4,
+      "net_total": -8.1,
+      "currency": "USD"
+    }
+  ],
+  "books": {
+    "shadow": { "net_today": 2.2, "net_total": 4.75 },
+    "broker": { "net_today": 0, "net_total": 0 },
+    "currency": "USD",
+    "reconciliation_breaks_today": 0,
+    "open_positions": 1
+  },
+  "learning": {
+    "champion": "dc_2026w39.r1",
+    "challengers": 1,
+    "last_training_at": "2026-10-04T02:00:00+00:00",
+    "last_promotion_at": "2026-09-27T02:10:00+00:00",
+    "last_rollback_at": null
+  }
+}

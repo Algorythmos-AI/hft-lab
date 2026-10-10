@@ -1,0 +1,508 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hft-lab/snapshot",
+  "title": "HFT desk snapshot, version 1. Owned by hft-lab (contracts/hft-snapshot.v1.schema.json); a consumer keeps a copy pinned by its SHA-256",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "run_id",
+    "as_of",
+    "generated_at",
+    "version",
+    "expected_windows",
+    "desk",
+    "phases",
+    "health"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "enum": [
+        "hft-lab/snapshot"
+      ]
+    },
+    "schema_version": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "run_id": {
+      "type": "string",
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9_.:-]{1,80}$"
+    },
+    "as_of": {
+      "description": "The moment this snapshot describes, ISO 8601 in UTC. The dashboard orders snapshots by it and measures freshness from it.",
+      "type": "string",
+      "maxLength": 40,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+    },
+    "generated_at": {
+      "description": "When the snapshot was built, ISO 8601 in UTC.",
+      "type": "string",
+      "maxLength": 40,
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+    },
+    "version": {
+      "description": "Short commit id of the publishing code.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 40,
+      "pattern": "^[0-9a-f]{7,40}$"
+    },
+    "expected_windows": {
+      "description": "When the desk expects to publish. Silence inside a window pages; silence outside one does not. Always list the window that is open or the next one to open: once every listed window has ended, the dashboard assumes US equity weekday hours.",
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "session",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "session": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^[A-Za-z0-9_.:-]{1,40}$"
+          },
+          "start": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+          },
+          "end": {
+            "type": "string",
+            "maxLength": 40,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+          }
+        }
+      }
+    },
+    "desk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "stage",
+        "venue",
+        "market_open",
+        "kill",
+        "flatten"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "paper"
+          ]
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "foundation",
+            "recording",
+            "shadow",
+            "paper"
+          ]
+        },
+        "venue": {
+          "type": "string",
+          "enum": [
+            "ibkr_paper",
+            "sim"
+          ]
+        },
+        "market_open": {
+          "type": "boolean"
+        },
+        "kill": {
+          "type": "boolean"
+        },
+        "flatten": {
+          "type": "boolean"
+        }
+      }
+    },
+    "phases": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "F0",
+              "F1",
+              "F2",
+              "F3",
+              "F4",
+              "F5",
+              "F6",
+              "F7"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "done",
+              "open",
+              "not_started"
+            ]
+          }
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "reasons"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "warn",
+            "bad"
+          ]
+        },
+        "reasons": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 60,
+            "pattern": "^[a-z0-9_:.-]{1,60}$"
+          }
+        }
+      }
+    },
+    "recorder": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "events_today",
+        "last_event_at",
+        "gaps_unexplained_today",
+        "disk_used_mb"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "running",
+            "stopped",
+            "never"
+          ]
+        },
+        "events_today": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_event_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+        },
+        "gaps_unexplained_today": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "disk_used_mb": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "pairs": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "pair",
+          "form",
+          "last_quote_at",
+          "updates_per_second",
+          "spread_median",
+          "spread_unit"
+        ],
+        "properties": {
+          "pair": {
+            "type": "string",
+            "maxLength": 7,
+            "pattern": "^[A-Z]{3}\\.[A-Z]{3}$"
+          },
+          "form": {
+            "type": "string",
+            "enum": [
+              "cash",
+              "cfd"
+            ]
+          },
+          "last_quote_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 40,
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+          },
+          "updates_per_second": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "spread_median": {
+            "description": "In the unit named by spread_unit.",
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "spread_unit": {
+            "type": "string",
+            "enum": [
+              "price_units"
+            ]
+          }
+        }
+      }
+    },
+    "sleeves": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "stage",
+          "trades_today",
+          "trades_total",
+          "net_today",
+          "net_total",
+          "currency"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "control",
+              "directional_change",
+              "ml",
+              "dl"
+            ]
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "shadow",
+              "min_size",
+              "normal",
+              "stepped_down",
+              "off"
+            ]
+          },
+          "trades_today": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "trades_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "net_today": {
+            "description": "Null when it has not been worked out.",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "net_total": {
+            "description": "Null when it has not been worked out.",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "currency": {
+            "description": "The currency of this sleeve's net results.",
+            "type": "string",
+            "maxLength": 3,
+            "pattern": "^[A-Z]{3}$"
+          }
+        }
+      }
+    },
+    "books": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "shadow",
+        "broker",
+        "currency",
+        "reconciliation_breaks_today",
+        "open_positions"
+      ],
+      "properties": {
+        "shadow": {
+          "description": "The desk's own conservative book. It is the result of record.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "net_today",
+            "net_total"
+          ],
+          "properties": {
+            "net_today": {
+              "description": "Null when it has not been worked out.",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "net_total": {
+              "description": "Null when it has not been worked out.",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "broker": {
+          "description": "The broker's own book.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "net_today",
+            "net_total"
+          ],
+          "properties": {
+            "net_today": {
+              "description": "Null when it has not been worked out.",
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "net_total": {
+              "description": "Null when it has not been worked out.",
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "currency": {
+          "description": "The currency of both books' net results.",
+          "type": "string",
+          "maxLength": 3,
+          "pattern": "^[A-Z]{3}$"
+        },
+        "reconciliation_breaks_today": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "open_positions": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "learning": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "champion",
+        "challengers",
+        "last_training_at",
+        "last_promotion_at",
+        "last_rollback_at"
+      ],
+      "properties": {
+        "champion": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 60,
+          "pattern": "^[a-z0-9_.-]{1,60}$"
+        },
+        "challengers": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_training_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+        },
+        "last_promotion_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+        },
+        "last_rollback_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 40,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|\\+00:00)$"
+        }
+      }
+    }
+  }
+}

@@ -71,6 +71,7 @@ tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
 config/        risk limits, venue capability file, trial registry
 docs/          architecture, ADRs, roadmap, requirements, runbooks, never-build list
+contracts/     versioned data contracts this platform publishes (the status snapshot), each with an example
 tests/         pytest and hypothesis (CI-safe: fixtures and tmp_path only, no network)
 ```
 

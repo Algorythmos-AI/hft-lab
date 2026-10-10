@@ -51,15 +51,15 @@ venues/       port, guard, supervisor, a market-data view with no order methods;
 calendar/     forex week, rollover window, holidays, macro-event blackout                               F2
 record/       recorder, recording format, store with quota and offload, gap journal                     F2
 replay/       a recorded day read back as the stream the live process saw; the day check                F2
-book/         positions, cash and profit from fills: the shadow book (F3), the broker book and the     F3
-              reconciler against the venue's positions and executions                                   F4
+book/         positions, cash and profit from fills: the shadow book; the broker book and the           F3
+              reconciler that compares it with the venue's positions and executions                     F4
 strategy/     the sleeve interface, the idle and the control sleeve (directional-change, ml, dl: F5)    F3
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
 features/  labels/  models/ (registry, hashed model files, scorer in its own process)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
-journal       the hash-chained journal of the shadow runner, the outbox, the latches and the reconciler F3
+journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets, training, validation, promotion
 ops/          jobs, units, deploy gate, heartbeat, alerts, backup
 ```

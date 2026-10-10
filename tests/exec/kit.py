@@ -1,5 +1,7 @@
-"""Shared pieces for the execution tests: a fake broker, the real risk gate and an order manager, wired as a
-trader would wire them, and a way to kill the process and start it again on the same files."""
+"""Shared pieces for the execution tests: a fake broker, the real risk gate, an order manager and a reconciler.
+
+They are wired as a trader would wire them, and the process can be killed and started again on the same files.
+"""
 from __future__ import annotations
 
 from pathlib import Path

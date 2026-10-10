@@ -149,6 +149,13 @@ explanation and no order of any kind is sent.
   filled and was closed again leaves no trace it could find.
 - **Two processes on one outbox.** Nothing locks the file. Two writers break the chain, which the next start
   refuses; running one trader is the host layer's job.
+- **An order that arrives after it was written off.** An order settled as never having arrived frees its
+  size at the gate at once. If it reaches the venue afterwards it is booked, it is a fault and entries stop,
+  but for that moment the position limit was one order looser than it looked. Holding the size instead would
+  block a sleeve's own exits behind an order that most likely does not exist.
+- **Fills from before the outbox.** On a first start the venue is asked for every execution it still lists.
+  One that belongs to no order in the outbox is booked, so the book says what the venue says, and it is a
+  fault: an operator looks before anything trades.
 - **Executions the venue no longer lists.** The manager asks from before the earliest order in doubt. A
   venue that keeps one day of executions cannot explain an older one, and the position check is what is
   left.

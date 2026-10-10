@@ -5,7 +5,7 @@ import pytest
 
 from hftlab.book import DESK
 from hftlab.core import Fill, InstrumentKind, OrderEvent, OrderState, Side, TimeInForce
-from hftlab.exec import Fault, Held, OrderManager, Outbox, OutboxError, Proposal, Stage
+from hftlab.exec import Cause, Fault, Held, OrderManager, Outbox, OutboxError, Proposal, Stage
 from hftlab.journal import JournalError, verify
 from hftlab.safety import PaperOnlyError
 from hftlab.venues.fake import FakeConfig
@@ -283,6 +283,18 @@ def test_a_report_that_contradicts_what_is_established_is_recorded_and_stops_ent
     floor.connect()
     assert floor.gate.latches() == ("ORDER_FAULT",), "a restart does not clear it"
     assert not floor.settle(tries=3), "and the book now holds 20,000 the venue never filled: no connection is marked"
+
+
+def test_a_move_that_is_not_in_the_table_is_not_made_and_is_recorded_and_stops_entries(tmp_path):
+    floor = Floor(tmp_path)
+    order = floor.trade(1)
+    tracked = floor.oms.tracked(order.client_order_id)
+    floor.oms._move(tracked, Stage.WORKING, Cause.REPORT)  # a finished order cannot go back to working
+    assert tracked.stage is Stage.FILLED and floor.oms.faults == ((Fault.IMPOSSIBLE_MOVE, order.client_order_id),)
+    fault = floor.outbox()[-1]
+    assert (fault["type"], fault["fault"]) == ("fault", "IMPOSSIBLE_MOVE")
+    assert (fault["before"], fault["to"]) == ("FILLED", "WORKING")
+    assert floor.gate.latches() == ("ORDER_FAULT",) and floor.oms.propose(floor.order(2)).code == "ORDER_FAULT"
 
 
 def test_two_different_fills_under_one_id_are_a_fault_and_neither_is_booked_twice(tmp_path):

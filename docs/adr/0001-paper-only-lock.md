@@ -51,5 +51,22 @@ says "paper".
   a gateway on a non-standard port. Those need a change to the lock, with a decision record, not a way round.
 - The scan reads syntax. A port built from a variable, or a network call made by shelling out, is not
   visible to it. The run-time lock and review are the other two layers, and the scan's docstring says so.
-- F0 ships the lock and its tests. The adapter that must call it arrives in F1; until then nothing connects
-  to a broker at all.
+- F0 shipped the lock and its tests. F1 added the adapter and the way the lock is applied over the life of
+  a connection, below.
+
+## Addendum (F1): the lock in three stages
+
+The account ids exist only after connecting, so the lock cannot run whole before a socket is opened.
+`hftlab.safety.gate.PaperGate` applies it in stages, and the shared venue guard
+([ADR 0009](0009-venue-port-guard-and-fake-broker.md)) is the only caller:
+
+1. **Before connecting:** mode, live flag, gateway port and username. Nothing is dialled if this fails.
+2. **After the handshake, before anything else is asked of the broker:** the full lock, with the account ids
+   the broker reported. Passing it mints a permit for that one connection.
+3. **Before every order and every cancel:** the full lock again, and the permit must be the current one.
+
+A refusal at any stage is terminal for that venue object. A permit dies with its connection, so a reconnect
+starts unchecked. The port that is dialled must be the port the lock was given. The usernames are read from
+`HFT_IBKR_USERNAME` and `HFT_IBKR_LIVE_USERNAME`, by the lock module only; they are compared and never sent,
+because the API connection carries no username: the account list is the evidence, the username a second
+opinion.

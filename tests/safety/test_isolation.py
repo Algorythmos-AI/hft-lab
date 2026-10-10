@@ -5,7 +5,8 @@ A scan of every module under src/hftlab, in the spirit of a broker-isolation tes
   * names a live gateway port, as a number, inside text, or as simple arithmetic on constants;
   * holds a "live" trading-mode literal or a name that is exactly `live`;
   * touches the process environment in any way but reading a constant key that cannot enable live trading;
-  * imports a network library outside hftlab.venues and hftlab.record, by any static or dynamic route;
+  * imports a network library outside hftlab.venues.ibkr and hftlab.record, or the broker's client library
+    outside hftlab.venues.ibkr, by any static or dynamic route;
   * imports by a computed name, or runs code from text, which no scan can follow;
   * rebinds or edits the venue registry.
 
@@ -28,7 +29,11 @@ from tests.support import SRC, called_name, imports, runs_text, sources
 
 LOCK = "src/hftlab/safety/lock.py"
 REGISTRY = "src/hftlab/safety/venues.py"
-NETWORK_OK = ("src/hftlab/venues/", "src/hftlab/record/")
+# The venue port, its guard and the fake broker are plain computation: only the real adapter and the recorder
+# open sockets, and only the real adapter may hold the broker's client library.
+NETWORK_OK = ("src/hftlab/venues/ibkr/", "src/hftlab/record/")
+BROKER_OK = ("src/hftlab/venues/ibkr/",)
+BROKER_LIBRARIES = frozenset({"ib_async", "ib_insync", "ibapi", "ibind"})
 
 LIVE_PORTS = frozenset({4001, 7496})
 # Not after a digit or a decimal point: 1.4001 and 0.7496 are prices, and prices appear in this code base.
@@ -45,8 +50,7 @@ NETWORK = frozenset({
     "imaplib", "nntplib", "telnetlib", "xmlrpc", "urllib.request", "urllib.error", "urllib.response",
     "urllib.robotparser", "multiprocessing.connection", "multiprocessing.managers",
     "urllib3", "requests", "httpx", "httpcore", "aiohttp", "websockets", "websocket", "grpc", "zmq", "paramiko",
-    "pycurl", "tornado", "twisted", "trio", "anyio", "ibapi", "ib_insync", "ib_async", "ibind", "boto3", "botocore",
-    "google", "redis", "kafka", "nats", "pika",
+    "pycurl", "tornado", "twisted", "trio", "anyio", "boto3", "botocore", "google", "redis", "kafka", "nats", "pika",
 })  # fmt: skip
 # Packages with both harmless and network submodules: `import pkg` binds the package and so reaches every
 # submodule already loaded, which a scan cannot see. Their harmless parts must be imported with `from`.
@@ -158,11 +162,13 @@ def env_violations(rel: str, tree: ast.AST) -> list[str]:
 
 def network_violations(rel: str, tree: ast.AST) -> list[str]:
     out = []
-    allowed = rel.startswith(NETWORK_OK)
     for how, name in imports(tree, rel):
         if how == "computed":
             out.append(f"{rel}: imports a module by a computed name")
-        elif allowed:
+        elif name.split(".")[0] in BROKER_LIBRARIES:
+            if not rel.startswith(BROKER_OK):
+                out.append(f"{rel}: imports the broker library {name} ({how})")
+        elif rel.startswith(NETWORK_OK):
             continue
         elif is_network(name):
             out.append(f"{rel}: imports the network library {name} ({how})")
@@ -233,7 +239,8 @@ def test_the_lock_is_exempt_for_a_reason():
 def test_the_network_packages_exist_as_the_anchor_for_the_rule():
     for package in ("venues", "record"):
         assert (SRC / package / "__init__.py").is_file()
-        assert f"src/hftlab/{package}/x.py".startswith(NETWORK_OK)
+    assert "src/hftlab/venues/ibkr/x.py".startswith(NETWORK_OK) and "src/hftlab/record/x.py".startswith(NETWORK_OK)
+    assert not "src/hftlab/venues/x.py".startswith(NETWORK_OK)
 
 
 # ---- every way round it --------------------------------------------------------------------------------------------
@@ -373,11 +380,31 @@ def test_the_scan_passes_ordinary_code(name):
     assert violations(SNEAKY, ast.parse(HONEST[name])) == [], name
 
 
-@pytest.mark.parametrize("package", ["venues/ibkr/connection.py", "record/recorder.py", "venues/__init__.py"])
-def test_network_libraries_are_allowed_under_venues_and_record_only(package):
-    src = "import socket\nimport asyncio\nfrom ibapi.client import EClient\nimport urllib.request"
-    assert violations(f"src/hftlab/{package}", ast.parse(src)) == []
-    assert len(violations("src/hftlab/risk/gate.py", ast.parse(src))) == 4
+NETWORK_SOURCE = "import socket\nimport asyncio\nfrom ib_async import IB\nimport urllib.request"
+
+
+def test_the_adapter_may_use_the_network_and_the_broker_library():
+    assert violations("src/hftlab/venues/ibkr/client.py", ast.parse(NETWORK_SOURCE)) == []
+
+
+def test_the_recorder_may_use_the_network_but_not_the_broker_library():
+    found = violations("src/hftlab/record/recorder.py", ast.parse(NETWORK_SOURCE))
+    assert len(found) == 1 and "imports the broker library ib_async.IB" in found[0]
+
+
+@pytest.mark.parametrize(
+    "module", ["risk/gate.py", "venues/__init__.py", "venues/port.py", "venues/guard.py", "venues/fake/broker.py"]
+)
+def test_everything_else_including_the_port_and_the_fake_broker_may_use_neither(module):
+    assert len(violations(f"src/hftlab/{module}", ast.parse(NETWORK_SOURCE))) == 4
+
+
+@pytest.mark.parametrize("library", sorted(BROKER_LIBRARIES))
+def test_every_broker_library_is_confined_to_the_adapter(library):
+    for src in (f"import {library}", f"from {library} import x", f"__import__('{library}')"):
+        assert violations("src/hftlab/venues/fake/broker.py", ast.parse(src)), src
+        assert violations("src/hftlab/record/recorder.py", ast.parse(src)), src
+        assert violations("src/hftlab/venues/ibkr/adapter.py", ast.parse(src)) == [], src
 
 
 @pytest.mark.parametrize("rel", ["src/hftlab/venues/ibkr/connection.py", "src/hftlab/record/recorder.py"])

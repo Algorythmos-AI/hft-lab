@@ -9,7 +9,7 @@ from tests.support import ROOT
 
 PATH = ROOT / "docs" / "requirements" / "requirements.yaml"
 FIELDS = {"id", "title", "statement", "basis", "status", "verified_by", "rationale_cites", "kb_claims"}
-AREAS = {"SAFE", "CORE", "RISK", "MKT", "CONN", "BOOK", "REC", "TEST", "LEARN"}
+AREAS = {"SAFE", "CORE", "VEN", "RISK", "MKT", "CONN", "BOOK", "REC", "TEST", "LEARN"}
 
 
 def requirements() -> list[dict]:
@@ -23,9 +23,9 @@ def test_the_file_documents_its_schema():
         assert re.search(rf"^#   {field}\b", text, re.MULTILINE), f"the schema comment does not explain {field}"
 
 
-def test_there_are_ten_to_fifteen_seed_requirements_with_unique_ids():
+def test_the_requirements_have_unique_well_formed_ids():
     ids = [r["id"] for r in requirements()]
-    assert 10 <= len(ids) <= 15 and len(set(ids)) == len(ids)
+    assert len(ids) >= 15 and len(set(ids)) == len(ids)
     for requirement_id in ids:
         match = re.fullmatch(r"REQ-([A-Z]+)-[0-9]{3}", requirement_id)
         assert match and match.group(1) in AREAS, requirement_id

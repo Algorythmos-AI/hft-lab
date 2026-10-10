@@ -1,6 +1,7 @@
-"""Venue adapters: the paper broker connection and the simulated venue. Empty until F1.
+"""Venues: the port the platform trades through, the broker adapter behind it and a fake broker for tests.
 
-Network libraries may be imported only here and under `hftlab.record` (tests/safety/test_isolation.py). The
-venues that may exist are listed in `hftlab.safety.venues`, and every broker connection made here goes through
-the paper-only lock.
+Network libraries, and the broker's client library, may be imported only under `hftlab.venues.ibkr`
+(tests/safety/test_isolation.py); the port, its guard and the fake broker are plain computation. The venues
+that may exist are listed in `hftlab.safety.venues`, and every broker connection goes through the paper-only
+lock before it may be used.
 """

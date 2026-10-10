@@ -2,7 +2,8 @@
 #
 # Schema (checked by tests/unit/test_requirements.py):
 #
-#   id               REQ-<AREA>-NNN, unique. AREA is one of SAFE, CORE, RISK, MKT, CONN, BOOK, REC, TEST, LEARN.
+#   id               REQ-<AREA>-NNN, unique. AREA is one of SAFE, CORE, VEN, RISK, MKT, CONN, BOOK, REC, TEST,
+#                    LEARN.
 #   title            One line.
 #   statement        What must be true, in our own words: "must" or "must not".
 #   basis            Where the requirement comes from:
@@ -34,11 +35,89 @@ requirements:
   - id: REQ-SAFE-002
     title: The lock is checked at connection and before every order
     statement: >-
-      The platform must check the paper-only lock when a venue adapter connects and again before every
-      order, and must send nothing when it refuses.
+      The platform must check the paper-only lock before it opens a connection, again on the account ids
+      the broker reports before anything else is asked of it, and again before every order and cancel, and
+      must send nothing when it refuses.
     basis: engineering_judgement
-    status: seed
-    verified_by: []
+    status: verified
+    verified_by: [tests/safety/test_gate.py, tests/venues/test_guard.py, tests/venues/test_contract.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-SAFE-003
+    title: A lock refusal is final and a reconnect starts unchecked
+    statement: >-
+      A refusal by the paper-only lock must end the venue object for good, with no retry, and a connection
+      that replaces a lost one must pass the lock on its own account list before any order is accepted.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/safety/test_gate.py, tests/venues/test_guard.py, tests/venues/test_contract.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-VEN-001
+    title: One venue port, the same contract for every implementation
+    statement: >-
+      Every venue must implement the one venue port in core types, and the broker adapter and the fake
+      broker must produce the same events for the same market.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/venues/test_contract.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-VEN-002
+    title: No order on a connection that has not been reconciled
+    statement: >-
+      A venue must refuse orders while it is disconnected and on every new connection until the caller has
+      marked that connection reconciled, and must allow cancels in between.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/venues/test_guard.py, tests/venues/test_contract.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-VEN-003
+    title: One guarded path to the broker
+    statement: >-
+      An order must reach the broker only through the guarded path, which a venue cannot replace, and an
+      order that does not fit its instrument or reuses a client order id must be refused before it is sent.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/venues/test_guard.py, tests/venues/test_ibkr_adapter.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-VEN-004
+    title: Exact translation at the broker boundary
+    statement: >-
+      A price or quantity received from the broker must be recovered exactly or reported as an error, never
+      rounded, and no binary float must be sent in an order.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/venues/test_translate.py, tests/venues/test_ibkr_adapter.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-VEN-005
+    title: The broker library and the network stay inside the adapter
+    statement: >-
+      The broker's client library must be imported only by the broker adapter, and no module outside the
+      adapter and the recorder may import a network library.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/safety/test_isolation.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-VEN-006
+    title: The probe is read-only unless told otherwise and leaves no order behind
+    statement: >-
+      The capability probe must place no order by default, and when it is asked to place orders it must
+      cancel them whatever happens and report any that are still working.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/venues/test_probe.py]
     rationale_cites: []
     kb_claims: []
 

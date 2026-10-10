@@ -1,8 +1,8 @@
 # Capability file for the Interactive Brokers paper account.
 #
-# PLACEHOLDER. Nothing has been measured. The capability probe (F1) is run once by the owner with the paper
-# login and writes what the paper account can actually do; until then every field is null and nothing may be
-# inferred from this file. The probe report and the two decisions it feeds (access route, instrument form)
+# PLACEHOLDER. Nothing has been measured. The capability probe is run by the owner with the paper login
+# (docs/runbooks/ibkr-probe.md) and, with --write-config, replaces this file with what it measured; until then
+# every field is null and nothing may be inferred from this file. The probe report and the two decisions it feeds (access route, instrument form)
 # are research records.
 #
 # Units: sizes in whole base-currency units, times in milliseconds, money as decimal text converted with

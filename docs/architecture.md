@@ -44,8 +44,8 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 core/      types, injected clock, ids; prices as integers at each pair's quote precision      F0
 safety/    paper-only lock, venue registry                                                    F0
 registry/  hypotheses, experiments, decisions, trial count                                    F0
-venues/    ibkr/ (connection supervisor, contracts, data, orders, executions, capability file)
-           sim/ (shadow venue)
+venues/    port, guard, supervisor; ibkr/ (translation, client seam, adapter, capability probe);      F1
+           fake/ (a deterministic broker for tests);  sim/ (shadow venue, not built yet)
 record/    recorder, schema, compaction, offload
 calendar/  forex week, rollover window, holidays, macro-event blackout
 features/  labels/  models/ (registry, hashed model files, scorer in its own process)
@@ -57,11 +57,10 @@ learn/     datasets, training, validation, promotion
 ops/       jobs, units, deploy gate, heartbeat, alerts, backup
 ```
 
-`venues/` and `record/` exist as empty packages so the first boundary below has something to hold on to.
-
 Two boundaries are enforced by tests from the first commit:
 
-- **Only `venues/` and `record/` may import a network library.** Everything else is computation on events.
+- **Only `venues/ibkr/` and `record/` may import a network library**, and only `venues/ibkr/` the broker's
+  client library. Everything else, the venue port and the fake broker included, is computation on events.
 - **Only `safety/lock.py` may name a live port or read the variables that select the trading mode.**
 
 ## Data flow

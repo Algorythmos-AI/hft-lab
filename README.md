@@ -8,7 +8,7 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | F0 foundation · nothing trades yet · paper only · no live trading                                            |
+| **Status**      | F1 broker adapter and probe · nothing trades yet · paper only · no live trading                              |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
 | **Runs at**     | Nothing runs yet. Target: a shared Linux host, against an Interactive Brokers **paper** account              |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
@@ -38,17 +38,22 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 "High frequency" here means many trades a day held for seconds to minutes on a quote stream that updates every
 few milliseconds. It does not mean microsecond races or co-location.
 
-## What exists today (F0)
+## What exists today (F0, and F1 up to the owner's probe run)
 
 | Piece | Where |
 |---|---|
 | Domain types with integer prices, an injected clock, deterministic order ids | `src/hftlab/core/` |
-| The paper-only lock and the venue registry | `src/hftlab/safety/` |
+| The paper-only lock, applied in stages over a connection, and the venue registry | `src/hftlab/safety/` |
+| The venue port and the guard every venue shares | `src/hftlab/venues/port.py`, `guard.py` |
+| The Interactive Brokers adapter (paper only) and the capability probe | `src/hftlab/venues/ibkr/` |
+| A deterministic fake broker for tests and fault injection | `src/hftlab/venues/fake/` |
 | The research-registry lint and the trial count | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | Design records | `docs/` |
 
-The broker adapter, the recorder and the strategies come in later phases: see the [roadmap](docs/roadmap.md).
+The adapter has been tested against the fake broker and a stub of the broker library, not yet against a real
+gateway: the [probe runbook](docs/runbooks/ibkr-probe.md) is the next step and it is the owner's. The recorder
+and the strategies come in later phases: see the [roadmap](docs/roadmap.md).
 
 ## Run it locally
 

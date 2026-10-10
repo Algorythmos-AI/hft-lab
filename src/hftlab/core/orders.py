@@ -72,7 +72,12 @@ class OrderEvent:
 
 @dataclass(frozen=True, slots=True)
 class Fill:
-    """One execution. `fill_id` is the venue's execution id: the key that lets a book apply it exactly once."""
+    """One execution. `fill_id` is the venue's execution id: the key that lets a book apply it exactly once.
+
+    `ts_ns` is when this process received the report, like every other event. `venue_ts_ns` is the venue's own
+    time for the execution when it gives one; it is coarser and is what "executions since" is asked in. A venue
+    may report the same execution more than once, live and again on a reconciliation query.
+    """
 
     fill_id: str
     client_order_id: str
@@ -84,6 +89,8 @@ class Fill:
     liquidity: Liquidity = Liquidity.UNKNOWN
     commission: int = 0  # at CASH_SCALE, in commission_currency; negative for a rebate
     commission_currency: str | None = None
+    venue_ts_ns: int | None = None
+    seq: int = 0
 
     def __post_init__(self) -> None:
         _checks.token("fill_id", self.fill_id)
@@ -95,6 +102,9 @@ class Fill:
         _checks.non_negative("ts_ns", self.ts_ns)
         _checks.member("liquidity", self.liquidity, Liquidity)
         require_int("commission", self.commission)
+        if self.venue_ts_ns is not None:
+            _checks.non_negative("venue_ts_ns", self.venue_ts_ns)
+        _checks.non_negative("seq", self.seq)
         if self.commission_currency is not None:
             _checks.currency("commission_currency", self.commission_currency)
         elif self.commission != 0:

@@ -101,10 +101,11 @@ def test_agents_md_states_every_hard_rule():
         assert needle in text, needle
 
 
-def test_the_eight_design_records_exist_in_order():
+def test_the_design_records_exist_in_order():
     records = sorted(p.name for p in (ROOT / "docs" / "adr").glob("*.md"))
-    assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, 9)]
     topics = ["paper-only", "integer", "two-books", "recorder", "replay", "leak", "host", "learning"]
+    topics += ["venue-port", "access-route", "synchronous"]
+    assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, len(topics) + 1)]
     for name, topic in zip(records, topics, strict=True):
         text = read(f"docs/adr/{name}")
         assert topic in name and text.startswith(f"# ADR {name[:4]}: "), name

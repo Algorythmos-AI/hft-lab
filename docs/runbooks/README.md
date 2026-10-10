@@ -1,8 +1,16 @@
 # Runbooks
 
 A runbook is what the owner follows when something needs a person: one page, numbered steps, the exact
-commands, and how to tell it worked. None is written yet, because nothing runs yet. Each is written before
-the exit gate of the phase that first needs it, and is exercised once as a drill.
+commands, and how to tell it worked. Each is written before the exit gate of the phase that first needs it,
+and is exercised once as a drill.
+
+## Written
+
+| Runbook | For |
+|---|---|
+| [IBKR capability probe](ibkr-probe.md) | Measuring what the paper account can do: installing the gateway, the paper login, the command, reading the report |
+
+## To be written
 
 | Runbook | For |
 |---|---|

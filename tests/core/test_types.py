@@ -136,6 +136,32 @@ def test_a_price_round_trips_through_the_instruments_text_form(price):
         assert instrument.price(instrument.format_price(price)) == price
 
 
+def test_an_instrument_carries_the_venues_increments():
+    half_pip = Instrument.from_pair(
+        "EUR.USD", price_scale=5, min_order_size=20_000, kind=InstrumentKind.CASH, size_increment=1_000,
+        price_increment=5,
+    )  # fmt: skip
+    assert (half_pip.size_increment, half_pip.price_increment) == (1_000, 5)
+    assert (EURUSD.size_increment, EURUSD.price_increment) == (1, 1)
+    assert half_pip.refusals(20_000, 108_510) == [] and half_pip.refusals(25_000, None) == []
+    assert half_pip.refusals(19_000, 108_510) == ["quantity 19000 is below the minimum order size 20000"]
+    assert half_pip.refusals(20_500, 108_510) == ["quantity 20500 is not a multiple of the size increment 1000"]
+    assert half_pip.refusals(20_000, 108_512) == ["limit price 108512 is not a multiple of the price increment 5"]
+    assert len(half_pip.refusals(500, 108_512)) == 3
+
+
+@given(quantities, prices, st.integers(1, 10**6), st.integers(1, 10**4), st.integers(1, 100))
+def test_an_order_is_accepted_exactly_when_it_respects_the_minimum_and_both_increments(
+    quantity, price, minimum, size_step, price_step
+):
+    instrument = Instrument.from_pair(
+        "EUR.USD", price_scale=5, min_order_size=minimum, kind=InstrumentKind.CASH, size_increment=size_step,
+        price_increment=price_step,
+    )  # fmt: skip
+    fits = quantity >= minimum and quantity % size_step == 0 and price % price_step == 0
+    assert (instrument.refusals(quantity, price) == []) == fits
+
+
 def test_a_price_finer_than_the_instrument_quotes_is_refused():
     with pytest.raises(InexactError):
         EURUSD.price("1.085125")
@@ -160,7 +186,8 @@ def test_a_malformed_pair_is_refused(pair):
 @pytest.mark.parametrize(
     "changes",
     [{"price_scale": -1}, {"price_scale": 10}, {"min_order_size": 0}, {"min_order_size": -5}, {"base": "eur"},
-     {"quote": "EUR"}, {"kind": "CASH"}, {"kind": None}],
+     {"quote": "EUR"}, {"kind": "CASH"}, {"kind": None}, {"size_increment": 0}, {"price_increment": 0},
+     {"size_increment": 1.0}, {"price_increment": True}],
 )  # fmt: skip
 def test_an_invalid_instrument_is_refused(changes):
     with pytest.raises((TypeError, ValueError)):
@@ -257,6 +284,15 @@ def test_an_order_event_carries_cumulative_fill_and_a_filled_event_needs_one():
 def test_a_fill_is_signed_by_its_side():
     assert a_fill(side=Side.BUY).signed_quantity == 20_000
     assert a_fill(side=Side.SELL).signed_quantity == -20_000
+
+
+def test_a_fill_may_carry_the_venues_own_time_and_a_sequence_number():
+    fill = a_fill(ts_ns=1_760_000_000_500_000_000, venue_ts_ns=1_760_000_000_000_000_000, seq=41)
+    assert fill.venue_ts_ns < fill.ts_ns and fill.seq == 41
+    assert a_fill().venue_ts_ns is None and a_fill().seq == 0
+    for wrong in ({"venue_ts_ns": -1}, {"seq": -1}, {"venue_ts_ns": 1.0}, {"seq": True}):
+        with pytest.raises((TypeError, ValueError)):
+            a_fill(**wrong)
 
 
 def test_a_commission_is_integer_millionths_and_needs_its_currency():

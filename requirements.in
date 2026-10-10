@@ -1,3 +1,6 @@
 # Runtime dependencies. Recompile both lock files with `make lock`.
-# F0 needs one: the research registry reads YAML.
+# The research registry reads YAML.
 pyyaml==6.0.3
+# The Interactive Brokers client library. Imported only under src/hftlab/venues/ibkr/
+# (tests/safety/test_isolation.py).
+ib_async==2.1.0

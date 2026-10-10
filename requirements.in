@@ -1,0 +1,3 @@
+# Runtime dependencies. Recompile both lock files with `make lock`.
+# F0 needs one: the research registry reads YAML.
+pyyaml==6.0.3

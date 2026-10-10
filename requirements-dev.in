@@ -1,0 +1,8 @@
+# Development tools: tests, lint, type checking. Recompile with `make lock`.
+# Constrained by the runtime lock, so both files install into one environment without a conflict.
+-c requirements.lock.txt
+hypothesis==6.168.5
+mypy==2.4.0
+pytest==9.1.1
+ruff==0.17.0
+types-pyyaml==6.0.12.20260906

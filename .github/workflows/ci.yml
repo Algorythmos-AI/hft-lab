@@ -1,0 +1,76 @@
+name: ci
+
+# Required checks on main: `test` and `leakcheck`. Keep both job names stable and never add path filters to this
+# workflow: a required check that does not run leaves pull requests waiting forever. No secrets and no
+# artifacts are used here, and none may be added (tests/unit/test_workflows.py).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A superseded pull-request run may be cancelled. Every commit on main keeps its full result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: src
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the registry lint compares experiments with the base commit
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install the locked environment (hash-checked)
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --require-hashes --python .venv/bin/python -r requirements.lock.txt
+          uv pip install --require-hashes --python .venv/bin/python -r requirements-dev.lock.txt
+      - name: Lint (ruff)
+        run: .venv/bin/python -m ruff check .
+      - name: Type-check (mypy --strict, whole package)
+        run: .venv/bin/python -m mypy
+      - name: Unit and property tests
+        run: .venv/bin/python -m pytest
+      - name: Research registry lint
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE_REF" ]; then base="origin/$BASE_REF"; else base="$BEFORE"; fi
+          if [ -n "$base" ] && git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            .venv/bin/python -m hftlab.registry lint --base "$base"
+          else
+            echo "no usable base commit: linting without the append-only comparison"
+            .venv/bin/python -m hftlab.registry lint
+          fi
+
+  leakcheck:
+    name: leakcheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The attestation describes the commit that was made, not the merge commit GitHub builds for a pull
+          # request, so check out the head of the branch. All history, because every blob is scanned.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # Standard library only: the runner's own Python is enough, nothing is installed.
+      - name: Scan the tree and every blob in history
+        run: python3 tools/leakcheck.py --all-history
+      - name: The attestation is present and matches this tree
+        # Recomputes the tree hash with the attestation file left out and compares. The message also prints
+        # terms_checked and corpus_checked: reported, never a reason to fail here.
+        run: python3 tools/leakcheck.py --verify-attest

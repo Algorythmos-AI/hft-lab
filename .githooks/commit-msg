@@ -1,0 +1,9 @@
+#!/bin/sh
+# Refuse a co-author trailer and any assistant or tool name in the message (AGENTS.md, commit rule).
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+py="${HFTLAB_PYTHON:-}"
+if [ -z "$py" ]; then
+    if [ -x .venv/bin/python ]; then py=.venv/bin/python; else py=python3; fi
+fi
+exec "$py" tools/commitmsg.py "$1"

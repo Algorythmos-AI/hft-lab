@@ -1,0 +1,9 @@
+# Allow-list for tools/leakcheck.py: files of a denied type that may be committed anyway.
+#
+# One file per line, in the form `sha256sum` prints:
+#
+#   <sha256 of the content>  <path from the repository root>
+#
+# An entry lifts the extension and the leading-bytes rules for that exact path with that exact content. It
+# never lifts the size limit, the term list or the corpus check. Changing the file means changing its line.
+# Every entry needs a reason in a comment above it. The list is empty on purpose.

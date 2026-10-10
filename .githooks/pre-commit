@@ -1,0 +1,12 @@
+#!/bin/sh
+# Scan what is about to be committed and attest it (ADR 0006). The attestation is staged here, so it is part of
+# the commit it describes. Use `git add` then `git commit`: with `git commit <path>` git commits from a
+# temporary index and the attestation can be left out.
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+py="${HFTLAB_PYTHON:-}"
+if [ -z "$py" ]; then
+    if [ -x .venv/bin/python ]; then py=.venv/bin/python; else py=python3; fi
+fi
+"$py" tools/leakcheck.py --write-attest
+git add -- .leakcheck-attest.json

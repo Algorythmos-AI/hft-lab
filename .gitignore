@@ -1,0 +1,29 @@
+# secrets
+.env
+.env.*
+!.env.example
+# the private inputs of the leak check never live in the tree (ADR 0006); ignored in case one is dropped here
+.leakcheck-terms*
+.leakcheck-corpus*
+# market data, recordings, runtime state and model files are never committed (AGENTS.md "Data classes")
+/data/
+/var/
+/logs/
+/models/
+*.parquet
+*.bi5
+# switches read by the trader; runtime files, not source
+/KILL
+/FLATTEN
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+/build/
+*.egg-info/
+# macOS
+.DS_Store

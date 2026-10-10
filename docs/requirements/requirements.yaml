@@ -1,0 +1,188 @@
+# Requirements for HFT Lab.
+#
+# Schema (checked by tests/unit/test_requirements.py):
+#
+#   id               REQ-<AREA>-NNN, unique. AREA is one of SAFE, CORE, RISK, MKT, CONN, BOOK, REC, TEST, LEARN.
+#   title            One line.
+#   statement        What must be true, in our own words: "must" or "must not".
+#   basis            Where the requirement comes from:
+#                      engineering_judgement   our own design rule or guardrail
+#                      knowledge_base          supported by claims in the private knowledge base (kb_claims)
+#   status           seed (written, nothing proves it yet) | verified (the tests named in verified_by prove it)
+#   verified_by      Repository paths of the tests that prove it; empty while status is seed.
+#   rationale_cites  Citations that justify it. Empty for now: filled later from the knowledge base.
+#   kb_claims        Claim ids in the private knowledge base. Empty for now: filled later.
+#
+# These are seed requirements drawn from the platform's design rules and guardrails. Every one has
+# `basis: engineering_judgement`; none quotes or paraphrases source material. A requirement is never deleted:
+# it is superseded by a new one that names it.
+version: 1
+requirements:
+  - id: REQ-SAFE-001
+    title: The paper-only lock decides, and nothing else can
+    statement: >-
+      A broker connection must count as paper only when the mode is paper, no live flag is set, the gateway
+      port is a paper port, the broker reports at least one managed account and every one is a paper id, and
+      the configured login is not a declared live login. No code outside the lock may name a live port or
+      read the variables that select the mode.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/safety/test_lock.py, tests/safety/test_isolation.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-SAFE-002
+    title: The lock is checked at connection and before every order
+    statement: >-
+      The platform must check the paper-only lock when a venue adapter connects and again before every
+      order, and must send nothing when it refuses.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-CORE-001
+    title: Integer prices and quantities
+    statement: >-
+      Prices, quantities and cash amounts must be integers at a stated scale from the moment they enter the
+      platform; a binary float must not be accepted where one is expected.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/core/test_money.py, tests/core/test_types.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-CORE-002
+    title: Injected clock
+    statement: >-
+      Code outside the wall clock must not read system time; it must take the time from an injected clock
+      in integer UTC nanoseconds.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/core/test_clock.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-RISK-001
+    title: Independent risk gate before every order
+    statement: >-
+      Every order must pass a risk gate that is independent of the strategy that produced it and that
+      rebuilds positions from fills rather than trusting the strategy's own view.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-RISK-002
+    title: Hard limits
+    statement: >-
+      The risk gate must enforce a position limit per pair, a gross exposure limit, a leverage limit well
+      under the regulatory cap, an order size limit, a price collar against the mid, an orders-per-minute
+      limit and an order-to-trade ratio limit.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-RISK-003
+    title: Loss latches
+    statement: >-
+      A daily loss latch and a drawdown latch must stop new entries per sleeve and for the desk, and a
+      reject-streak breaker must stop entries after repeated rejects; a latch must survive a restart.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-RISK-004
+    title: KILL and FLATTEN switches
+    statement: >-
+      While the KILL switch is set the platform must make no new entries and must keep managing exits; the
+      FLATTEN switch must close every position.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-MKT-001
+    title: Market guards
+    statement: >-
+      The platform must not enter on a stale quote or a spread wider than its guard, must be flat and place
+      no entries around the daily rollover and during a macro-event blackout, and must be flat before the
+      Friday close.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-CONN-001
+    title: No orders while blind
+    statement: >-
+      The platform must send no order while the market-data or order connection is down, and on reconnect
+      must cancel working orders and reconcile before it resumes.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-BOOK-001
+    title: Two books, shadow book of record
+    statement: >-
+      Every fill must be booked in a broker book and in a shadow book with the platform's own latency,
+      spread and slippage model, and every reported result and promotion test must read the shadow book.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-BOOK-002
+    title: Reconciliation break stops entries
+    statement: >-
+      When the broker's positions and the platform's own disagree, new entries must stop and an alert must
+      page until the break is resolved.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-REC-001
+    title: Recorder independent of the trader
+    statement: >-
+      The recorder must run as its own process, must keep recording when the trader stops, and must
+      account for every gap in its recording.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-TEST-001
+    title: Replay parity
+    statement: >-
+      The decisions taken while running must equal the decisions of an offline replay of the same
+      recording.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-LEARN-001
+    title: Gated promotion with automatic rollback
+    statement: >-
+      A challenger model must replace the champion only after passing a promotion gate registered before
+      its shadow week, and a promoted model that breaches its loss latch must be rolled back automatically.
+    basis: engineering_judgement
+    status: seed
+    verified_by: []
+    rationale_cites: []
+    kb_claims: []

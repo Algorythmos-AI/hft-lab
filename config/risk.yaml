@@ -1,0 +1,43 @@
+# Risk limits for the independent risk gate.
+#
+# NOT YET IN FORCE. Nothing reads this file in F0: the risk gate is built in F3/F4, and no order can be placed
+# before then. Every value below is a placeholder that marks the shape of the file, not a chosen limit. Each
+# real value is set by a decision record (HFT-DEC-NNNN) before the phase that enforces it, and names it here.
+#
+# Units: sizes are whole units of the base currency; money is in the account currency; prices and distances
+# are in integer price units at the pair's scale (ADR 0002). No floats.
+status: placeholder
+in_force: false
+
+desk:
+  max_gross_exposure: null          # sum over pairs of |position| valued in the account currency
+  max_leverage: null                # well under the regulatory cap; an integer ratio, e.g. 2 means 2:1
+  daily_loss_latch: null            # entries stop for the day at this loss; survives a restart
+  drawdown_latch: null              # entries stop until the owner resets it
+  max_orders_per_minute: null
+  max_order_to_trade_ratio: null
+  reject_streak_breaker: null       # consecutive rejects before entries stop
+
+per_pair:                           # one block per traded pair, from config/venues/ibkr.yaml
+  EUR.USD:
+    max_position: null              # base-currency units, long or short
+    max_order_size: null
+    price_collar_ticks: null        # an order further than this from mid is refused
+    max_spread_ticks: null          # spread guard: no entries when the quoted spread is wider
+    stale_quote_ms: null            # stale-quote stop: no orders on a quote older than this
+
+per_sleeve:                         # each sleeve has its own book and its own latches
+  control:
+    daily_loss_latch: null
+    drawdown_latch: null
+    max_position: null
+
+market_guards:
+  rollover_no_trade_minutes_before: null   # flat and no entries around 17:00 New York
+  rollover_no_trade_minutes_after: null
+  friday_flat_minutes_before_close: null
+  macro_event_blackout_minutes: null
+
+switches:                           # files in the platform's state directory; checked before every order
+  kill: KILL                        # no new entries, exits still managed
+  flatten: FLATTEN                  # close every position

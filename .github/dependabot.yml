@@ -1,0 +1,17 @@
+# Version updates are off for Python (limit 0): the hash-locked files are recompiled by hand with `make lock`,
+# so the lock files and the leak attestation change together. Security updates still open pull requests.
+# A pull request opened here has not been through the pre-commit hook, so its `leakcheck` check fails until
+# the branch is checked out and `make attest` is run and committed (ADR 0006).
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    target-branch: main
+    schedule: { interval: weekly, day: monday, timezone: Australia/Sydney }
+    open-pull-requests-limit: 0
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: main
+    schedule: { interval: monthly }
+    groups:
+      actions: { patterns: ["*"] }

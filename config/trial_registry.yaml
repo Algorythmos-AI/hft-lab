@@ -1,0 +1,9 @@
+# Global trial count for the deflated Sharpe ratio. Every configuration evaluated on development data counts,
+# whatever experiment ran it. Read by hftlab.registry.trials.
+#
+# Append-only: one row per decision record that changed the count, newest last.
+#   - {decision: HFT-DEC-NNNN, total: <count after this decision>, status: accepted | proposed}
+# global_trial_count() returns the newest `accepted` total, and 0 while there is none. A `proposed` row takes
+# effect in the pull request that records its decision as accepted. Totals never decrease, and the registry
+# lint (`python -m hftlab.registry lint`) refuses a row whose decision record does not exist.
+history: []

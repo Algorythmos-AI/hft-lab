@@ -1,0 +1,36 @@
+# Capability file for the Interactive Brokers paper account.
+#
+# PLACEHOLDER. Nothing has been measured. The capability probe (F1) is run once by the owner with the paper
+# login and writes what the paper account can actually do; until then every field is null and nothing may be
+# inferred from this file. The probe report and the two decisions it feeds (access route, instrument form)
+# are research records.
+#
+# Units: sizes in whole base-currency units, times in milliseconds, money as decimal text converted with
+# hftlab.core.money (never a float).
+venue: ibkr_paper
+status: placeholder
+probed_at: null                     # UTC date of the probe run
+probe_record: null                  # HFT-EXP-NNNN of the probe report
+
+access_route: null                  # gateway | web_api, decided after the probe (HFT-DEC-NNNN)
+instrument_form: null               # cash | cfd, decided after the probe (HFT-DEC-NNNN)
+
+pairs: []
+# One entry per tradable pair, in this shape:
+#   - pair: EUR.USD
+#     forms: []                     # which of cash, cfd the paper account may trade
+#     price_scale: null             # decimals in a quote: 5 for EUR.USD, 3 for USD.JPY
+#     update_interval_ms: null      # measured time between quote updates
+#     depth_levels: null            # book levels offered; 1 means top of book only
+#     min_order_size: null          # smallest order that gets normal pricing
+#     commission:
+#       rate_bps: null
+#       minimum: null               # per-order minimum, decimal text
+#       currency: null
+#     order_round_trip_ms:          # submit to acknowledgement, measured
+#       median: null
+#       p99: null
+
+weekly_login:
+  required: null                    # does the session need a fresh login each week
+  observed_behaviour: null          # what happens at the weekly reset, in one sentence

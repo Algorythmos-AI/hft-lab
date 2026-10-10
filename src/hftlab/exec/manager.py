@@ -34,10 +34,10 @@ position check of step 4 is what would notice.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from enum import Enum, unique
-from typing import Final
+from typing import Final, Protocol
 
 from hftlab.book import Book, BookError, Difference, differences
 from hftlab.core import Clock, Fill, Instrument, Order, OrderEvent, OrderState, is_ours
@@ -56,6 +56,7 @@ from hftlab.venues.port import (
     UnknownInstrument,
     Venue,
     VenueError,
+    VenuePosition,
     VenueUnavailable,
 )
 
@@ -68,6 +69,22 @@ _SETTLED: Final = {
     Stage.EXPIRED: OrderState.EXPIRED,
     Stage.REJECTED: OrderState.REJECTED,
 }
+
+
+class Asked(Protocol):
+    """The three questions the manager asks of a venue while it makes a connection safe. Nothing here trades."""
+
+    def open_orders(self) -> tuple[OpenOrder, ...]: ...
+
+    def positions(self) -> tuple[VenuePosition, ...]: ...
+
+    def executions_since(self, ts_ns: int) -> tuple[Fill, ...]: ...
+
+
+# Told how every send and every cancel went: ("place" or "cancel", the client order id, one of the words below).
+# The trader's recording of what it saw is the witness, so a recorded day can be replayed (ADR 0005, ADR 0019).
+Witness = Callable[[str, str, str], None]
+SENT, REFUSED, LOCKED, UNCERTAIN, FAILED = "sent", "refused", "locked", "uncertain", "failed"
 
 
 @unique
@@ -126,10 +143,15 @@ class OrderManager:
         clock: Clock,
         instruments: Iterable[Instrument],
         skew_ns: int = 2 * MINUTE,
+        asks: Asked | None = None,
+        witness: Witness | None = None,
     ) -> None:
         if not isinstance(gate, RiskGate):
             raise TypeError("the order manager is built on the risk gate itself; there is no stand-in for it")
         self._venue, self._gate, self._outbox, self._clock, self._skew_ns = venue, gate, outbox, clock, skew_ns
+        # The questions go through `asks` when one is given: the same venue, seen by whoever records its answers.
+        self._asks: Asked = venue if asks is None else asks
+        self._witness = witness
         self._instruments = {instrument.pair: instrument for instrument in instruments}
         self._book = Book(self._instruments.values())
         self._orders: dict[str, Tracked] = {}
@@ -153,6 +175,11 @@ class OrderManager:
     def blind(self) -> bool:
         """True from every start and every lost connection until `reconcile` has returned True."""
         return self._blind
+
+    @property
+    def differing(self) -> tuple[Difference, ...]:
+        """Where the venue's positions were not the book's at the last step of `reconcile`; empty when they agreed."""
+        return self._differing
 
     @property
     def faults(self) -> tuple[tuple[Fault, str | None], ...]:
@@ -203,6 +230,7 @@ class OrderManager:
             self._venue.place(order, instrument)
         except (NotReady, OrderRefused, UnknownInstrument, PaperOnlyError) as refusal:
             # Refused before anything was sent: every one of these is raised ahead of the venue's own send.
+            self._saw("place", order_id, LOCKED if isinstance(refusal, PaperOnlyError) else REFUSED)
             self._move(tracked, Stage.REJECTED, Cause.REFUSED_BY_VENUE)
             self._tell_gate(tracked)
             self._outbox.commit()
@@ -211,15 +239,17 @@ class OrderManager:
             return Proposal(order_id, False, Held.REFUSED_BY_VENUE.value, tracked.stage)
         except Exception as failure:
             # It may be at the venue and it may not. Nothing is assumed, and nothing more is sent blind.
+            expected = isinstance(failure, VenueUnavailable)
+            self._saw("place", order_id, UNCERTAIN if expected else FAILED)
             self._move(tracked, Stage.UNKNOWN, Cause.SEND_FAILED)
             self._blind = True
-            expected = isinstance(failure, VenueUnavailable)
             if not expected:
                 self._fault(Fault.SEND_FAILED, order_id)
             self._outbox.commit()
             if not expected:
                 raise
             return Proposal(order_id, False, Held.SEND_UNCERTAIN.value, tracked.stage)
+        self._saw("place", order_id, SENT)
         self._move(tracked, Stage.SENT, Cause.PLACED)
         self._outbox.commit()
         return Proposal(order_id, True, verdict.code, tracked.stage)
@@ -237,13 +267,19 @@ class OrderManager:
         try:
             self._venue.cancel(client_order_id)
         except VenueError:
+            self._saw("cancel", client_order_id, FAILED)
             return False  # not sent, or not known to have been; the next reconciliation asks again
+        self._saw("cancel", client_order_id, SENT)
         self._gate.count_cancel(client_order_id)
         tracked = self._orders.get(client_order_id)
         if tracked is not None:
             tracked.cancel_sent = True
         self._outbox.record("cancel", at_ns=self._clock.now_ns(), client_order_id=client_order_id)
         return True
+
+    def _saw(self, verb: str, client_order_id: str, outcome: str) -> None:
+        if self._witness is not None:
+            self._witness(verb, client_order_id, outcome)
 
     def _refuse(self, order: Order, code: str, now: int) -> Proposal:
         self._outbox.record(
@@ -326,13 +362,13 @@ class OrderManager:
         if state is ConnectionState.READY and not self._blind:
             return True
         try:
-            working = self._venue.open_orders()
+            working = self._asks.open_orders()
             for found in working:
                 self._take_back(found)
             if working:
                 return False  # nothing is settled while anything can still fill
-            executed = self._venue.executions_since(self._since())
-            reported = self._venue.positions()
+            executed = self._asks.executions_since(self._since())
+            reported = self._asks.positions()
         except VenueError:
             return False
         finally:

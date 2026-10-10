@@ -3,7 +3,7 @@
 Nothing outside this package calls `place` or `cancel` on a venue the platform trades on, and a scan of the
 package holds that line (tests/venues/test_guard.py).
 """
-from hftlab.exec.manager import Cause, Held, OrderManager, Proposal
+from hftlab.exec.manager import Asked, Cause, Held, OrderManager, Proposal, Witness
 from hftlab.exec.outbox import Outbox, OutboxError
 from hftlab.exec.states import IN_FLIGHT, MOVES, TERMINAL, Fault, Stage, Tracked
 
@@ -11,6 +11,7 @@ __all__ = [
     "IN_FLIGHT",
     "MOVES",
     "TERMINAL",
+    "Asked",
     "Cause",
     "Fault",
     "Held",
@@ -20,4 +21,5 @@ __all__ = [
     "Proposal",
     "Stage",
     "Tracked",
+    "Witness",
 ]

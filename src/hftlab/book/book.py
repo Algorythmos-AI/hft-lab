@@ -138,8 +138,25 @@ class Book:
 
     # ---- reading ------------------------------------------------------------------------------------------------
 
+    @property
+    def instruments(self) -> tuple[Instrument, ...]:
+        """What the book was given to book in, one instrument per pair."""
+        return tuple(self._instruments.values())
+
+    def has(self, fill_id: str) -> bool:
+        """Was a fill with this id booked?"""
+        return fill_id in self._fills
+
     def sleeves(self) -> list[str]:
         return sorted({sleeve for sleeve, _ in self._lines})
+
+    def open_lines(self) -> dict[tuple[str, str], int]:
+        """(sleeve, pair) -> signed quantity, for every line that is not flat."""
+        return {key: line.position.quantity for key, line in sorted(self._lines.items()) if line.position.quantity}
+
+    def gross(self, sleeve: str, pair: str, bid: int, ask: int) -> int:
+        """Realised plus unrealised (long at the bid, short at the ask) for one pair, at its price scale. No fees."""
+        return sum(line.realised + line.unrealised(bid, ask) for line in self._selected(sleeve, pair))
 
     def position(self, sleeve: str, pair: str) -> Position:
         """A sleeve's position in a pair; for `DESK`, the sum over sleeves."""

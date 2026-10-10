@@ -44,8 +44,8 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 core/      types, injected clock, ids; prices as integers at each pair's quote precision      F0
 safety/    paper-only lock, venue registry                                                    F0
 registry/  hypotheses, experiments, decisions, trial count                                    F0
-venues/    ibkr/ (connection supervisor, contracts, data, orders, executions, capability file)
-           sim/ (shadow venue)
+venues/    port, guard, supervisor; ibkr/ (translation, client seam, adapter, capability probe);      F1
+           fake/ (a deterministic broker for tests);  sim/ (shadow venue, not built yet)
 record/    recorder, schema, compaction, offload
 calendar/  forex week, rollover window, holidays, macro-event blackout
 features/  labels/  models/ (registry, hashed model files, scorer in its own process)

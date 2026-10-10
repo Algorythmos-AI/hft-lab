@@ -17,6 +17,20 @@ approved plan, unchanged.
 Recording starts as early as possible (F2), because data only accumulates with time. Real money,
 co-location and anything on the [never-build list](never-build.md) are out of scope.
 
+## Where F1 stands
+
+| Part of the deliverable | State |
+|---|---|
+| Venue port | Done: `src/hftlab/venues/port.py`, with the shared guard ([ADR 0009](adr/0009-venue-port-guard-and-fake-broker.md), [ADR 0011](adr/0011-synchronous-pumped-port.md)) |
+| Paper lock in stages | Done: before connecting, after the handshake, before every order; a reconnect starts unchecked |
+| IBKR adapter against the fake broker | Done: `src/hftlab/venues/ibkr/` over `ib_async`, `src/hftlab/venues/fake/`, and a contract suite both pass. Written and tested without a gateway |
+| The probe | Written and tested against the fake broker. **Not yet run with the paper login** ([runbook](runbooks/ibkr-probe.md)) |
+| Exit gate: the probe report | Open. It needs the owner's run |
+| Exit gate: decision records for the access route and the instrument form | Open. They follow the report; [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
+
+F1 is not finished until the last two rows are. Everything the adapter assumes about the gateway and could
+not check offline is listed at the end of the runbook.
+
 ## Where F0 stands
 
 | Part of the deliverable | State |

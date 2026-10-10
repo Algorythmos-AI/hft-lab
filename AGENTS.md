@@ -7,8 +7,9 @@ between the trading platforms lives in that repository's `docs/trading-platforms
 ## Hard rules
 
 1. **Paper only.** Real-money trading is never enabled from this repo.
-   - Every venue adapter must call the paper-only lock (`hftlab.safety.lock`) when it connects and again
-     before every order. The lock refuses unless all of these hold:
+   - Every venue is built on `hftlab.venues.guard.GuardedVenue`, which applies the paper-only lock
+     (`hftlab.safety.lock`) before connecting, again on the account ids the broker reports, and again before
+     every order. Never add a second path to the broker beside it. The lock refuses unless all of these hold:
      - `MODE` is exactly `paper`;
      - `LIVE_TRADING_ENABLED` is unset or an explicit false;
      - the gateway port is a paper port (IB Gateway 4002, TWS 7497);
@@ -64,8 +65,8 @@ The repository is **public**. Assume every byte committed is read by strangers a
 ## Layout
 
 ```
-src/hftlab/    core · safety · venues · record · registry   (later: calendar · features · labels · models ·
-               strategy · risk · exec · book · learn · ops)
+src/hftlab/    core · safety · venues (port, guard, ibkr/, fake/) · record · registry
+               (later: calendar · features · labels · models · strategy · risk · exec · book · learn · ops)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
 config/        risk limits, venue capability file, trial registry

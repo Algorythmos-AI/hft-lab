@@ -59,8 +59,8 @@ ops/       jobs, units, deploy gate, heartbeat, alerts, backup
 
 Two boundaries are enforced by tests from the first commit:
 
-- **Only `venues/ibkr/` and `record/` may import a network library**, and only `venues/ibkr/` the broker's
-  client library. Everything else, the venue port and the fake broker included, is computation on events.
+- **Only `venues/ibkr/` may import a network library or the broker's client library.** Everything else, the
+  venue port, the fake broker, the recorder and the shadow venue included, is computation on events.
 - **Only `safety/lock.py` may name a live port or read the variables that select the trading mode.**
 
 ## Data flow

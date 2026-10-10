@@ -137,6 +137,10 @@ class Harness:
         self.stub = None
         if kind == "fake":
             self.venue = FakeBroker(self.clock, self.market, gate=self.gate, backoff=backoff)
+        elif kind == "sim":
+            from hftlab.venues.sim import SimVenue
+
+            self.venue = SimVenue(self.clock, INSTRUMENTS, plain_costs(), seed=seed)
         else:
             self.stub = StubIb(self.clock, self.market)
             settings = IbkrSettings(port=config.port)
@@ -149,6 +153,7 @@ class Harness:
             self.market.script_quote(T0, "EUR.USD", BID, ASK)
         self.venue.connect()
         instrument = self.venue.instrument("EUR.USD", InstrumentKind.CASH)
+        self._feed_shadow()  # the book as it stands, before anything is subscribed
         self.venue.subscribe_quotes(instrument)
         self.venue.mark_reconciled()
         self.venue.poll()
@@ -156,7 +161,33 @@ class Harness:
 
     def after(self, duration_ns: int) -> list:
         self.clock.advance(duration_ns)
+        self._feed_shadow()
         return self.venue.poll()
+
+    def _feed_shadow(self) -> None:
+        """The shadow venue has no market of its own: hand it the quotes the fake market produced."""
+        if self.kind != "sim":
+            return
+        from hftlab.venues.fake.market import QuoteTick
+
+        for tick in self.market.advance(self.clock.now_ns()):
+            if isinstance(tick, QuoteTick):
+                self._fed = getattr(self, "_fed", 0) + 1
+                book = (tick.bid, tick.ask, tick.bid_size, tick.ask_size)
+                self.venue.feed(Quote(tick.pair, *book, tick.at_ns, self._fed))
 
 
 KINDS = ("fake", "ibkr")
+
+
+def plain_costs(**changes):
+    """A cost model that behaves like the fake broker where the two can be compared: a fixed 5 ms, a flat fee."""
+    from hftlab.venues.sim import CostModel
+
+    values = {
+        "effective_from": "test", "placeholder": True, "latency_min_ns": 5 * MS, "latency_max_ns": 5 * MS,
+        "commission_rate_bps_x100": 0, "commission_minimum": {"USD": 2_000_000, "JPY": 2_000_000},
+        "min_order_size": 0, "slippage_increments": 0, "stale_after_ns": 10**15, "no_fill_before_ns": 0,
+        "no_fill_after_ns": 0, "widen_before_ns": 0, "widen_after_ns": 0, "spread_multiplier_x100": 100,
+    }  # fmt: skip
+    return CostModel(**{**values, **changes})

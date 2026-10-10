@@ -29,6 +29,9 @@ from tests.venues.kit import ASK, BID, EURUSD, EURUSD_CFD, KINDS, MS, SECOND, T0
 
 IOC, DAY = TimeInForce.IOC, TimeInForce.DAY
 both = pytest.mark.parametrize("kind", KINDS)
+# The shadow venue has no broker, so the lock, outages and broker faults do not apply to it. What does apply,
+# it must do exactly as the other two do.
+every = pytest.mark.parametrize("kind", (*KINDS, "sim"))
 
 
 def states(events) -> list[str]:
@@ -38,7 +41,7 @@ def states(events) -> list[str]:
 # ---- connection and the lock ----------------------------------------------------------------------------------------
 
 
-@both
+@every
 def test_a_connection_starts_reconciling_and_takes_orders_only_once_reconciled(kind):
     h = Harness(kind)
     h.venue.connect()
@@ -101,7 +104,7 @@ def test_the_lock_is_checked_again_before_every_order(kind):
 # ---- quotes and instruments -----------------------------------------------------------------------------------------
 
 
-@both
+@every
 def test_instruments_are_what_the_venue_says_they_are(kind):
     h = Harness(kind)
     h.venue.connect()
@@ -113,7 +116,7 @@ def test_instruments_are_what_the_venue_says_they_are(kind):
             h.venue.instrument(pair, form)
 
 
-@both
+@every
 def test_quotes_are_exact_integers_in_order_and_only_for_subscribed_pairs(kind):
     h = Harness(kind)
     h.ready()
@@ -163,7 +166,7 @@ def test_historical_quotes_come_back_oldest_first_at_the_venues_times(kind):
 # ---- orders ---------------------------------------------------------------------------------------------------------
 
 
-@both
+@every
 def test_a_market_order_is_acknowledged_filled_and_charged(kind):
     h = Harness(kind)
     instrument = h.ready()
@@ -210,7 +213,7 @@ def test_partial_fills_add_up(kind):
     ]  # fmt: skip
 
 
-@both
+@every
 def test_an_immediate_order_that_cannot_trade_is_cancelled_not_rejected(kind):
     h = Harness(kind)
     instrument = h.ready()
@@ -230,7 +233,7 @@ def test_a_rejected_order_carries_the_brokers_reason(kind):
     assert "insufficient margin" in of(events, OrderEvent)[-1].reason and h.venue.open_orders() == ()
 
 
-@both
+@every
 def test_cancel_a_working_order_and_cancel_too_late(kind):
     h = Harness(kind)
     instrument = h.ready()
@@ -246,7 +249,7 @@ def test_cancel_a_working_order_and_cancel_too_late(kind):
         h.venue.cancel(an_order(99).client_order_id)
 
 
-@both
+@every
 def test_orders_that_do_not_fit_the_instrument_never_leave(kind):
     h = Harness(kind)
     instrument = h.ready()
@@ -256,7 +259,7 @@ def test_orders_that_do_not_fit_the_instrument_never_leave(kind):
     h.venue.place(an_order(7), instrument)
     with pytest.raises(OrderRefused):
         h.venue.place(an_order(7), instrument)
-    assert len(h.market.working()) == 1
+    assert len(h.venue.open_orders()) == 1
 
 
 @both
@@ -330,7 +333,7 @@ def test_quote_subscriptions_are_restored_after_a_reconnect(kind):
     assert brief(h.after(4 * SECOND)) == [("quote", "EUR.USD", 108_600, 108_610)]
 
 
-@both
+@every
 def test_executions_since_a_time(kind):
     h = Harness(kind)
     instrument = h.ready()

@@ -1,0 +1,30 @@
+# The shadow venue's cost model. Read by hftlab.venues.sim (load_cost_model).
+#
+# EVERY NUMBER HERE IS A PLACEHOLDER, TO BE REPLACED BY THE PROBE'S MEASUREMENTS and the broker's published
+# commission schedule. They are round figures that make the arithmetic run, chosen to be on the costly side;
+# no result computed with them is a result. A change to this file is an evaluation change: it needs a decision
+# record, and `effective_from` says from which UTC date the new values apply.
+version: 1
+status: placeholder
+effective_from: "2026-10-11"
+
+latency_us:                  # PLACEHOLDER: decision to arrival at the venue; the probe measures ack_us
+  min: 20000
+  max: 80000
+
+commission:
+  rate_bps: "0.20"           # PLACEHOLDER: of the trade value, per order
+  minimum:                   # PLACEHOLDER: per order, in the pair's quote currency
+    USD: "2.00"
+    JPY: "300.00"
+
+min_order_size: 20000        # PLACEHOLDER: base-currency units below which the venue's pricing is worse
+slippage_increments: 0       # PLACEHOLDER: price increments lost beyond the quoted price on a marketable order
+stale_after_ms: 2000         # PLACEHOLDER: no fill against a quote the venue has not confirmed for this long
+
+rollover:                    # around 17:00 New York
+  no_fill_before_min: 5      # PLACEHOLDER
+  no_fill_after_min: 15      # PLACEHOLDER
+  widen_before_min: 30       # PLACEHOLDER
+  widen_after_min: 60        # PLACEHOLDER
+  spread_multiplier: "3.00"  # PLACEHOLDER: the quoted spread is taken as this many times wider in that window

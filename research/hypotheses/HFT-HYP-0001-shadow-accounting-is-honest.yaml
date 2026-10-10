@@ -1,0 +1,43 @@
+# HFT-HYP-0001. A hypothesis record (research/README.md). Written before any result it concerns exists.
+id: HFT-HYP-0001
+title: The shadow accounting is honest. Doing nothing earns nothing, and trading at random costs the modelled cost
+status: registered            # registered | supported | refuted. Changed only by a decision record
+registered: "2026-10-11"
+phase: F3                     # this is the F3 exit gate, stated as a hypothesis
+
+statement: >
+  On recorded quotes, replayed through the shadow runner under the cost model in force:
+  (a) a sleeve that never trades ends on exactly zero in every pair;
+  (b) a sleeve that enters at random at the minimum size, long or short by a fair coin, holds for a fixed time
+  and leaves, has a mean result per round trip of minus the modelled round-trip cost, within the tolerance
+  stated in HFT-EXP-0001.
+
+why: >
+  Every later result of this platform is read from the shadow book (ADR 0003). Before any of them is believed,
+  the book has to be checked against two cases whose answer is known without looking at the market.
+  A sleeve that sends no order can have no profit, no loss and no fee: (a) is exact.
+  A sleeve whose direction is a coin toss has no information, so the move of the mid across its holding time
+  is zero on average, and what is left of its result is what it paid to trade: half the spread and the
+  slippage at each end, and two commissions. That is the figure CostModel.round_trip_cost_micro states
+  (ADR 0013). If the mean result differs from it, then the shadow venue, the book and the cost model disagree
+  about what a trade costs, and no profit figure computed with them means anything.
+
+what_would_show_it_is_wrong:
+  - The idle sleeve ends with any decision, order, fill, fee, position or non-zero net result in any pair.
+  - In any pair, the control sleeve's mean result per round trip differs from minus the mean modelled cost by
+    more than the tolerance, in a run long enough to count (both defined in HFT-EXP-0001).
+  - Any single round trip whose result is not explained, to the millionth, by the modelled cost and the move
+    of the mid between its two fills (the exact check in HFT-EXP-0001).
+
+what_it_does_not_say: >
+  Nothing about whether the cost model's numbers are right. They are placeholders until the capability probe
+  has run; this hypothesis is about the accounting agreeing with the model, not the model with the broker.
+  Nothing about any strategy.
+
+tested_by:
+  - HFT-EXP-0001              # registered, NOT RUN
+
+evidence: >
+  None. Nothing has been recorded from the real feed yet, and HFT-EXP-0001 has not been run.
+  The two statements hold on synthetic streams in tests/shadow/test_gate.py. Those tests check the code;
+  they are not this experiment and are not evidence for this hypothesis.

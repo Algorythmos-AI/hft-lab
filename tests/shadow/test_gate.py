@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import pytest
 
+from hftlab.shadow import __main__ as cli
 from hftlab.strategy import ControlSleeve, IdleSleeve
 from tests.shadow.kit import constant, kinds, session, walk
+from tests.support import ROOT
 from tests.venues.kit import EURUSD, MS, SECOND, plain_costs
 
 SIZE = 20_000
@@ -108,3 +110,20 @@ def test_over_many_seeds_the_control_sleeves_mean_result_is_the_modelled_cost_wi
     assert abs(mean_ppm) <= TOLERANCE_PPM, f"the mean result is {mean_ppm} ppm away from the modelled cost"
     assert max(shares) > TOLERANCE_PPM and min(shares) < -TOLERANCE_PPM, "single seeds are further out: luck, both ways"
     assert sum(share > 0 for share in shares) in range(8, 23), "and about as often lucky as unlucky"
+
+
+# ---- the run on recorded days: registered, and not made yet ----------------------------------------------------------
+
+
+def test_the_registered_control_run_is_a_config_the_runner_accepts_and_it_has_no_result():
+    """The gate itself needs recorded days. What can be held now: the frozen config is one the runner can run."""
+    folder = ROOT / "research" / "experiments" / "HFT-EXP-0001-control-shadow"
+    config = cli.load_config(folder / "config.yaml")
+    idle, sleeve = cli.make_sleeves(config["sleeves"], {"EUR.USD": SIZE})
+    assert isinstance(idle, IdleSleeve) and isinstance(sleeve, ControlSleeve) and config["seed"] == 1
+    fixed = (sleeve.seed, sleeve.entry_per_million, sleeve.hold_ns, sleeve.retry_ns)
+    assert fixed == (1, 2_000, 60 * SECOND, 10 * SECOND), "seed, entry rate, holding time, waiting time"
+    protocol = (folder / "protocol.md").read_text()
+    for stated in ("Not run.", "seed 1", "2,000 per million", "60 seconds", "10 seconds", "It tests HFT-HYP-0001."):
+        assert stated in protocol, stated
+    assert sorted(path.name for path in folder.iterdir()) == ["config.yaml", "protocol.md"], "no result: none exists"

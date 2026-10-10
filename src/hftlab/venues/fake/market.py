@@ -161,6 +161,9 @@ class FakeMarket:
     def instrument(self, pair: str, kind: InstrumentKind) -> Instrument | None:
         return self._instruments.get((pair, kind))
 
+    def instruments(self) -> list[Instrument]:
+        return list(self._instruments.values())
+
     def link_up(self, at_ns: int) -> bool:
         return not any(start <= at_ns < end for start, end in self.config.outages)
 

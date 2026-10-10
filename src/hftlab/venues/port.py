@@ -11,6 +11,8 @@ What a caller may rely on:
   * A new connection is RECONCILING, never READY. Orders are refused until the caller has looked at open
     orders, positions and executions and called `mark_reconciled()`. Cancels are allowed while RECONCILING.
   * Nothing is sent while DISCONNECTED, and nothing at all once REFUSED: the paper-only lock said no.
+  * A `Quote` is emitted when the top of the book changes. An unchanged book is silent, so the absence of
+    quotes is not by itself evidence of a dead feed.
   * An `OrderEvent` with state SUBMITTED is emitted when `place` returns; later states come from the venue.
   * A `Fill` may arrive more than once, and before or after the `OrderEvent` that counts it. `fill_id` is the
     key. Its commission arrives separately, as a `CommissionEvent`, and may be late.

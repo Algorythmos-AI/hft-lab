@@ -76,6 +76,7 @@ class GuardedVenue(abc.ABC):
         self._instruments: set[Instrument] = set()
         self._quotes: dict[str, Instrument] = {}
         self._depth: dict[str, tuple[Instrument, int]] = {}
+        self._last_quote: dict[str, tuple[int, int, int, int]] = {}
         self._sent: set[str] = set()
 
     # ---- what a subclass provides: talking to the broker, and nothing else ------------------------------------------
@@ -87,6 +88,10 @@ class GuardedVenue(abc.ABC):
     @property
     @abc.abstractmethod
     def capabilities(self) -> Capabilities: ...
+
+    @abc.abstractmethod
+    def _port(self) -> int:
+        """The port this venue dials. It must be the port the lock was given to judge."""
 
     @abc.abstractmethod
     def _open(self) -> Sequence[str]:
@@ -183,6 +188,8 @@ class GuardedVenue(abc.ABC):
 
     def _attempt_connection(self) -> None:
         try:
+            if self._port() != self._gate.port:
+                raise PaperOnlyError("the port being dialled is not the port the paper-only lock was given")
             self._gate.before_connect()
         except PaperOnlyError as exc:
             self._refused(str(exc))
@@ -202,6 +209,7 @@ class GuardedVenue(abc.ABC):
             raise
         self._attempt = 0
         self._retry_at = None
+        self._last_quote.clear()  # the first quote of a new connection is news even if the book did not move
         self._set(ConnectionState.RECONCILING)
         for instrument in self._quotes.values():
             self._start_quotes(instrument)
@@ -313,6 +321,7 @@ class GuardedVenue(abc.ABC):
             raise VenueError(f"{instrument.pair} quotes are already subscribed as {current.kind.value}")
         self._start_quotes(instrument)
         self._quotes[instrument.pair] = instrument
+        self._last_quote.pop(instrument.pair, None)
 
     def unsubscribe_quotes(self, instrument: Instrument) -> None:
         if self._quotes.get(instrument.pair) == instrument:
@@ -374,6 +383,11 @@ class GuardedVenue(abc.ABC):
         return pair in self._quotes
 
     def _emit_quote(self, pair: str, bid: int, ask: int, bid_size: int, ask_size: int) -> None:
+        """A quote, when the top of the book changed. A venue that repeats itself is not telling us anything."""
+        top = (bid, ask, bid_size, ask_size)
+        if self._last_quote.get(pair) == top:
+            return
+        self._last_quote[pair] = top
         ts_ns, seq = self._next()
         self._events.append(Quote(pair, bid, ask, bid_size, ask_size, ts_ns, seq))
 

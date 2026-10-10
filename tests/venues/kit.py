@@ -105,3 +105,58 @@ def brief(events) -> list[tuple]:
 
 def of(events, kind: type) -> list:
     return [event for event in events if isinstance(event, kind)]
+
+
+# ---- one scenario, two venues --------------------------------------------------------------------------------------
+
+
+class Harness:
+    """A venue over a fake market, either the fake broker or the broker adapter over the stub client."""
+
+    def __init__(
+        self,
+        kind: str,
+        config: FakeConfig | None = None,
+        *,
+        environ: dict[str, str] | None = None,
+        backoff: Backoff | None = None,
+        seed: int = 0,
+        reject=None,
+        port: int | None = None,
+    ) -> None:
+        from hftlab.venues.fake import FakeMarket
+        from hftlab.venues.ibkr.adapter import IbkrSettings, IbkrVenue
+        from tests.venues.stub_ib import StubIb
+
+        self.kind = kind
+        self.clock = SimClock(T0)
+        config = config or FakeConfig()
+        self.environ = {"MODE": "paper"} if environ is None else environ
+        self.market = FakeMarket(INSTRUMENTS, config, seed=seed, reject=reject)
+        self.gate = PaperGate(port=config.port if port is None else port, env=self.environ)
+        self.stub = None
+        if kind == "fake":
+            self.venue = FakeBroker(self.clock, self.market, gate=self.gate, backoff=backoff)
+        else:
+            self.stub = StubIb(self.clock, self.market)
+            settings = IbkrSettings(port=config.port)
+            options = {"settings": settings, "gate": self.gate, "backoff": backoff}
+            self.venue = IbkrVenue(clock=self.clock, client=self.stub, **options)
+
+    def ready(self, *, quote: bool = True) -> Instrument:
+        """Connect, look EUR.USD up, subscribe, reconcile, and swallow the events of doing so."""
+        if quote:
+            self.market.script_quote(T0, "EUR.USD", BID, ASK)
+        self.venue.connect()
+        instrument = self.venue.instrument("EUR.USD", InstrumentKind.CASH)
+        self.venue.subscribe_quotes(instrument)
+        self.venue.mark_reconciled()
+        self.venue.poll()
+        return instrument
+
+    def after(self, duration_ns: int) -> list:
+        self.clock.advance(duration_ns)
+        return self.venue.poll()
+
+
+KINDS = ("fake", "ibkr")

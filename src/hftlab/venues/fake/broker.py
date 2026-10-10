@@ -58,6 +58,7 @@ class FakeBroker(GuardedVenue):
         self.market = market
         self._auto_advance = auto_advance
         self._link = False
+        self._reported: dict[str, tuple[OrderState, int]] = {}
         self._pumped_ns = clock.now_ns()
 
     @property
@@ -71,6 +72,9 @@ class FakeBroker(GuardedVenue):
         return Capabilities(kinds, depth=config.depth_levels > 0, historical_quotes=config.history)
 
     # ---- connection ---------------------------------------------------------------------------------------------
+
+    def _port(self) -> int:
+        return self.market.config.port
 
     def _open(self) -> Sequence[str]:
         now = self._clock.now_ns()
@@ -119,9 +123,9 @@ class FakeBroker(GuardedVenue):
         if isinstance(happening, QuoteTick):
             self._deliver_quote(happening)
         elif isinstance(happening, Acked):
-            self._emit_order(happening.client_order_id, OrderState.WORKING, broker_order_id=happening.broker_order_id)
+            self._report(happening.client_order_id, OrderState.WORKING, 0, happening.broker_order_id)
         elif isinstance(happening, Rejected):
-            self._emit_order(happening.client_order_id, OrderState.REJECTED, reason=happening.reason)
+            self._report(happening.client_order_id, OrderState.REJECTED, 0, None, happening.reason)
         elif isinstance(happening, Executed):
             self._emit_fill(
                 fill_id=happening.exec_id,
@@ -134,23 +138,24 @@ class FakeBroker(GuardedVenue):
                 venue_ts_ns=happening.at_ns,
             )
             done = happening.cumulative == happening.order_quantity
-            self._emit_order(
-                happening.client_order_id,
-                OrderState.FILLED if done else OrderState.PARTIALLY_FILLED,
-                filled_quantity=happening.cumulative,
-                broker_order_id=happening.broker_order_id,
-            )
+            state = OrderState.FILLED if done else OrderState.PARTIALLY_FILLED
+            self._report(happening.client_order_id, state, happening.cumulative, happening.broker_order_id)
         elif isinstance(happening, Commissioned):
             self._emit_commission(happening.exec_id, happening.commission, happening.currency)
         elif isinstance(happening, Cancelled):
-            self._emit_order(
-                happening.client_order_id,
-                OrderState.CANCELLED,
-                filled_quantity=happening.cumulative,
-                reason=happening.reason,
-            )
+            cancelled = OrderState.CANCELLED
+            self._report(happening.client_order_id, cancelled, happening.cumulative, None, happening.reason)
         elif isinstance(happening, CancelTooLate):
             self._emit_notice("cancel-too-late", "the order was already done", happening.client_order_id)
+
+    def _report(
+        self, client_order_id: str, state: OrderState, filled: int, broker_id: str | None, reason: str | None = None
+    ) -> None:
+        """An order event, unless it repeats the last one: a duplicated execution report is not a new status."""
+        if self._reported.get(client_order_id) == (state, filled):
+            return
+        self._reported[client_order_id] = (state, filled)
+        self._emit_order(client_order_id, state, filled_quantity=filled, broker_order_id=broker_id, reason=reason)
 
     def _deliver_quote(self, tick: QuoteTick) -> None:
         if self._subscribed(tick.pair):

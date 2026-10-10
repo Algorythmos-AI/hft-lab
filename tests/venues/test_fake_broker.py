@@ -89,6 +89,18 @@ def test_quotes_arrive_in_order_stamped_with_the_time_they_were_received():
     assert {q.recv_ts_ns for q in quotes} == {T0 + 10 * MS} and [q.seq for q in quotes] == sorted(q.seq for q in quotes)
 
 
+def test_an_unchanged_top_of_book_is_silent_until_it_moves_or_the_connection_is_new():
+    clock, broker = a_broker()
+    for i in range(1, 4):
+        broker.market.script_quote(T0 + i * MS, "EUR.USD", BID, ASK)
+    broker.market.script_quote(T0 + 4 * MS, "EUR.USD", BID, ASK, 1_000_000, 900_000)  # only a size changed
+    assert brief(after(clock, broker, 10 * MS)) == [("quote", "EUR.USD", BID, ASK), ("quote", "EUR.USD", BID, ASK)]
+    broker.unsubscribe_quotes(EURUSD)
+    broker.subscribe_quotes(EURUSD)
+    broker.market.script_quote(T0 + 11 * MS, "EUR.USD", BID, ASK, 1_000_000, 900_000)
+    assert len(of(after(clock, broker, 5 * MS), Quote)) == 1, "a fresh subscription reports the book it finds"
+
+
 def test_only_subscribed_pairs_are_delivered():
     clock, broker = a_broker()
     broker.market.script_quote(T0 + MS, "USD.JPY", 151_230, 151_240)
@@ -411,7 +423,7 @@ def test_instrument_lookup_and_the_server_clock():
 def test_with_auto_advance_a_polling_loop_moves_time_to_the_next_happening():
     clock, broker = a_broker(auto_advance=True)
     broker.market.script_quote(T0 + 30 * MS, "EUR.USD", BID, ASK)
-    broker.market.script_quote(T0 + 70 * MS, "EUR.USD", BID, ASK)
+    broker.market.script_quote(T0 + 70 * MS, "EUR.USD", BID + 5, ASK + 5)
     seen = []
     while clock.now_ns() < T0 + 200 * MS:
         events = broker.poll(timeout_ns=50 * MS)

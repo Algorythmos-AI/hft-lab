@@ -9,12 +9,12 @@ import tracemalloc
 import pytest
 
 from hftlab.calendar import Calendar
-from hftlab.core import InstrumentKind, Quote, SimClock
+from hftlab.core import Instrument, InstrumentKind, Quote, SimClock
 from hftlab.record import format as fmt
 from hftlab.record.recorder import Recorder, RecorderSettings
 from hftlab.record.store import Housekeeper, StoreSettings, read_journal
 from hftlab.replay import __main__ as cli
-from hftlab.replay import at_ns, check, events, replay
+from hftlab.replay import at_ns, check, events, instruments, replay
 from hftlab.venues.fake import FakeConfig
 from hftlab.venues.port import ConnectionEvent, ConnectionState
 from tests.record.kit import HOUR, MS, ROOMY, SECOND, T0, a_store
@@ -235,7 +235,7 @@ class Synthetic:
     def disconnect(self) -> None: ...
 
     def instrument(self, pair, kind):
-        return pair
+        return Instrument.from_pair(pair, price_scale=5, min_order_size=20_000, kind=kind, price_increment=5)
 
     def subscribe_quotes(self, instrument) -> None: ...
 
@@ -289,3 +289,47 @@ def test_reading_back_is_fast_too(tmp_path):
 def test_the_synthetic_source_is_what_the_test_says_it_is(tmp_path, seconds):
     records, _ = record_synthetic(tmp_path / "rec", seconds)
     assert records == 2 + seconds * 400  # a start, the quotes, a stop
+
+
+# ---- a day says what its instruments are ---------------------------------------------------------------------------
+
+
+def test_a_recorded_day_carries_its_instruments_in_every_hour_of_its_journal(tmp_path):
+    rig = Rig(tmp_path)
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + 30 * MS, count=50, **WALK)
+    rig.recorder.start()
+    rig.run(2 * SECOND)
+    rig.clock.advance_to(T0 + HOUR + SECOND)  # into the next hour: the description is written again
+    rig.market.generate_quotes("EUR.USD", start_ns=T0 + HOUR + 2 * SECOND, count=50, **WALK)
+    rig.run(3 * SECOND)
+    expected = rig.broker.instrument("EUR.USD", InstrumentKind.CASH)
+    rig.recorder.stop()
+    day = tmp_path / "rec" / "2026-10-14"
+    found = instruments(day)
+    assert sorted(found) == ["EUR.USD", "USD.JPY"]
+    assert found["EUR.USD"] == expected
+    assert (found["USD.JPY"].price_scale, found["USD.JPY"].quote) == (3, "JPY")
+    described = [line for line in read_journal(day) if line.get("type") == "instruments"]
+    assert len(described) == 2, "once when subscribed, once more at the start of the next hour"
+    assert check(day, Calendar(), 5 * SECOND).ok, "the description does not disturb the gap journal"
+
+
+def test_a_day_that_describes_a_pair_two_ways_or_not_at_all_is_not_priced(tmp_path):
+    day = tmp_path / "2026-10-14"
+    day.mkdir()
+    assert instruments(day) == {}
+    one = {"pair": "EUR.USD", "kind": "CASH", "price_scale": 5, "min_order_size": 20_000, "size_increment": 1}
+    lines = [
+        {"type": "instruments", "instruments": [{**one, "price_increment": 5}]},
+        {"type": "instruments", "instruments": [{**one, "price_increment": 5}]},
+    ]
+    (day / "journal.jsonl").write_text("".join(json.dumps(line) + "\n" for line in lines))
+    assert instruments(day)["EUR.USD"].price_increment == 5
+    for bad in ({**one, "price_increment": 1}, {**one, "price_increment": "5"}, {**one, "kind": "SWAP"}, one):
+        text = json.dumps({"type": "instruments", "instruments": [bad]}) + "\n"
+        with (day / "journal.jsonl").open("a") as stream:
+            stream.write(text)
+        with pytest.raises(fmt.CorruptSegment):
+            instruments(day)
+        kept = (day / "journal.jsonl").read_text().removesuffix(text)
+        (day / "journal.jsonl").write_text(kept)

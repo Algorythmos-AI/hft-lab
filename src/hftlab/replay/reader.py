@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hftlab.calendar import Calendar
-from hftlab.core import Quote, SimClock
+from hftlab.core import Instrument, Quote, SimClock
 from hftlab.record import format as fmt
 from hftlab.record.gaps import UNEXPLAINED, GapTracker
 from hftlab.record.segment import read_segment
@@ -126,6 +126,18 @@ def check(day: Path, calendar: Calendar, gap_threshold_ns: int) -> CheckReport:
         )
     report.gaps = dict(Counter(str(gap["reason"]) for gap in found))
     return report
+
+
+def instruments(day: Path) -> dict[str, Instrument]:
+    """What the day's journal says its instruments are. A day that describes one pair two ways cannot be priced."""
+    out: dict[str, Instrument] = {}
+    for line in read_journal(day):
+        listed = line.get("instruments") if line.get("type") == "instruments" else None
+        for entry in listed if isinstance(listed, list) else []:
+            instrument = fmt.instrument_of(entry)
+            if out.setdefault(instrument.pair, instrument) != instrument:
+                raise fmt.CorruptSegment(f"{day.name}: the journal describes {instrument.pair} in two different ways")
+    return out
 
 
 def last_quotes(day: Path) -> dict[str, Quote]:

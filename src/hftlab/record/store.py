@@ -3,7 +3,8 @@
   <root>/state.json                 the run counter
   <root>/<YYYY-MM-DD>/<HH>.seg      the segment being written (UTC day and hour of the receive time)
   <root>/<YYYY-MM-DD>/<HH>.seg.gz   a closed segment, compressed
-  <root>/<YYYY-MM-DD>/journal.jsonl gaps, starts and stops; a `carry` line where the tracker's state is needed
+  <root>/<YYYY-MM-DD>/journal.jsonl gaps, starts and stops; a `carry` line where the tracker's state is needed;
+                                    the instruments (price scale, increments), repeated every hour
 
 Three promises:
 
@@ -152,6 +153,7 @@ class Store:
         self._writer: SegmentWriter | None = None
         self._slot: tuple[str, int] | None = None
         self._tracker = GapTracker(self.pairs, calendar, settings.gap_threshold_ns)
+        self._described: dict[str, object] | None = None
         self.run = 0
         self.next_index = 0
         self.used_bytes = 0
@@ -258,6 +260,15 @@ class Store:
             stream.write(line)
         self.used_bytes += len(line)
 
+    def describe(self, entry: dict[str, object]) -> None:
+        """Journal `entry` now and again at the start of every hour: what a reader needs to make sense of the records.
+
+        The recorder uses it for the instruments (price scale, increments, minimum size), so that a day folder
+        can be priced by itself, years later, without the venue.
+        """
+        self._described = entry
+        self.note(entry)
+
     def silent(self, now_ns: int) -> list[dict[str, object]]:
         return [gap.as_dict() for gap in self._tracker.silent(now_ns)]
 
@@ -273,6 +284,8 @@ class Store:
         day = self.root / slot[0]
         day.mkdir(parents=True, exist_ok=True)
         self.note({**self._tracker.carry(), "hour": slot[1], "at_ns": ts_ns})
+        if self._described is not None:
+            self.note(self._described)
         header = Header(self.run, ts_ns, self.pairs)
         self._writer = SegmentWriter(self._path_for(day, slot[1]), header, fsync=self.settings.fsync)
         self.used_bytes = self._measure()

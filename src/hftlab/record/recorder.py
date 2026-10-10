@@ -128,6 +128,7 @@ class Recorder:
         except VenueUnavailable:
             return
         self._subscribed = instruments
+        self._store.describe({"type": "instruments", "instruments": [fmt.describe(i) for i in instruments]})
 
     def _heartbeats(self, now: int) -> None:
         """For each pair with no quote since the last beat, record that the venue answered and the book was still."""

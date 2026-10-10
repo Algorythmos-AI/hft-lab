@@ -29,7 +29,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import IO, Final
 
-from hftlab.core import Quote
+from hftlab.core import Instrument, InstrumentKind, Quote
 from hftlab.venues.port import ConnectionEvent, ConnectionState
 
 VERSION: Final = 1
@@ -105,6 +105,38 @@ class Marker:
 
 
 RecordedEvent = Quote | Heartbeat | ConnectionEvent | Marker
+
+
+def describe(instrument: Instrument) -> dict[str, object]:
+    """An instrument as the journal keeps it: every price in the records is an integer at this scale."""
+    return {
+        "pair": instrument.pair,
+        "kind": instrument.kind.value,
+        "price_scale": instrument.price_scale,
+        "min_order_size": instrument.min_order_size,
+        "size_increment": instrument.size_increment,
+        "price_increment": instrument.price_increment,
+    }
+
+
+def instrument_of(entry: dict[str, object]) -> Instrument:
+    def whole(key: str) -> int:
+        value = entry.get(key)
+        if type(value) is not int:
+            raise CorruptSegment(f"an instrument in the journal has no whole number for {key}: {entry!r}")
+        return value
+
+    try:
+        return Instrument.from_pair(
+            str(entry.get("pair")),
+            price_scale=whole("price_scale"),
+            min_order_size=whole("min_order_size"),
+            kind=InstrumentKind(entry.get("kind")),
+            size_increment=whole("size_increment"),
+            price_increment=whole("price_increment"),
+        )
+    except ValueError as exc:
+        raise CorruptSegment(f"an instrument in the journal cannot be read: {exc}") from exc
 
 
 def pack_block(records: Sequence[Record]) -> bytes:

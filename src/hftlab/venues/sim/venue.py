@@ -9,6 +9,9 @@ answered here. The model is pessimistic where a paper account is optimistic:
   * A resting limit order fills only when the opposite side trades THROUGH its price, never at the touch, and
     then at its own price, for no more than the size on display on the side that came through. The rest goes
     on resting.
+  * An order is aggressive or passive by the first book it can be judged against. That is the book it arrives
+    to, unless there is none to judge by (no quote yet, a stale one, the rollover window, a shut market): then
+    an immediate order is cancelled, and a resting one is judged by the first usable quote after.
   * Nothing fills on a quote the venue has not confirmed lately, nor inside the rollover window, and near the
     rollover the spread is taken as wider than quoted.
   * Commission is a rate on the order's traded value with a minimum per order.
@@ -26,6 +29,7 @@ from typing import Final, Protocol
 
 from hftlab.calendar import Calendar
 from hftlab.core import (
+    CASH_SCALE,
     Clock,
     Fill,
     Instrument,
@@ -84,7 +88,7 @@ class _Ticket:
     number: int
     arrived: bool = False
     active: bool = True
-    aggressive: bool = False
+    aggressive: bool | None = None  # None until the order has met a book it could be judged against
     filled: int = 0
     notional_micro: int = 0
     charged_micro: int = 0
@@ -223,7 +227,7 @@ class SimVenue:
         self._known(instrument)
         if order.pair != instrument.pair:
             raise OrderRefused(f"a {order.pair} order cannot be sent as {instrument.pair}")
-        if reasons := instrument.refusals(order.quantity, order.limit_price):
+        if reasons := instrument.refusals(order.quantity, order.limit_price) + self._unpriced(instrument):
             raise OrderRefused("; ".join(reasons))
         if order.client_order_id in self._orders:
             raise OrderRefused(f"client order id {order.client_order_id} was already sent on this venue")
@@ -277,6 +281,18 @@ class SimVenue:
         if self._instruments.get((instrument.pair, instrument.kind)) != instrument:
             raise UnknownInstrument(f"{instrument.pair} {instrument.kind.value} is not one of this venue's instruments")
 
+    def _unpriced(self, instrument: Instrument) -> list[str]:
+        """Why the cost model cannot price a fill of this instrument; empty when it can.
+
+        Asked before the order exists, so that it is a refusal here and never an error in the middle of a fill.
+        """
+        out = []
+        if instrument.quote not in self.model.commission_minimum:
+            out.append(f"the cost model has no commission minimum in {instrument.quote}")
+        if instrument.price_scale > CASH_SCALE:
+            out.append(f"{instrument.pair} quotes finer than a millionth; the cost model cannot price it")
+        return out
+
     def _advance(self, to_ns: int) -> None:
         while self._due and self._due[0][0] <= to_ns:
             at, _, what, client_order_id = heapq.heappop(self._due)
@@ -318,12 +334,14 @@ class SimVenue:
         limit, remaining = order.limit_price, order.quantity - ticket.filled
         marketable = limit is None or (limit >= touch if buying else limit <= touch)
         available = min(remaining, displayed)
-        if arriving:
+        # Classed once, here, by the first book the order could be judged against: on arrival, or later if the
+        # arrival found nothing to judge by. A market order is always marketable, so only a limit order rests.
+        joining = ticket.aggressive is None
+        if joining:
             ticket.aggressive = marketable
-        if not ticket.aggressive:
-            if arriving:
+        if limit is not None and not ticket.aggressive:
+            if joining:
                 return give_up("not immediately executable")
-            assert limit is not None
             through = quote.ask < limit if buying else quote.bid > limit  # traded through, not merely touched
             if through and available > 0:
                 self._fill(ticket, available, limit, Liquidity.MAKER, at)

@@ -9,18 +9,31 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from hftlab.core import Fill, Liquidity, OrderEvent, OrderState, Quote, Side, SimClock, TimeInForce
+from hftlab.calendar import next_close, next_open
+from hftlab.core import (
+    Fill,
+    Instrument,
+    InstrumentKind,
+    Liquidity,
+    OrderEvent,
+    OrderState,
+    Quote,
+    Side,
+    SimClock,
+    TimeInForce,
+)
 from hftlab.safety import VENUES
 from hftlab.venues.guard import GuardedVenue
-from hftlab.venues.port import CommissionEvent, ConnectionState, NotReady, Unsupported
+from hftlab.venues.port import CommissionEvent, ConnectionState, NotReady, OrderRefused, Unsupported, VenueError
 from hftlab.venues.sim import CostModelError, SimVenue, load_cost_model
 from hftlab.venues.sim.cost import NO_FILL, NORMAL, WIDENED
 from tests.support import ROOT, imports, sources
 from tests.venues.kit import ASK, BID, EURUSD, INSTRUMENTS, MS, SECOND, T0, USDJPY, an_order, brief, of, plain_costs
 
-IOC, FOK, DAY = TimeInForce.IOC, TimeInForce.FOK, TimeInForce.DAY
+IOC, FOK, DAY, GTC = TimeInForce.IOC, TimeInForce.FOK, TimeInForce.DAY, TimeInForce.GTC
 MINUTE = 60 * SECOND
 ROLLOVER = 1_760_043_600 * SECOND  # 2025-10-09 21:00 UTC: 17:00 in New York, later the same day as T0
+SATURDAY = 1_760_184_000 * SECOND  # 2025-10-11 12:00 UTC
 
 
 class Fixed:
@@ -260,17 +273,28 @@ def test_the_day_has_three_phases_around_the_rollover(offset_min, phase):
 
 
 def test_nothing_fills_inside_the_rollover_window():
-    rig = Rig(ROLLOVER - 2 * MINUTE, **AROUND)
+    rig = Rig(ROLLOVER - 10 * MINUTE, **AROUND)
     rig.quote()
+    rig.run(an_order(2, limit=108_400))  # it joins the book before the window, below the ask: it rests
+    rig.clock.advance_to(ROLLOVER - 2 * MINUTE)
     events = rig.run(an_order(1, tif=IOC))
     assert of(events, Fill) == [] and "rollover" in of(events, OrderEvent)[-1].reason
-    resting = an_order(2, limit=108_400)
-    rig.run(resting)
     rig.quote(108_300, 108_310)  # traded through, but inside the window
     assert of(rig.after(MS), Fill) == []
     rig.clock.advance_to(ROLLOVER + 16 * MINUTE)
     rig.quote(108_290, 108_300)
-    assert of(rig.after(MS), Fill)[0].price == 108_400
+    fill = of(rig.after(MS), Fill)[0]
+    assert (fill.price, fill.liquidity) == (108_400, Liquidity.MAKER)
+
+
+def test_a_limit_order_sent_inside_the_window_is_judged_by_the_first_quote_after_it():
+    rig = Rig(ROLLOVER - 2 * MINUTE, **AROUND)
+    rig.quote()
+    rig.run(an_order(limit=108_400))  # below the ask as it stands, but nothing is judged inside the window
+    rig.clock.advance_to(ROLLOVER + 16 * MINUTE)
+    rig.quote(108_290, 108_300)  # the market fell through its price meanwhile
+    fill = of(rig.after(MS), Fill)[0]
+    assert (fill.price, fill.liquidity) == (108_310, Liquidity.TAKER), "as if it arrived now: across a widened spread"
 
 
 def test_near_the_rollover_the_spread_is_taken_as_wider_than_quoted():
@@ -304,6 +328,147 @@ def test_the_market_being_shut_means_no_fill():
     rig = Rig(saturday)
     rig.quote()
     assert of(rig.run(an_order(1, tif=IOC)), Fill) == []
+
+
+# ---- an order that arrives to a book it cannot be judged against ----------------------------------------------------
+
+SHOWN, WANTED = 30_000, 50_000
+LIMITS = {"market": None, "marketable limit": ASK + 10, "passive limit": 108_400}
+SAID = {
+    "no quote": "no quote to trade against",
+    "stale": "the quote is stale",
+    "no fill": "inside the rollover window or the market is shut",
+    "shut": "inside the rollover window or the market is shut",
+}
+
+
+def unjudged(reason: str) -> tuple[Rig, int]:
+    """A venue on which an order sent now arrives to a book it cannot be judged against, and when that ends."""
+    if reason == "no quote":
+        return Rig(), T0 + SECOND
+    if reason == "stale":
+        rig = quoted(stale_after_ns=2 * SECOND)
+        rig.clock.advance(3 * SECOND)
+        return rig, rig.clock.now_ns() + SECOND
+    if reason == "no fill":
+        rig = Rig(ROLLOVER - 2 * MINUTE, no_fill_before_ns=5 * MINUTE, no_fill_after_ns=15 * MINUTE)
+        rig.quote()
+        return rig, ROLLOVER + 16 * MINUTE
+    rig = Rig(SATURDAY)
+    rig.quote()
+    return rig, next_open(SATURDAY) + MINUTE
+
+
+@pytest.mark.parametrize("tif", [DAY, GTC, IOC, FOK])
+@pytest.mark.parametrize("kind", sorted(LIMITS))
+@pytest.mark.parametrize("reason", sorted(SAID))
+def test_an_order_that_could_not_be_judged_on_arrival_is_judged_by_the_first_usable_quote(reason, kind, tif):
+    rig, usable_from = unjudged(reason)
+    rig.venue.place(an_order(quantity=WANTED, limit=LIMITS[kind], tif=tif), EURUSD)
+    arrival = rig.venue.poll() + rig.after(500 * MS)
+    assert of(arrival, Fill) == []
+    rig.clock.advance_to(usable_from)
+    rig.quote(ask_size=SHOWN)  # a fresh quote, in an open market, outside the window
+    later = rig.after(MS)
+    if tif in (IOC, FOK):
+        last = of(arrival, OrderEvent)[-1]
+        assert (last.state, last.reason) == (OrderState.CANCELLED, SAID[reason]), "an immediate order does not wait"
+        assert later == [] and rig.venue.open_orders() == ()
+        return
+    assert of(arrival, OrderEvent)[-1].state is OrderState.WORKING and len(rig.venue.open_orders()) == 1
+    expected = (SHOWN, ASK, Liquidity.TAKER)  # across the spread, at the price on the screen, for the size on it
+    if kind == "passive limit":
+        assert of(later, Fill) == [], "the ask is above its price: it rests"
+        rig.quote(108_385, 108_395, ask_size=SHOWN)
+        later = rig.after(MS)
+        expected = (SHOWN, 108_400, Liquidity.MAKER)
+    (fill,) = of(later, Fill)
+    assert (fill.quantity, fill.price, fill.liquidity) == expected
+    assert rig.venue.open_orders()[0].filled_quantity == SHOWN, "the rest waits for the next quote"
+
+
+def test_a_resting_market_order_sent_before_the_first_quote_does_not_stop_the_venue():
+    clock = SimClock(T0)
+    venue = SimVenue(clock, INSTRUMENTS, plain_costs(), seed=1)
+    venue.connect()
+    venue.mark_reconciled()
+    venue.place(an_order(tif=DAY), EURUSD)  # a market order that may rest: the core types allow it
+    clock.advance(500 * MS)
+    venue.poll()
+    venue.feed(Quote("EUR.USD", BID, ASK, 10**6, 10**6, clock.now_ns(), 1))  # this used to fail an assertion
+    assert brief(venue.poll())[-3:] == [
+        ("fill", "BUY", 20_000, ASK, "TAKER"), ("order", "FILLED", 20_000), ("commission", 2_000_000, "USD"),
+    ]  # fmt: skip
+
+
+def test_an_order_the_cost_model_cannot_price_is_refused_before_it_can_fill():
+    rig = Rig(commission_minimum={"USD": 2_000_000})
+    rig.venue.feed(Quote("USD.JPY", 151_230, 151_240, 10**6, 10**6, T0, 1))
+    with pytest.raises(OrderRefused, match="no commission minimum in JPY"):
+        rig.venue.place(an_order(pair="USD.JPY", tif=IOC), USDJPY)
+    assert rig.after(SECOND) == [] and rig.venue.open_orders() == ()
+
+
+STRANGER = Instrument.from_pair("GBP.USD", price_scale=5, min_order_size=1_000, kind=InstrumentKind.CASH)
+WAITS = (MS, 5 * MS, SECOND, 3 * SECOND, MINUTE, 10 * MINUTE)
+PAIRS = ("EUR.USD", "USD.JPY", "GBP.USD")
+sizes = st.integers(0, 60).map(lambda n: n * 1_000)
+STEP = st.one_of(
+    st.tuples(
+        st.just("place"), st.integers(0, 5), st.sampled_from(Side), sizes, st.sampled_from(TimeInForce),
+        st.none() | st.integers(-6, 6).map(lambda n: ASK + n * 5), st.sampled_from(PAIRS),
+        st.sampled_from([*INSTRUMENTS, STRANGER]),
+    ),
+    st.tuples(st.just("cancel"), st.integers(0, 9)),
+    st.tuples(
+        st.just("feed"), st.sampled_from(PAIRS), st.integers(-8, 8).map(lambda n: BID + n * 5),
+        st.integers(-2, 6).map(lambda n: n * 5), sizes, sizes,
+    ),
+    st.tuples(st.just("quiet"), st.sampled_from(PAIRS)),
+    st.tuples(st.just("wait"), st.sampled_from(WAITS)),
+    st.just(("poll",)),
+)  # fmt: skip
+STARTS = (T0, ROLLOVER - 6 * MINUTE, next_close(T0) - 2 * MINUTE, SATURDAY)
+
+
+@settings(max_examples=300)
+@given(start=st.sampled_from(STARTS), steps=st.lists(STEP, max_size=40))
+def test_no_sequence_of_calls_raises_anything_but_the_ports_own_errors(start, steps):
+    """Orders of every kind, good and bad, in and out of the rollover window, on fresh, stale and missing quotes."""
+    clock = SimClock(start)
+    costs = plain_costs(stale_after_ns=2 * SECOND, min_order_size=5_000, commission_rate_bps_x100=20, **AROUND)
+    venue = SimVenue(clock, INSTRUMENTS, costs, seed=3)
+    venue.connect()
+    venue.mark_reconciled()
+    sent: dict[str, int] = {}
+    events, fed = [], 0
+    for step in steps:
+        try:
+            if step[0] == "place":
+                _, number, side, quantity, tif, limit, pair, instrument = step
+                order = an_order(number, side=side, quantity=quantity or 1, limit=limit, tif=tif, pair=pair)
+                venue.place(order, instrument)
+                sent[order.client_order_id] = order.quantity
+            elif step[0] == "cancel":
+                venue.cancel(sorted(sent)[step[1] % len(sent)] if sent and step[1] else "hft-control-nobody")
+            elif step[0] == "feed":
+                _, pair, bid, spread, bid_size, ask_size = step  # the spread may be zero or negative: locked, crossed
+                fed += 1
+                venue.feed(Quote(pair, bid, bid + spread, bid_size, ask_size, clock.now_ns(), fed))
+            elif step[0] == "quiet":
+                venue.quiet(step[1], clock.now_ns())
+            elif step[0] == "wait":
+                clock.advance(step[1])
+            else:
+                events += venue.poll()
+        except VenueError:
+            pass  # the port's own answers: refused, unknown instrument, unknown order
+    events += venue.poll()
+    filled: dict[str, int] = {}
+    for fill in of(events, Fill):
+        filled[fill.client_order_id] = filled.get(fill.client_order_id, 0) + fill.quantity
+    assert all(0 < quantity <= sent[order_id] for order_id, quantity in filled.items())
+    assert all(o.filled_quantity == filled.get(o.client_order_id, 0) < o.quantity for o in venue.open_orders())
 
 
 # ---- the round-trip cost, by hand -----------------------------------------------------------------------------------

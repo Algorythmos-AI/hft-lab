@@ -217,8 +217,11 @@ class GuardedVenue(abc.ABC):
             self._start_depth(instrument, levels)
 
     def _lost(self, reason: str) -> None:
-        """The connection is gone. Its permit goes with it; a retry is scheduled if the caller wants to be connected."""
-        if self._state not in (*_CONNECTED, ConnectionState.CONNECTING):
+        """The connection is gone. Its permit goes with it; a retry is scheduled if the caller wants to be connected.
+
+        Ignored unless a connection is established: a handshake that fails is `_open`'s to report, once.
+        """
+        if self._state not in _CONNECTED:
             return
         self._drop_permit()
         if self._wanted:

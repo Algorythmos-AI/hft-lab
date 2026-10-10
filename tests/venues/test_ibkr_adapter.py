@@ -171,7 +171,50 @@ def test_quotes_resume_after_the_gateway_is_back_even_if_the_book_did_not_move()
     h.venue.poll()
     h.market.script_quote(T0 + 5 * MS, "EUR.USD", BID, ASK)
     assert len(of(h.after(5 * MS), Quote)) == 1
-    assert h.stub.calls.count("subscribe_ticker") == 2, "the subscription was made again"
+    streams = [c for c in h.stub.calls if "ticker" in c]
+    assert streams == ["subscribe_ticker", "unsubscribe_ticker", "subscribe_ticker"], "exactly one stream, made again"
+
+
+def test_after_a_dropped_socket_the_subscription_is_simply_made_again():
+    h, _ = ready(backoff=Backoff())
+    h.stub.close()
+    h.venue.poll()
+    h.after(1 * SECOND)
+    assert [c for c in h.stub.calls if "ticker" in c] == ["subscribe_ticker", "subscribe_ticker"]
+
+
+def test_a_handshake_that_fails_noisily_is_reported_once_and_retried_on_schedule():
+    """The library announces a dropped socket while the handshake is still failing; that is one failure, not two."""
+    h = Harness("ibkr", FakeConfig(outages=((T0, T0 + 1_500 * MS),)), backoff=Backoff())
+    plain = h.stub.handshake
+
+    def noisy(*arguments):
+        try:
+            return plain(*arguments)
+        except ConnectionRefusedError:
+            h.stub._handlers.disconnected()
+            raise
+
+    h.stub.handshake = noisy
+    with pytest.raises(VenueUnavailable):
+        h.venue.connect()
+    assert states(h.venue.poll()) == ["CONNECTING", "DISCONNECTED"]
+    assert states(h.after(1 * SECOND)) == ["CONNECTING", "DISCONNECTED"], "first retry after one second"
+    assert h.after(1 * SECOND) == [], "the second retry is two seconds after the first, not sooner"
+    assert states(h.after(1 * SECOND)) == ["CONNECTING", "RECONCILING"]
+
+
+def test_the_real_client_blanks_a_ticker_it_subscribes_again(ib):
+    """The library reuses one ticker per contract; a second subscription must not start from the old book."""
+    contract = Contract(secType="CASH", conId=1000, symbol="EUR", currency="USD", exchange="IDEALPRO")
+    stale = ib.wrapper.startTicker(1, contract, "mktData")
+    stale.bid, stale.ask, stale.bidSize, stale.askSize = 1.085, 1.0851, 1e6, 1e6
+    client = IbAsyncClient(ib)
+    ib.client.reqMktData = lambda *arguments: None  # the wire is not there; the bookkeeping is what is tested
+    ib.client.getReqId = lambda: 2
+    client.subscribe_ticker(contract)
+    assert ib.wrapper.tickers[hash(contract)] is stale
+    assert all(value != value for value in (stale.bid, stale.ask, stale.bidSize, stale.askSize)), "all not-a-number"
 
 
 def test_other_gateway_messages_are_notices_with_their_code():

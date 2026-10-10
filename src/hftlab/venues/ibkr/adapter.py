@@ -77,6 +77,8 @@ class IbkrVenue(GuardedVenue):
         self._trades: dict[str, Trade] = {}
         self._acknowledged: set[str] = set()
         self._reported: dict[str, tuple[OrderState, int]] = {}
+        self._streaming: set[Instrument] = set()
+        self._deep: set[Instrument] = set()
         self._upstream = True
         self._closing = False
         client.listen(
@@ -119,7 +121,9 @@ class IbkrVenue(GuardedVenue):
             return self._ask(self._client.accounts)
         settings = self._settings
         self._upstream = True
-        self._trades.clear()  # the library forgets its trades with the connection; ask the gateway again
+        self._trades.clear()  # a new socket: ask the gateway for an order rather than trust a stale handle
+        self._streaming.clear()  # and no subscription survives it
+        self._deep.clear()
         return self._ask(
             lambda: self._client.handshake(settings.host, settings.port, settings.client_id, settings.timeout_s)
         )
@@ -179,15 +183,27 @@ class IbkrVenue(GuardedVenue):
         return instrument
 
     def _start_quotes(self, instrument: Instrument) -> None:
-        self._ask(lambda: self._client.subscribe_ticker(self._contracts[instrument]))
+        contract = self._contracts[instrument]
+        if instrument in self._streaming:
+            # Back on a socket that never dropped: the old subscription may be alive or dead. End it either
+            # way, so there is exactly one.
+            self._ask(lambda: self._client.unsubscribe_ticker(contract))
+        self._ask(lambda: self._client.subscribe_ticker(contract))
+        self._streaming.add(instrument)
 
     def _stop_quotes(self, instrument: Instrument) -> None:
+        self._streaming.discard(instrument)
         self._ask(lambda: self._client.unsubscribe_ticker(self._contracts[instrument]))
 
     def _start_depth(self, instrument: Instrument, levels: int) -> None:
-        self._ask(lambda: self._client.subscribe_depth(self._contracts[instrument], levels))
+        contract = self._contracts[instrument]
+        if instrument in self._deep:
+            self._ask(lambda: self._client.unsubscribe_depth(contract))
+        self._ask(lambda: self._client.subscribe_depth(contract, levels))
+        self._deep.add(instrument)
 
     def _stop_depth(self, instrument: Instrument) -> None:
+        self._deep.discard(instrument)
         self._ask(lambda: self._client.unsubscribe_depth(self._contracts[instrument]))
 
     def _on_tickers(self, tickers: Iterable[Ticker]) -> None:

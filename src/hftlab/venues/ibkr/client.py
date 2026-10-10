@@ -149,7 +149,10 @@ class IbAsyncClient:
     def subscribe_ticker(self, contract: Contract) -> None:
         # UNVERIFIED: streaming top-of-book for forex needs no generic ticks and no market-data subscription
         # on a paper account, and updates arrive every few milliseconds.
-        self._ib.reqMktData(contract, "", False, False)
+        ticker = self._ib.reqMktData(contract, "", False, False)
+        # The library keeps one ticker per contract for the life of the process. What it still shows is from an
+        # earlier subscription; start from an empty book so a quote is never half old and half new.
+        ticker.bid = ticker.ask = ticker.bidSize = ticker.askSize = float("nan")
 
     def unsubscribe_ticker(self, contract: Contract) -> None:
         self._ib.cancelMktData(contract)

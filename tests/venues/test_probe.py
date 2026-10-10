@@ -53,8 +53,17 @@ def floats_in(value) -> list:
 def test_by_default_the_probe_places_no_order_and_disconnects_when_done():
     report, broker = run()
     assert report["orders"] is None and broker.market._orders == {}
+    assert broker._sent == set()
     assert broker.state is ConnectionState.DISCONNECTED
     assert report["schema"] == 1 and report["venue"] == "fake" and report["probed_at"] == "2025-10-09T08:53:20Z"
+
+
+def test_a_read_only_probe_never_even_makes_the_connection_ready_for_orders():
+    clock, broker = a_venue()
+    reconciled = []
+    broker.mark_reconciled = lambda: reconciled.append(True)  # a spy on the instance; the class method is sealed
+    Probe(broker, clock, FAST).run()
+    assert reconciled == []
 
 
 def test_accounts_are_masked_to_their_prefix_and_last_two_characters():

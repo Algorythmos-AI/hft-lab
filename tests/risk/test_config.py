@@ -36,7 +36,7 @@ def test_every_limit_in_the_shipped_file_is_null_and_says_it_is_a_placeholder():
     set_limits = [line for line in valued if not re.match(r"\s+(kill|flatten):", line)]
     assert len(set_limits) == 22, "the scan sees every limit: 20 placeholders and the two that are not enforced"
     for line in set_limits:
-        assert re.match(r"\s+[a-z_]+: null\s+# (PLACEHOLDER|NOT ENFORCED)", line), line
+        assert re.match(r"\s+[a-z_]+: null\s+# PLACEHOLDER\b", line), line
     assert sum("NOT ENFORCED" in line for line in set_limits) == 2
 
 

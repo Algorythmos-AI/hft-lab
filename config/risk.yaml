@@ -17,8 +17,8 @@ in_force: false
 decision: null                      # the HFT-DEC-NNNN that set the values below
 
 desk:
-  max_gross_exposure: null          # NOT ENFORCED: needs positions valued in one currency, and nothing converts one. Must stay null
-  max_leverage: null                # NOT ENFORCED: for the same reason. Must stay null
+  max_gross_exposure: null          # PLACEHOLDER, NOT ENFORCED: needs positions valued in one currency, and nothing converts one. Must stay null
+  max_leverage: null                # PLACEHOLDER, NOT ENFORCED: for the same reason. Must stay null
   max_open_pairs: null              # PLACEHOLDER: pairs with a position or an order in flight at once
   max_orders_per_minute: null       # PLACEHOLDER: all sleeves together, entries and exits alike
   max_order_to_trade_ratio: null    # PLACEHOLDER: orders and cancels sent per order that traded, per sleeve and for the desk

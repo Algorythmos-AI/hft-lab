@@ -1,0 +1,24 @@
+# The shadow runner's settings. Read by `python -m hftlab.shadow`.
+#
+# Nothing here can reach a broker: the runner's orders go to the shadow venue, which has none (ADR 0003).
+# What a shadow order costs is in config/cost_model.yaml, and every value there is still a placeholder.
+journal_dir: var/shadow         # git-ignored; one hash-chained journal per recorded day, or live.jsonl
+seed: 1                         # seeds the shadow venue's latency draws
+
+pairs:                          # live mode only: a recording says by itself what it holds
+  - {pair: EUR.USD, form: cash}
+  - {pair: USD.JPY, form: cash}
+heartbeat_ms: 1000              # live mode only: how often a quiet book is confirmed alive
+
+# The sleeves to run. `idle` never trades and must end on exactly zero. `control` enters at random at the
+# minimum size and holds for a fixed time: it has no edge, so its result is the cost of trading.
+#
+# The control sleeve's two numbers below are PLACEHOLDERS for a first look. A control run whose result is to
+# be compared with anything is pre-registered in research/ with its seed, rate and holding time fixed there.
+sleeves:
+  - {name: idle, kind: idle}
+  - name: control
+    kind: control
+    seed: 1
+    entry_per_million: 200      # PLACEHOLDER. Share of quotes on which a flat pair enters, in millionths
+    hold_seconds: 60            # PLACEHOLDER. How long a position is held before the exit is sent

@@ -45,6 +45,25 @@ class CostModel:
     widen_after_ns: int
     spread_multiplier_x100: int
 
+    def as_dict(self) -> dict[str, object]:
+        """Every parameter as a plain value: what a journal keeps beside a result, so the two cannot part."""
+        return {
+            "effective_from": self.effective_from,
+            "placeholder": self.placeholder,
+            "latency_min_ns": self.latency_min_ns,
+            "latency_max_ns": self.latency_max_ns,
+            "commission_rate_bps_x100": self.commission_rate_bps_x100,
+            "commission_minimum": dict(sorted(self.commission_minimum.items())),
+            "min_order_size": self.min_order_size,
+            "slippage_increments": self.slippage_increments,
+            "stale_after_ns": self.stale_after_ns,
+            "no_fill_before_ns": self.no_fill_before_ns,
+            "no_fill_after_ns": self.no_fill_after_ns,
+            "widen_before_ns": self.widen_before_ns,
+            "widen_after_ns": self.widen_after_ns,
+            "spread_multiplier_x100": self.spread_multiplier_x100,
+        }
+
     def notional_micro(self, price: int, quantity: int, instrument: Instrument) -> int:
         """Price times quantity, in millionths of the quote currency."""
         if instrument.price_scale > CASH_SCALE:

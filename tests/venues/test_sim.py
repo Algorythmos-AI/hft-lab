@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 import random
 
 import pytest
@@ -293,6 +294,14 @@ def test_the_round_trip_cost_of_a_minimum_size_trade_by_hand():
     cost_x2 = costs.round_trip_cost_micro(EURUSD, 20_000, (108_500, 108_510), (108_520, 108_535))
     spreads = (10 + 15 + 4 * 5) * 20_000 * 10  # both spreads and four half-slippages, in millionths, doubled
     assert cost_x2 == spreads + 2 * (2_000_000 + 2_000_000) == 17_000_000, "8.50 USD: 4.50 of spread, 4.00 of fees"
+
+
+def test_the_cost_model_as_plain_values_leaves_no_parameter_out():
+    costs = plain_costs(commission_minimum={"USD": 2_000_000, "JPY": 300_000_000})
+    plain = costs.as_dict()
+    assert list(plain) == [field.name for field in dataclasses.fields(costs)], "every field, in the order declared"
+    assert plain["commission_minimum"] == {"JPY": 300_000_000, "USD": 2_000_000} and plain["placeholder"] is True
+    assert type(costs)(**plain) == costs, "nothing was changed on the way"
 
 
 def test_the_shipped_cost_model_loads_and_says_it_is_a_placeholder():

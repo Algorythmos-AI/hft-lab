@@ -16,6 +16,7 @@ Two things here lean on how `ib_async` 2.1.0 is built, both read from its source
 from __future__ import annotations
 
 import asyncio
+import warnings
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import datetime
@@ -82,15 +83,32 @@ class IbClient(Protocol):
     def historical_bid_ask(self, contract: Contract, end: datetime, count: int) -> list[HistoricalTickBidAsk]: ...
 
 
+def _ensure_event_loop() -> None:
+    """The library runs its own event loop from synchronous code and expects the thread to have one already.
+
+    Asking for the thread's loop when there is none is deprecated, and the library does exactly that, so one
+    is made here first. A loop that is already there, open, is kept.
+    """
+    try:
+        asyncio.get_running_loop()
+        return
+    except RuntimeError:
+        pass
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            current = asyncio.get_event_loop_policy().get_event_loop()
+        except RuntimeError:
+            current = None
+    if current is None or current.is_closed():
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
+
 class IbAsyncClient:
     """`IbClient` over a real `ib_async.IB`. Nothing here decides anything."""
 
     def __init__(self, ib: IB | None = None, *, request_timeout_s: float = 10.0) -> None:
-        # The library runs its own event loop from synchronous code and expects the thread to have one.
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            asyncio.set_event_loop(asyncio.new_event_loop())
+        _ensure_event_loop()
         self._ib = ib if ib is not None else IB()
         # Without this a request the gateway never answers blocks for ever; with it the request raises.
         self._ib.RequestTimeout = request_timeout_s

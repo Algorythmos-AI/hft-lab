@@ -11,7 +11,8 @@ answered here. The model is pessimistic where a paper account is optimistic:
     on resting.
   * An order is aggressive or passive by the first book it can be judged against. That is the book it arrives
     to, unless there is none to judge by (no quote yet, a stale one, the rollover window, a shut market): then
-    an immediate order is cancelled, and a resting one is judged by the first usable quote after.
+    an immediate order is cancelled, and a resting one is judged by the first usable quote after. A limit
+    order judged late like this never gets a better price than its own limit.
   * Nothing fills on a quote the venue has not confirmed lately, nor inside the rollover window, and near the
     rollover the spread is taken as wider than quoted.
   * Commission is a rate on the order's traded value with a minimum per order.
@@ -89,6 +90,7 @@ class _Ticket:
     arrived: bool = False
     active: bool = True
     aggressive: bool | None = None  # None until the order has met a book it could be judged against
+    late: bool = False  # judged by a book later than the one it arrived to
     filled: int = 0
     notional_micro: int = 0
     charged_micro: int = 0
@@ -339,6 +341,7 @@ class SimVenue:
         joining = ticket.aggressive is None
         if joining:
             ticket.aggressive = marketable
+            ticket.late = not arriving
         if limit is not None and not ticket.aggressive:
             if joining:
                 return give_up("not immediately executable")
@@ -350,6 +353,10 @@ class SimVenue:
         beyond = limit is not None and (price > limit if buying else price < limit)
         if not marketable or beyond or available <= 0 or (order.tif is TimeInForce.FOK and available < remaining):
             return give_up("not immediately executable")
+        if ticket.late and limit is not None:
+            # Nobody saw what the market did between its arrival and now. It may have rested and been taken at
+            # its own price on the way here, so it is not given the better price the screen shows now.
+            price = limit
         self._fill(ticket, available, price, Liquidity.TAKER, at)
         if immediate and ticket.active:
             self._end(ticket, at, "unfilled remainder of an immediate order")

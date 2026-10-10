@@ -294,7 +294,7 @@ def test_a_limit_order_sent_inside_the_window_is_judged_by_the_first_quote_after
     rig.clock.advance_to(ROLLOVER + 16 * MINUTE)
     rig.quote(108_290, 108_300)  # the market fell through its price meanwhile
     fill = of(rig.after(MS), Fill)[0]
-    assert (fill.price, fill.liquidity) == (108_310, Liquidity.TAKER), "as if it arrived now: across a widened spread"
+    assert (fill.price, fill.liquidity) == (108_400, Liquidity.TAKER), "at its own limit, not the better price now"
 
 
 def test_near_the_rollover_the_spread_is_taken_as_wider_than_quoted():
@@ -376,7 +376,9 @@ def test_an_order_that_could_not_be_judged_on_arrival_is_judged_by_the_first_usa
         assert later == [] and rig.venue.open_orders() == ()
         return
     assert of(arrival, OrderEvent)[-1].state is OrderState.WORKING and len(rig.venue.open_orders()) == 1
-    expected = (SHOWN, ASK, Liquidity.TAKER)  # across the spread, at the price on the screen, for the size on it
+    # Across the spread, for the size on the screen. A market order pays the price on the screen; a limit order
+    # judged this late pays its own limit, which is never the better of the two.
+    expected = (SHOWN, ASK if LIMITS[kind] is None else LIMITS[kind], Liquidity.TAKER)
     if kind == "passive limit":
         assert of(later, Fill) == [], "the ask is above its price: it rests"
         rig.quote(108_385, 108_395, ask_size=SHOWN)
@@ -385,6 +387,16 @@ def test_an_order_that_could_not_be_judged_on_arrival_is_judged_by_the_first_usa
     (fill,) = of(later, Fill)
     assert (fill.quantity, fill.price, fill.liquidity) == expected
     assert rig.venue.open_orders()[0].filled_quantity == SHOWN, "the rest waits for the next quote"
+
+
+def test_a_sell_limit_judged_late_gets_its_own_limit_and_not_the_better_bid():
+    rig, usable_from = unjudged("no fill")
+    rig.venue.place(an_order(side=Side.SELL, limit=BID - 10, tif=DAY), EURUSD)
+    assert of(rig.venue.poll() + rig.after(500 * MS), Fill) == []
+    rig.clock.advance_to(usable_from)
+    rig.quote()
+    (fill,) = of(rig.after(MS), Fill)
+    assert (fill.price, fill.liquidity) == (BID - 10, Liquidity.TAKER)
 
 
 def test_a_resting_market_order_sent_before_the_first_quote_does_not_stop_the_venue():

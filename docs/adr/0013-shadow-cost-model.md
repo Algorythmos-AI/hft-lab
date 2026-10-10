@@ -34,7 +34,9 @@ a live quote source), and answers orders by these rules.
      price says someone would deal there for that size; it does not say more traded.
 5. **An order is aggressive or passive by the first book it can be judged against.** Normally that is the
    book it arrives to. If there is nothing to judge by on arrival (rule 6), an immediate order is cancelled
-   with the reason, and a resting one is judged by the first usable quote after, as if it had arrived then.
+   with the reason, and a resting one is judged by the first usable quote after. A limit order judged late
+   and found marketable is filled at its own limit, not at the better price then on the screen: it may have
+   rested and been taken at its limit while nobody could see, and the model takes the worse of the two.
 6. **Sometimes nothing fills:**
    - on a quote the source has not confirmed, by a new quote or a heartbeat, within a configured time;
    - inside a window around the daily rollover at 17:00 New York;
@@ -71,9 +73,9 @@ a live quote source), and answers orders by these rules.
   - a venue that rejects for reasons other than size;
   - commission in the account's base currency. A broker charges it there. The book converts no currency: a
     fee in another currency is carried beside the net result, by currency, and is not in it.
-- Rule 5 has a soft edge. A limit order sent while nothing can be judged, whose price the market then moves
-  through, is treated as a marketable order at the first usable quote and so gets that quote's price, which
-  is better than its limit. No sleeve rests orders today; a sleeve that does will need this looked at first.
+- Rule 5 leaves one thing unknown and says so: what happened to a resting order while nothing could be judged.
+  A market order judged late gets the first usable quote's price, as there is no other price to give it. A
+  limit order judged late gets its own limit, the worst it could have got. No sleeve rests orders today.
 - Rule 4 can understate a passive strategy: real resting orders are sometimes filled at the touch. That is
   the direction the model is meant to err in.
 - If measured paper fills ever show the model to be optimistic, that is a defect in the model

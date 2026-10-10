@@ -1,0 +1,41 @@
+#!/bin/sh
+# hft-status: one screen on the recorder, the store, the shadow run and the switches.
+#
+#   sudo hft-status              the screen; exit 0 fine, 1 something is wrong, 3 the recorder's status is too old
+#   sudo hft-status --json       the same facts as JSON
+#   hft-status --dry-run         print the command this would run, and run nothing
+#
+# It only reads. Run as root it becomes the platform's own user first, so nothing it touches changes owner.
+# Everything after --dry-run is passed to `python -m hftlab.ops.status` (see its --help).
+#
+#   HFT_ROOT    where the platform is installed (default /home/hft/hft-lab). For tests
+set -eu
+
+root=${HFT_ROOT:-/home/hft/hft-lab}
+user=hft
+dry=0
+if [ "${1:-}" = "--dry-run" ]; then
+    dry=1
+    shift
+fi
+
+[ -d "$root" ] || { echo "hft-status: $root is not there: is the platform installed?" >&2; exit 2; }
+[ -x "$root/.venv/bin/python" ] || { echo "hft-status: $root has no environment: run hft-install" >&2; exit 2; }
+
+if [ "$dry" -eq 1 ]; then
+    echo "hft-status: DRY RUN, nothing is run"
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "  would first become $user: runuser -u $user -- $0 $*"
+    fi
+    echo "  would run, in $root:"
+    echo "  PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 HFT_STATE_DIR=$root/var .venv/bin/python -m hftlab.ops.status $*"
+    exit 0
+fi
+
+if [ "$(id -u)" -eq 0 ]; then
+    exec runuser -u "$user" -- "$0" "$@"
+fi
+[ -r "$root/var" ] || { echo "hft-status: $(id -un) may not read $root/var: run it as  sudo hft-status" >&2; exit 2; }
+cd "$root"
+PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 HFT_STATE_DIR="$root/var" \
+    exec .venv/bin/python -m hftlab.ops.status "$@"

@@ -768,8 +768,7 @@ class Trader:
             return self._refuse(name, intent, Why.UNKNOWN_PAIR.value)
         stage = self._stages.stage(name)
         on_paper = stage in PAPER and source != ALIGN
-        held = self._view_book(name).position(name, intent.pair).quantity
-        reducing = _opposes(intent.side, held, intent.quantity)
+        reducing = self._reduces(name, intent, on_paper)
         quantity = intent.quantity
         if on_paper and not reducing:
             if stage == STEPPED_DOWN:
@@ -803,6 +802,28 @@ class Trader:
         if name in self._counts:
             self._counts[name]["orders"] += 1
         return Placed(intent, order_id)
+
+    def _reduces(self, name: str, intent: Intent, on_paper: bool) -> bool:
+        """Can this order only bring the sleeve's position towards zero, with every order on its way filled?
+
+        The same pessimism as the risk gate's: a second exit behind a first that has not ended could go through
+        zero, so it is not a reduction, and gets no treatment a reduction gets.
+        """
+        held = self._view_book(name).position(name, intent.pair).quantity
+        ahead = 0
+        if on_paper and self._manager is not None:
+            for order_id in self._manager.in_flight():
+                tracked = self._manager.tracked(order_id)
+                if tracked is None or tracked.order.side is not intent.side:
+                    continue
+                if (tracked.order.sleeve, tracked.order.pair) == (name, intent.pair):
+                    ahead += max(0, tracked.order.quantity - tracked.booked)
+        elif not on_paper:
+            for found in self._shadow.open_orders():
+                mine = sleeve_of(found.client_order_id) == name and found.pair == intent.pair
+                if mine and found.side is intent.side:
+                    ahead += found.quantity - found.filled_quantity
+        return _opposes(intent.side, held, intent.quantity + ahead)
 
     def _stopped_by_switch(self) -> str | None:
         """For a sleeve that trades on the shadow venue only: the switches stop its entries as the gate would."""

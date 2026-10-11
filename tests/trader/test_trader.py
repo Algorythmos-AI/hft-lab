@@ -409,3 +409,51 @@ def test_a_sleeve_is_taken_down_by_an_operator_only_when_it_is_flat_and_never_up
     assert isinstance(decide(desk, BUY), Placed)
     desk.run(2)
     assert len(desk.market._orders) == sent and desk.held() == (0, 20_000, 0), "its orders are the shadow venue's now"
+
+
+def test_a_second_exit_behind_one_still_on_its_way_is_not_a_reduction(tmp_path):
+    desk = on_paper(tmp_path, "normal", settings=quiet())
+    desk.run(5)
+    assert isinstance(decide(desk, BUY, 40_000), Placed)
+    desk.run(2)
+    desk.trader.gate.halt()
+    desk.run(2)  # stepped down: only what reduces may go
+    assert isinstance(decide(desk, SELL, 40_000, tif=TimeInForce.DAY, limit_price=108_900), Placed), "rests, unfilled"
+    behind = decide(desk, SELL, 40_000, attempt=1)
+    assert isinstance(behind, Refused) and behind.reason == "STAGE_EXITS_ONLY", "both filling would end short"
+    assert desk.held()[0] == 40_000
+
+
+def test_at_the_days_close_a_sleeve_that_met_its_rule_goes_up_and_the_owner_is_told(tmp_path):
+    rollover = rollover_near(T0 + 12 * HOUR)
+    settings = raw_settings(clean_day_minutes=1)
+    settings["rollout"]["control"]["promote"]["min_size"] = {"clean_days": 1, "decision": "HFT-DEC-0042"}
+    desk = Desk(tmp_path, settings=settings, at_ns=rollover - 90 * SECOND)
+    desk.quoted = desk.clock.now_ns()
+    assert desk.run(120) is True
+    desk.stop()
+    (change,) = desk.of("stage")
+    assert (change["sleeve"], change["before"], change["to"], change["cause"], change["detail"]) == (
+        "control", "shadow", "min_size", "PROMOTED", "HFT-DEC-0042",
+    )  # fmt: skip
+    assert desk.market._orders == {}, "the day it earned the step, it was still in shadow"
+    assert [key for key in desk.pages.fired if key.startswith("stage.control.")], "the owner is told"
+    desk.session()
+    desk.run(60)
+    assert desk.trader.stages.stage("control") == "min_size"
+    assert {e["code"] for e in desk.of("verdict")} == {"ROLLOVER_WINDOW"}, "its intents go to the gate now, which rules"
+
+
+def test_in_shadow_only_mode_the_same_rule_is_met_and_refused_and_the_refusal_is_in_the_journal(tmp_path):
+    rollover = rollover_near(T0 + 12 * HOUR)
+    settings = raw_settings(clean_day_minutes=1)
+    settings["rollout"]["control"]["promote"]["min_size"] = {"clean_days": 1, "decision": "HFT-DEC-0042"}
+    desk = Desk(tmp_path, paper=False, settings=settings, at_ns=rollover - 90 * SECOND)
+    desk.quoted = desk.clock.now_ns()
+    assert desk.run(120) is True
+    desk.stop()
+    assert desk.of("stage") == [] and desk.trader.stages.stage("control") == "shadow"
+    held = [e for e in read(tmp_path / "stages.jsonl")[1] if e["type"] == "held"]
+    assert [(e["sleeve"], e["to"], e["cause"]) for e in held] == [("control", "min_size", "LIMITS_NOT_IN_FORCE")]
+    desk.session()  # and the next start is not refused: nothing is above shadow
+    assert desk.trader.paper is False

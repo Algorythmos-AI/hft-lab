@@ -30,6 +30,8 @@ What every service has, and why:
     time. Training must not overlap the other desks' weekend jobs, which only the owner knows. Their timers
     can be enabled, by the owner by hand; the install script refuses to. Training is capped at the plan's
     2 GB, and inside the slice the slice's own cap binds first.
+  * The report's timer (`hft-report.timer`) is the owner's to enable by hand as well: a page a day is a thing
+    to ask for, not to be given. Its time follows New York, as the rollover does.
 
 The memory cap of the slice is the plan's number. The fuses, weights and times marked ENGINEERING DEFAULT are
 first choices, to be replaced by what the first weeks on the host measure.
@@ -60,7 +62,8 @@ REFUSED: Final = 2  # the exit code of "refused or misconfigured": a person is n
 CONFIG: Final = Path("config/ops.yaml")  # where the owner writes when the weekend's two jobs start
 TRAIN_MEMORY_MAX: Final = "2G"  # decided by the plan: training is capped at 2 GB. The slice's 1.2 GB binds first
 TRAIN_TIMEOUT_S: Final = 6 * 3_600  # ENGINEERING DEFAULT: no training run has been measured on the host yet
-BY_HAND: Final = ("hft-train.timer", "hft-promote.timer")  # enabled by the owner's own command, never by the script
+# enabled by the owner's own command, never by the script
+BY_HAND: Final = ("hft-train.timer", "hft-promote.timer", "hft-report.timer")
 # The market is shut from Friday 17:00 to Sunday 17:15 New York. Training has all of Saturday; the decision is
 # made on Sunday before 17:00, so that a trader starting the week reads the lineup it wrote.
 _SATURDAY: Final = re.compile(r"Sat \*-\*-\* ([01][0-9]|2[0-3]):[0-5][0-9]:00 America/New_York")
@@ -148,6 +151,16 @@ SERVICES: Final = (
         reach="none", memory_max="200M", oom_score=500, timeout_s=1_800,
         timer=Timer("*-*-* 22:30:00 America/New_York", "nightly, after the other desks' evening jobs", True),
         writes=(host.STATE_DIR, host.BACKUP_DIR), only_if_directory=host.BACKUP_DIR,
+    ),
+    Service(
+        "report",
+        "the daily summary after the rollover and, after the Friday close, the weekly scorecard: written to a file "
+        "and sent as a page. It reads the journals and changes nothing else",
+        ("-m", "hftlab.ops.report", "due", "--send"),
+        reach="out", memory_max="200M", oom_score=500, secrets=True, timeout_s=600,
+        timer=Timer(
+            "Mon..Fri *-*-* 17:10:00 America/New_York", "each trading day, ten minutes after the 17:00 rollover", True
+        ),
     ),
 )  # fmt: skip
 
@@ -375,8 +388,8 @@ def render_all(config: Path = CONFIG) -> dict[str, str]:
 def can_be_enabled(config: Path = CONFIG) -> list[str]:
     """The units with an install section: the recorder, the shadow runner and the timers.
 
-    The slice, the gateway and the trader have none. The two timers of the learning loop (`BY_HAND`) have one,
-    and are the owner's to enable by hand: the install script refuses them.
+    The slice, the gateway and the trader have none. The two timers of the learning loop and the report's
+    (`BY_HAND`) have one, and are the owner's to enable by hand: the install script refuses them.
     """
     return sorted(name for name, text in render_all(config).items() if "\n[Install]\n" in text)
 

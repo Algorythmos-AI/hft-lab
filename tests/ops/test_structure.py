@@ -22,8 +22,8 @@ def layer() -> list[tuple[str, ast.Module]]:
     found = [(rel, tree) for rel, tree in sources() if rel.startswith(PACKAGES)]
     assert [rel.removeprefix("src/hftlab/") for rel, _ in found] == [
         "ops/__init__.py", "ops/alerts.py", "ops/backup.py", "ops/host.py", "ops/post.py", "ops/preflight.py",
-        "ops/status.py", "ops/units.py", "publish/__init__.py", "publish/__main__.py", "publish/contract.py",
-        "publish/send.py", "publish/snapshot.py",
+        "ops/report.py", "ops/status.py", "ops/units.py", "publish/__init__.py", "publish/__main__.py",
+        "publish/contract.py", "publish/send.py", "publish/snapshot.py",
     ]  # fmt: skip
     return found
 

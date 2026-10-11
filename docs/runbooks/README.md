@@ -14,8 +14,9 @@ and is exercised once as a drill.
 | [Weekly login](weekly-login.md) | What the gateway needs on the host, and its once-a-week paper login |
 | [Gateway down](gateway-down.md) | The broker's gateway stops or will not connect |
 | [Kill and flatten](kill-and-flatten.md) | The `KILL` and `FLATTEN` switches, and stopping what runs today |
-| [Trader](trader.md) | Starting it in shadow, reading the stages, kill and flatten with a trader running, a reconciliation break, resetting a latch, replaying a day |
-| [Backup](backup.md) | Handing the journals away every night, and checking that a backup can be read back |
+| [Trader](trader.md) | Starting it in shadow, reading the stages, kill and flatten with a trader running, a reconciliation break, resetting a latch, replaying a day, the tapes and their quota |
+| [Backup](backup.md) | Handing the journals, the trader's folder and the model registry away every night, what is left out and why, and checking that a backup can be read back |
+| [Reports](reports.md) | The daily summary and the weekly scorecard: what each says, making one by hand, and the timer that sends them |
 | [Rollback](rollback.md) | A deploy to another commit of `main`, and going back to the one before |
 | [Publish](publish.md) | Sending the status snapshot and the pages, and the two decisions that are still the owner's |
 | [Learning](learning.md) | The weekly cycle: setting the two times, reading a report, what `keep: rule not in force` means, how a rule comes into force, a rollback and the rollback drill, the drift look, and what to do when training fails |

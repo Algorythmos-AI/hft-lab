@@ -29,6 +29,9 @@ dropped. Where they are comes from `state_dir` and `registry` in `config/trader.
 | `trader/requests/*` | rebuilt: a request not taken yet; one that was lost is asked again |
 | any `*.partial` | rebuilt: a file half written, which its writer renames or writes again |
 
+The reports under `var/reports/` are not in the backup either. They are rebuilt: the same journals give the
+same report ([reports](reports.md)).
+
 That list is `LEFT_OUT` in `hftlab.ops.backup`, and a test holds a real trader and a real training run to it:
 every file they write is in the backup or is left out by a rule that says why.
 

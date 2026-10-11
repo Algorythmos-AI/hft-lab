@@ -8,10 +8,11 @@ For the owner. The two switches are files in the platform's state directory on t
 | `KILL` | `/home/hft/hft-lab/var/KILL` | No new entries. Exits are still managed |
 | `FLATTEN` | `/home/hft/hft-lab/var/FLATTEN` | Every position is closed |
 
-**What works today, and what does not.** Nothing of this platform places a broker order yet, so the switches
-have nothing to stop: the risk gate that obeys them arrives with paper trading (F4). What does work today is
-that the status screen shows them and the status snapshot publishes them. Setting one now is harmless, and
-it is how this page is drilled.
+**What works today, and what does not.** The trader reads both switches once a second and obeys them, on
+paper and in shadow ([trader runbook](trader.md), section 4). As shipped it runs in shadow-only mode, so
+there is no broker order for a switch to stop yet: what a switch stops today is the shadow venue's entries.
+The status screen shows the switches and the status snapshot publishes them. Setting one now is harmless,
+and it is how this page is drilled.
 
 ## Set and clear
 
@@ -39,6 +40,8 @@ A switch is your decision, not a fault: it is shown, and it raises no page.
 
 ## From paper trading on (F4)
 
-This section is written when the risk gate is: what each switch does to working orders, how long FLATTEN
-takes, how to tell it has finished, and when it is safe to clear it. Until then, do not rely on either switch
-to stop an order, because there is no order.
+It is section 4 of the [trader runbook](trader.md): what each switch does with a trader running, how to tell
+that `FLATTEN` has finished, and when it is safe to clear it. In short: `KILL` stops everything that adds to
+a position and leaves exits alone; `FLATTEN` also closes every open line through the risk gate, trying a
+refused close again on a fixed interval; neither cancels a working order, and stopping the process does not
+make you flat. None of it has been drilled on the host.

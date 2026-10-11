@@ -23,13 +23,18 @@ What it is pessimistic about:
     The trip and the reset are in the journal, and so are the marks a latch is measured from (the day's
     opening result and the highest result reached), so a restart does not forgive a loss.
   * Rate limits and the order-to-trade ratio hold for exits too. A flood of exits is still a flood.
+  * A restart forgets nothing that limits orders. The rate windows, the ids already ruled on and the size held
+    for orders in flight are rebuilt from the order manager's outbox (`recall`), and the running count of
+    rejects is in the gate's own journal, so a crash loop is not a reset.
+  * An order that can only reduce the sleeve's position is measured against a wider collar of its own, never
+    against none. "Can only reduce" counts every order of the sleeve still in flight as filled.
   * Money in different currencies is never added. A loss is judged per currency, and a loss in a currency
     with no latch stops entries by itself.
 """
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Collection, Iterable
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -147,6 +152,7 @@ class RiskGate:
         self._trades: deque[tuple[int, str]] = deque()  # the first fill of each order
         self._rejects = 0
         self._flattened = 0
+        self._closing: dict[tuple[str, str], tuple[str, int]] = {}  # the last close proposed for a line, and when
         self._tripped: dict[str, _Tripped] = {}
         self._marks: dict[tuple[str, str], _Mark] = {}
         self._unlatched: set[str] = set()
@@ -203,6 +209,46 @@ class RiskGate:
         """Something happened that cannot happen. Entries stop until an operator has looked and reset it."""
         self._trip(Reason.ORDER_FAULT, None, None, self._tick())
 
+    def _streak(self, rejects: int, now: int) -> None:
+        """Move the running count of rejects, and keep it in the journal: a restart goes on counting from it."""
+        if rejects != self._rejects:
+            self._rejects = rejects
+            self._journal.write("streak", rejects=rejects, at_ns=now)
+            self._journal.flush()
+
+    def recall(
+        self,
+        *,
+        allowed: Iterable[tuple[int, Order]],
+        in_flight: Mapping[str, int],
+        unanswered: Collection[str],
+        cancels: Iterable[tuple[int, str]],
+        trades: Iterable[tuple[int, str]],
+    ) -> None:
+        """Take back, from the order manager's outbox, what this gate knew before the process was started again.
+
+        `allowed` is every order a gate on this outbox let through, with the time it did; `in_flight` gives,
+        for those that may still fill, what has been booked of each; `unanswered` are the ones the venue has
+        not answered yet; `cancels` and `trades` are (when, order id) and (when, sleeve) of every cancel sent
+        and every order's first fill. Afterwards the rate windows hold what they held, an id is ruled on once
+        across restarts, and an order in flight holds its size against the position limit until it is settled.
+        """
+        for at, order in allowed:
+            order_id = order.client_order_id
+            if order_id in self._admitted:
+                continue
+            self._admitted[order_id] = order_id not in unanswered
+            self._sent.append((at, order.sleeve))
+            self._messages.append((at, order.sleeve))
+            if order_id in in_flight:
+                self._pending[order_id] = _Pending(order, booked=min(in_flight[order_id], order.quantity))
+        self._messages.extend((at, sleeve_of(order_id) or UNATTRIBUTED) for at, order_id in cancels)
+        self._trades.extend(trades)
+        for ages in (self._sent, self._messages, self._trades):
+            kept = sorted(ages)  # each window drops from its old end, so it has to be in order of time
+            ages.clear()
+            ages.extend(kept)
+
     def _on_fill(self, fill: Fill, now: int) -> None:
         try:
             new = self._book.apply(fill)
@@ -228,12 +274,12 @@ class RiskGate:
         if self._admitted.get(event.client_order_id) is False:  # the venue's first answer to an order of ours
             if event.state is OrderState.REJECTED:
                 self._admitted[event.client_order_id] = True
-                self._rejects += 1
+                self._streak(self._rejects + 1, now)
                 if self._rejects >= self._config.desk.reject_streak_breaker:
                     self._trip(Reason.REJECT_STREAK, None, None, now, rejects=self._rejects)
             elif event.state in _ACCEPTED:
                 self._admitted[event.client_order_id] = True
-                self._rejects = 0
+                self._streak(0, now)
         pending = self._pending.get(event.client_order_id)
         if pending is None:
             return
@@ -301,7 +347,10 @@ class RiskGate:
             else:
                 touch = quote.ask if order.side is Side.BUY else quote.bid
                 price = touch if order.limit_price is None else order.limit_price
-                if abs(2 * price - quote.mid_x2) > 2 * limits.price_collar_ticks * step:
+                # An order that can only reduce what the sleeve holds has its own, wider collar: a spread that
+                # has blown out must not block the orders that take risk off. Wider, and still a collar.
+                collar = limits.exit_collar_ticks if self._reduces(order) else limits.price_collar_ticks
+                if abs(2 * price - quote.mid_x2) > 2 * collar * step:
                     refusing.append(Reason.PRICE_COLLAR)
                 if quote.spread > limits.max_spread_ticks * step:
                     stopping.append(Reason.SPREAD_TOO_WIDE)
@@ -391,6 +440,10 @@ class RiskGate:
         Each is a market order for what the book holds, never more, and no larger than the pair's order limit.
         They are proposals: each still has to pass `check`, like any order. A line with an order in flight
         gets none, so a close is never sent on top of an order that may still change the position.
+
+        A line whose last close was not allowed (a stale quote, a book beyond even the exit collar) is proposed
+        again only after the configured interval, so a book that stays bad costs one refusal per interval and
+        not one per call. A close that was allowed needs no wait: when it has ended, what is left follows.
         """
         now = self._tick()
         try:
@@ -404,12 +457,16 @@ class RiskGate:
             limits = self._config.pairs.get(pair)
             if limits is None or (sleeve, pair) in busy:
                 continue
+            last = self._closing.get((sleeve, pair))
+            if last is not None and last[0] not in self._admitted and now - last[1] < self._config.flatten_retry_ns:
+                continue
             side = Side.SELL if quantity > 0 else Side.BUY
             self._flattened += 1
             order_id = client_order_id(
                 sleeve=sleeve, pair=pair, side=side, decision_seq=now, leg=FLATTEN_LEG, attempt=self._flattened
             )
             size = min(abs(quantity), limits.max_order_size)
+            self._closing[sleeve, pair] = (order_id, now)
             out.append(Order(order_id, sleeve, pair, side, size, OrderType.MARKET, TimeInForce.IOC, now))
         return tuple(out)
 
@@ -534,7 +591,7 @@ class RiskGate:
                 mark.peak = result
             self._write_mark(scope, tripped.currency, mark, now, force=True)
         elif tripped.reason is Reason.REJECT_STREAK:
-            self._rejects = 0
+            self._streak(0, now)
         del self._tripped[name]
         self._journal.write("reset", latch=name, operator=operator, at_ns=now)
         self._journal.flush()
@@ -551,6 +608,9 @@ class RiskGate:
             )
         elif kind == "reset" and isinstance(name, str):
             self._tripped.pop(name, None)
+        elif kind == "streak":
+            rejects = entry.get("rejects")
+            self._rejects = rejects if type(rejects) is int and rejects >= 0 else self._rejects
         elif kind == "mark":
             scope, currency = entry.get("scope"), entry.get("currency")
             day, day_open, peak = entry.get("day"), entry.get("day_open"), entry.get("peak")

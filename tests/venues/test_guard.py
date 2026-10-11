@@ -395,22 +395,26 @@ def called_on(tree: ast.AST, names: set[str]) -> list[str]:
 def test_only_the_order_manager_places_or_cancels_on_a_venue_the_platform_trades_on():
     """A scan of the package for every call named `place`, `cancel` or `mark_reconciled`.
 
-    The order manager makes one of each, on the venue it was built with. The two other callers were there
-    before it and neither can reach the trader's venue: the shadow runner builds its own shadow venue and can
-    be handed no other (tests/shadow/test_structure.py), and the capability probe is a command the owner runs,
-    which places nothing unless asked and cancels what it placed (tests/venues/test_probe.py). Anything else
-    that calls one of the three fails here, whatever it calls it on.
+    The order manager makes one of each, on the venue it was built with. Three other callers are named and none
+    can reach the broker with them: the shadow runner builds its own shadow venue and can be handed no other
+    (tests/shadow/test_structure.py); the trader's session places on the shadow venue it builds itself, and
+    hands the broker venue to the order manager and to nothing else (tests/trader/test_structure.py); and the
+    capability probe is a command the owner runs, which places nothing unless asked and cancels what it placed
+    (tests/venues/test_probe.py). Anything else that calls one of the three fails here, whatever it calls it
+    on.
     """
     order_calls = {rel: called_on(tree, {"place", "cancel"}) for rel, tree in sources()}
     assert {rel: found for rel, found in order_calls.items() if found} == {
         "src/hftlab/exec/manager.py": ["self._venue.cancel", "self._venue.place"],
         "src/hftlab/shadow/runner.py": ["self._venue.cancel", "self._venue.place"],
+        "src/hftlab/trader/session.py": ["self._shadow.cancel", "self._shadow.place"],
         "src/hftlab/venues/ibkr/probe.py": ["self.venue.cancel", "self.venue.cancel", "self.venue.place"],
     }
     marks = {rel: called_on(tree, {"mark_reconciled"}) for rel, tree in sources()}
     assert {rel: found for rel, found in marks.items() if found} == {
         "src/hftlab/exec/manager.py": ["self._venue.mark_reconciled"],
         "src/hftlab/shadow/runner.py": ["self._venue.mark_reconciled"],
+        "src/hftlab/trader/session.py": ["self._shadow.mark_reconciled"],
         "src/hftlab/venues/ibkr/probe.py": ["venue.mark_reconciled"],
     }
 

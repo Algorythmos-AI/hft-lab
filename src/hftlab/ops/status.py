@@ -1,13 +1,14 @@
-"""`python -m hftlab.ops.status`: one screen on the recorder, the store, the shadow run and the switches.
+"""`python -m hftlab.ops.status`: one screen on the recorder, its store, the shadow run, the trader and the switches.
 
     python -m hftlab.ops.status             the screen
     python -m hftlab.ops.status --json      the same reading as JSON
     python -m hftlab.ops.status --alert     also page the owner when a problem starts and when it is over
 
-It reads three things the platform already writes and judges them: the recorder's status file, which the
-recorder replaces every few seconds and which is its heartbeat; the store's journals; and the shadow journal.
-It reads nothing else and writes nothing but the alert state. The status snapshot (hftlab.publish) is built
-from this same reading, so the screen and the published page cannot disagree.
+It reads four things the platform already writes and judges them: the recorder's status file, which the
+recorder replaces every few seconds and which is its heartbeat; the store's journals; the shadow journal; and
+the trader's status file, once a trader has run. It reads nothing else and writes nothing but the alert state.
+The status snapshot (hftlab.publish) is built from this same reading, so the screen and the published page
+cannot disagree.
 
 The dead-man rule: a recorder that last said "recording", whose status is older than the configured age while
 the market is open, is dead, whatever the service manager believes. That is a failure with its own exit code.
@@ -45,6 +46,7 @@ SECOND: Final = 1_000_000_000
 CONFIG: Final = Path("config/ops.yaml")
 RECORDER_CONFIG: Final = Path("config/recorder.yaml")
 SHADOW_CONFIG: Final = Path("config/shadow.yaml")
+TRADER_CONFIG: Final = Path("config/trader.yaml")
 CALENDAR: Final = Path("config/calendar")
 STATUS_FILE: Final = "status.json"
 SHADOW_JOURNAL: Final = "live.jsonl"  # the journal of the shadow runner on quotes from the gateway
@@ -75,6 +77,7 @@ class Sources:
     calendar: Calendar
     dead_man_ns: int
     disk_warn_percent: int
+    trader_status: Path | None = None  # the trader's status file; None where no trader is set up
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,6 +134,40 @@ class BackupReading:
 
 
 @dataclass(frozen=True, slots=True)
+class SleeveReading:
+    name: str
+    stage: str
+    trades_today: int
+    trades_total: int
+    net_today_micro: Mapping[str, int] | None  # by currency, from the shadow book; None: not worked out
+    net_total_micro: Mapping[str, int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class BookReading:
+    net_today_micro: Mapping[str, int] | None
+    net_total_micro: Mapping[str, int] | None
+
+
+@dataclass(frozen=True, slots=True)
+class TraderReading:
+    """What the trader last said of itself (hftlab.trader writes it on every beat)."""
+
+    state: str  # "running" or "stopped", by the age of what it said
+    mode: str  # "shadow_only" or "paper"
+    at_ns: int
+    age_ns: int
+    day: str
+    connection: str
+    sleeves: tuple[SleeveReading, ...]
+    shadow: BookReading
+    broker: BookReading | None  # None in a run that sends nothing to a broker
+    breaks_today: int
+    open_positions: int
+    latched: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class Reading:
     """Everything the screen and the snapshot say, read once."""
 
@@ -143,6 +180,7 @@ class Reading:
     shadow: ShadowReading | None  # None: the shadow runner has never run on live quotes here
     backup: BackupReading | None  # None: the backup has never run here
     problems: tuple[Problem, ...]
+    trader: TraderReading | None = None  # None: no trader has run here
 
     @property
     def level(self) -> str:
@@ -303,15 +341,67 @@ def _backup(state: Path) -> tuple[BackupReading | None, list[Problem]]:
     return reading, [Problem("backup_failed", BAD, text)]
 
 
+def _nets(value: object) -> dict[str, int] | None:
+    if not isinstance(value, dict) or not all(isinstance(k, str) and type(v) is int for k, v in value.items()):
+        return None
+    return dict(value)
+
+
+def _book(value: object) -> BookReading | None:
+    if not isinstance(value, dict):
+        return None
+    return BookReading(_nets(value.get("net_today_micro")), _nets(value.get("net_total_micro")))
+
+
+def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[Problem]]:
+    """The trader's own word, read and not judged beyond its age: it pages its latches and breaks itself."""
+    path = sources.trader_status
+    if path is None or not path.is_file():
+        return None, []
+    try:
+        said = json.loads(path.read_text(encoding="utf-8"))
+        books = said["books"]
+        shadow = _book(books["shadow"])
+        sleeves = tuple(
+            SleeveReading(
+                str(one["name"]), str(one["stage"]), int(one["trades_today"]), int(one["trades_total"]),
+                _nets(one.get("net_today_micro")), _nets(one.get("net_total_micro")),
+            )
+            for one in said["sleeves"]
+        )  # fmt: skip
+        at = int(said["at_ns"])
+        if shadow is None:
+            raise ValueError("no shadow book")
+        reading = TraderReading(
+            state="running" if now_ns - at <= sources.dead_man_ns else "stopped", mode=str(said["mode"]), at_ns=at,
+            age_ns=max(0, now_ns - at), day=str(said["day"]), connection=str(said["connection"]), sleeves=sleeves,
+            shadow=shadow, broker=_book(books.get("broker")), breaks_today=int(books["reconciliation_breaks_today"]),
+            open_positions=int(books["open_positions"]), latched=tuple(map(str, said.get("latched", []))),
+        )  # fmt: skip
+    except (OSError, ValueError, KeyError, TypeError):
+        text = f"{path} is there and cannot be read as the trader's status."
+        return None, [Problem("trader_status_unreadable", WARN, text)]
+    problems = []
+    if reading.latched:
+        text = f"The trader has {len(reading.latched)} latch(es) tripped: entries are stopped until an operator resets."
+        problems.append(Problem("trader_latched", WARN, text))
+    if reading.breaks_today:
+        text = f"The trader flagged {reading.breaks_today} reconciliation break(s) today."
+        problems.append(Problem("trader_reconciliation_break", WARN, text))
+    return reading, problems
+
+
 def read(sources: Sources, now_ns: int) -> Reading:
     """Read everything once and judge it. The same files and the same time give the same reading."""
     market_open = sources.calendar.is_open(now_ns)
     recorder, problems = _recorder(sources, now_ns, market_open)
     shadow, more = _shadow(sources.shadow_journal)
     backup, last = _backup(sources.state)
+    trader, said = _trader(sources, now_ns)
     kill, flatten = host.switches(sources.state)
-    found = tuple(problems + more + last)
-    return Reading(now_ns, market_open, trading_weeks(now_ns), kill, flatten, recorder, shadow, backup, found)
+    found = tuple(problems + more + last + said)
+    weeks = trading_weeks(now_ns)
+    return Reading(now_ns, market_open, weeks, kill, flatten, recorder, shadow, backup, found, trader)
 
 
 def exit_code(reading: Reading) -> int:
@@ -329,6 +419,15 @@ def _ms(ns: int | None) -> str:
 
 def _mb(size: int) -> str:
     return f"{size // 1_000_000:,}.{size % 1_000_000 // 100_000} MB"
+
+
+def _money(nets: Mapping[str, int] | None) -> str:
+    """Millionths by currency as text, exactly: `-126.000000 USD`. Amounts in different currencies are not added."""
+    if nets is None:
+        return "not worked out"
+    shown = [f"{'-' if amount < 0 else ''}{abs(amount) // 1_000_000}.{abs(amount) % 1_000_000:06d} {code}"
+             for code, amount in sorted(nets.items()) if amount or len(nets) == 1]  # fmt: skip
+    return ", ".join(shown) or "0"
 
 
 def render(reading: Reading) -> str:
@@ -367,6 +466,22 @@ def render(reading: Reading) -> str:
         for name, counts in shadow.sleeves.items():
             listed = ", ".join(f"{count} {what}" for what, count in counts.items())
             lines.append(f"             sleeve {name}, this session: {listed}")
+    trader = reading.trader
+    if trader is None:
+        lines.append("  trader     never run")
+    else:
+        lines.append(
+            f"  trader     {trader.state}; {trader.mode.replace('_', '-')}; last beat {trader.age_ns // SECOND} s ago; "
+            f"connection {trader.connection}; {trader.open_positions} open position(s); "
+            f"{trader.breaks_today} reconciliation break(s) today"
+        )
+        for sleeve in trader.sleeves:
+            lines.append(
+                f"             sleeve {sleeve.name}: {sleeve.stage}; {sleeve.trades_today} trade(s) today, "
+                f"{sleeve.trades_total} in all; shadow net {_money(sleeve.net_total_micro)}"
+            )
+        if trader.latched:
+            lines.append(f"             latched: {', '.join(trader.latched)}")
     if reading.backup is None:
         lines.append("  backup     never run")
     else:
@@ -414,6 +529,7 @@ def load_sources(
     shadow_config: Path = SHADOW_CONFIG,
     calendar: Path = CALENDAR,
     state: Path | None = None,
+    trader_config: Path = TRADER_CONFIG,
 ) -> Sources:
     """The places and the limits, from the config files that already own them."""
     settings = _mapping(config).get("status")
@@ -424,10 +540,12 @@ def load_sources(
     root, journal_dir = _mapping(recorder_config).get("root"), _mapping(shadow_config).get("journal_dir")
     if not isinstance(root, str) or not isinstance(journal_dir, str):
         raise StatusError(f"{recorder_config} needs a root and {shadow_config} a journal_dir")
+    trader_dir = _mapping(trader_config).get("state_dir") if trader_config.is_file() else None
     return Sources(
         record_root=Path(root), shadow_journal=Path(journal_dir) / SHADOW_JOURNAL,
         state=state or host.state_dir(host.settings()["HFT_STATE_DIR"]), calendar=load_calendar(calendar),
         dead_man_ns=dead_man * SECOND, disk_warn_percent=warn,
+        trader_status=Path(trader_dir) / STATUS_FILE if isinstance(trader_dir, str) else None,
     )  # fmt: skip
 
 

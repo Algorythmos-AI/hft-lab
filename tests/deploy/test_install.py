@@ -176,6 +176,7 @@ def test_with_enable_it_enables_exactly_the_named_units_and_starts_them_only_wit
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [(["--enable", "hft-gateway.service"], "hft-gateway.service cannot be enabled"),
+     (["--enable", "hft-trader.service"], "hft-trader.service cannot be enabled"),
      (["--enable", "hft.slice"], "hft.slice cannot be enabled"),
      (["--enable", "hft-publish.service"], "hft-publish.service cannot be enabled"),
      (["--enable", "wt-paper-b.service"], "wt-paper-b.service cannot be enabled"),

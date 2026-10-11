@@ -30,15 +30,15 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 |---|---|
 | `hft-gateway` | The broker's gateway in paper mode, kept alive by a standard controller; one login a week. Dropped if the probe shows the broker's keyed web API is good enough |
 | `hft-recorder` | Sole job is to record; keeps running if the trader crashes |
-| `hft-trader` | Features, models, sleeves, risk, order manager |
-| `hft-reconciler` | Every minute: broker positions and fills against our books |
+| `hft-trader` | Features, models, sleeves, risk, order manager, and the reconciler: every minute, broker positions and fills against our books. The plan drew the reconciler as a unit of its own; it runs inside the trader's loop, because it needs the order manager's book and one outbox has one writer ([ADR 0019](adr/0019-trader-loop-and-staged-rollout.md)) |
 | `hft-train`, `hft-promote` | Weekend learning and the weekly promotion decision |
 | `hft-report`, `hft-backup` | Summaries; journal and model backups |
 
-Six of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
+Seven of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
 as a placeholder that cannot be enabled, the recorder with its hourly `hft-housekeep`, `hft-shadow`,
-`hft-publish` (the status check, the pages and the status snapshot) and `hft-backup`. None is installed on
-any host. The others arrive with their phases.
+`hft-trader` (which has no install section: the owner starts it, nothing enables it), `hft-publish` (the
+status check, the pages and the status snapshot) and `hft-backup`. None is installed on any host. The others
+arrive with their phases.
 
 ## Package map
 
@@ -64,6 +64,7 @@ feasibility/  the feasibility map: moves against the modelled cost, by pair and 
 features/  labels/  models/ (registry, hashed model files, scorer in its own process)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
+trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay          F4
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets, training, validation, promotion
 ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
@@ -147,7 +148,8 @@ and a control sleeve that enters at random must lose about the modelled cost (F3
 | Loss control | Daily loss latch and drawdown latch per sleeve and for the desk, per currency; reject-streak breaker. A latch stays tripped until an operator resets it |
 | Switches | `KILL` (no new entries, exits managed) and `FLATTEN` |
 | Connection loss | No orders while blind; on reconnect, cancel working orders and reconcile before resuming ([ADR 0016](adr/0016-order-manager-and-outbox.md)) |
-| Reconciliation break | Entries stop and an alert pages. The alert is not built yet; the break is a flag, an event and a journal line |
+| Reconciliation break | Entries stop, the sleeves placing paper orders are stepped down, and an alert pages |
+| Staged rollout | A sleeve places a paper order only after it earned the stage: clean trading days, the owner's decision record, limits in force. A latch or a break steps it down at once ([ADR 0019](adr/0019-trader-loop-and-staged-rollout.md)) |
 
 Each has a requirement in [`requirements/requirements.yaml`](requirements/requirements.yaml). What is never
 built is listed in [`never-build.md`](never-build.md).

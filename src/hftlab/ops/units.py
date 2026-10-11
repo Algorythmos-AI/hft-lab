@@ -15,9 +15,14 @@ What every service has, and why:
   * `OOMScoreAdjust` above zero: if the host itself runs out of memory, ours are killed before the other
     desks' units, and the recorder last among ours.
   * `User=hft`, a read-only file system but for the state directory, and the other desks' home out of sight.
-  * `Environment=MODE=paper`, and no unit names the flag that would enable live trading. The two services that
+  * `Environment=MODE=paper`, and no unit names the flag that would enable live trading. The services that
     connect to the gateway load no environment file, so nothing on disk can change the mode they are given;
     and the paper-only lock refuses anything but paper whatever a unit says (ADR 0001).
+  * The trader's unit, `hft-trader.service`, has no install section: it cannot be enabled, by the install
+    script or by hand, and runs only while the owner has started it (docs/runbooks/trader.md). The reconciler
+    the plan drew as a unit of its own runs inside the trader's loop, on the trader's schedule: it needs the
+    order manager's book, and two processes on one outbox is what ADR 0016 rules out. There is no
+    `hft-reconciler` unit.
   * No credential. The gateway keeps the broker login; the publisher's key and the alert address are in the
     owner's secrets file, which only the services that need them load.
 
@@ -71,6 +76,7 @@ class Service:
     timeout_s: int = 300
     writes: tuple[str, ...] = (host.STATE_DIR,)
     only_if_directory: str = ""
+    enable: bool = True  # False: the unit has no install section, so nothing can enable it; the owner starts it
 
     @property
     def unit(self) -> str:
@@ -96,6 +102,13 @@ SERVICES: Final = (
         "the sleeves on quotes from the paper gateway, their orders on the shadow venue. No broker order",
         ("-m", "hftlab.shadow", "--venue", "ibkr_paper"),
         reach="gateway", memory_max="300M", oom_score=400, daemon=True, no_restart_on=(1, REFUSED),
+    ),
+    Service(
+        "trader",
+        "the sleeves, the risk gate, the order manager and the reconciler in one loop, on the paper account. "
+        "Shadow-only while the risk limits are not in force. Started by the owner, never enabled",
+        ("-m", "hftlab.trader"),
+        reach="gateway", memory_max="300M", oom_score=300, daemon=True, enable=False,
     ),
     Service(
         "publish",
@@ -225,7 +238,7 @@ def service(spec: Service) -> str:
     run += [f"MemoryMax={spec.memory_max}", f"OOMScoreAdjust={spec.oom_score}"]
     run += [f"ReadWritePaths={' '.join(spec.writes)}", f"InaccessiblePaths=-{host.OTHER_DESKS_HOME}"]
     run += [*_SANDBOX, *_REACH[spec.reach]]
-    install = ["", "[Install]", "WantedBy=multi-user.target"] if spec.daemon else []
+    install = ["", "[Install]", "WantedBy=multi-user.target"] if spec.daemon and spec.enable else []
     return "\n".join(unit + run + install) + "\n"
 
 
@@ -294,7 +307,10 @@ def render_all() -> dict[str, str]:
 
 
 def can_be_enabled() -> list[str]:
-    """The units with an install section: the two daemons and the timers. The slice and the gateway have none."""
+    """The units with an install section: the recorder, the shadow runner and the timers.
+
+    The slice, the gateway and the trader have none.
+    """
     return sorted(name for name, text in render_all().items() if "\n[Install]\n" in text)
 
 

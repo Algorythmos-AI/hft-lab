@@ -34,7 +34,7 @@ def test_every_limit_in_the_shipped_file_is_null_and_says_it_is_a_placeholder():
     assert shipped["status"] == "placeholder" and shipped["in_force"] is False and shipped["decision"] is None
     valued = [line for line in text.splitlines() if re.match(r"\s+[a-z_]+: +[^#\s]", line)]
     set_limits = [line for line in valued if not re.match(r"\s+(kill|flatten):", line)]
-    assert len(set_limits) == 22, "the scan sees every limit: 20 placeholders and the two that are not enforced"
+    assert len(set_limits) == 24, "the scan sees every limit: 22 placeholders and the two that are not enforced"
     for line in set_limits:
         assert re.match(r"\s+[a-z_]+: null\s+# PLACEHOLDER\b", line), line
     assert sum("NOT ENFORCED" in line for line in set_limits) == 2
@@ -51,6 +51,7 @@ def test_put_in_force_as_it_is_the_shipped_file_is_refused_for_every_null_limit_
         "desk.order_to_trade_window_seconds", "desk.reject_streak_breaker", "desk.loss_latches.USD.daily_loss",
         "desk.loss_latches.USD.drawdown", "per_pair.EUR.USD.max_position", "per_pair.EUR.USD.max_order_size",
         "per_pair.EUR.USD.price_collar_ticks", "per_pair.EUR.USD.max_spread_ticks", "per_pair.EUR.USD.stale_quote_ms",
+        "per_pair.EUR.USD.exit_collar_ticks", "switches.flatten_retry_seconds",
         "per_sleeve.control.max_position", "per_sleeve.control.max_orders_per_minute",
         "per_sleeve.control.loss_latches.USD.daily_loss", "market_guards.rollover_no_entry_minutes_before",
         "market_guards.rollover_no_entry_minutes_after", "market_guards.weekly_close_no_entry_minutes",

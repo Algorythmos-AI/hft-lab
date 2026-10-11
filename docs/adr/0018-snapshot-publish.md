@@ -64,10 +64,23 @@ sibling repository's dashboard at commit `1b23931` (`dashboard/src/lib/hmac.ts` 
 
 ## Consequences
 
-- **Two decisions are the owner's and are open.** The signing key, and which key id the site accepts for
-  this desk. Until both exist on the host and on the site, `--send` refuses or the site answers 401, and
-  the page keeps saying that nothing has been published. The runbook has the steps
-  ([publish](../runbooks/publish.md)).
+- **The two decisions that were open are settled.** This point used to say that the signing key, and which
+  key id the site accepts for this desk, were the owner's and open.
+  - This platform signs with a key of its own under a key id of its own, never another sender's.
+  - The site accepts that key id scoped to this desk alone: beside the key in its `DASHBOARD_INGEST_KEYS`,
+    its `DASHBOARD_INGEST_SCOPES` holds `{"<key id>": {"desks": ["hft"]}}`. A key taken from this host can
+    then write this desk's page and nobody else's.
+  - The site is configured first, then the publisher.
+  - What the site's answers mean now: 401, it does not know the key id or the key, or the clocks are more
+    than five minutes apart; 403 `key-scope`, the body is not of the desk the key is scoped to; 503
+    `key-scope-config`, the site's scope setting is malformed and it refuses rather than guess; 422, the
+    body is not of a schema it holds. The publisher is told the status alone, and says with it what it
+    means to this sender (`hftlab.publish.send.MEANS`). A 403 can still be the site's deployment protection
+    and a 503 a site that is not serving, so both causes are named.
+  - Carrying it out is the owner's, and nothing in this repository does it: no key and no key id is here.
+    Until both are on the site and on the host, `--send` refuses or the site answers 401, and the page
+    keeps saying that nothing has been published. The runbook has the steps
+    ([publish](../runbooks/publish.md)).
 - **The site has to know this schema before the first send.** At the commit that was read, the ingest files
   a body whose `schema` it does not know under another desk and then refuses it as invalid. Nothing of
   another desk's is overwritten, and nothing of ours is stored. The contract's own rule applies: the

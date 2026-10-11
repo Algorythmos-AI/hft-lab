@@ -3,7 +3,8 @@
 HFT Lab trades the currency market on an Interactive Brokers **paper** account, fully automatically, with
 guardrails that are always on. This page is the map. The reasons behind each choice are in the
 [ADRs](adr/), and the order of work and what is built today are in the [roadmap](roadmap.md). The page
-describes the whole design; much of it is not built, and nothing built has met the real market yet.
+describes the whole design. Most of it is written and tested on synthetic streams and against a fake broker;
+none of it is installed on a host, and nothing built has met the real market yet.
 
 ## Constraints that shape everything
 
@@ -34,16 +35,17 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 | `hft-train`, `hft-promote` | Weekend learning and the weekly promotion decision |
 | `hft-report`, `hft-backup` | Summaries; journal and model backups |
 
-Eight of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
+All of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
 as a placeholder that cannot be enabled, the recorder with its hourly `hft-housekeep`, `hft-shadow`,
 `hft-trader` (which has no install section: the owner starts it, nothing enables it), `hft-publish` (the
-status check, the pages and the status snapshot), `hft-backup` and `hft-report` (the daily summary and the
-weekly scorecard; its timer is the owner's to enable). None is installed on any host. The others
-arrive with their phases.
+status check, the pages and the status snapshot), `hft-backup`, `hft-report` (the daily summary and the
+weekly scorecard; its timer is the owner's to enable), and `hft-train` and `hft-promote` at placeholder
+times that are the owner's to set ([ADR 0023](adr/0023-weekly-learning-loop.md)). That is 10 services.
+None is installed on any host.
 
 ## Package map
 
-`src/hftlab/`. A package marked with a phase exists today; the others arrive with the phase that needs them
+`src/hftlab/`. Every package below exists today; the phase is the one it was written for
 ([roadmap](roadmap.md)).
 
 ```
@@ -60,15 +62,15 @@ replay/       a recorded day read back as the stream the live process saw; the d
 book/         positions, cash and profit from fills: the shadow book; the broker book and the           F3
               reconciler that compares it with the venue's positions and executions                     F4
 strategy/     the sleeve interface, the idle and the control sleeve, and the ML sleeve skeleton        F3
-              dc/ (the Directional Change detector, baseline sleeve and null: F5, synthetic data only;
-              dl: not built)
+              dc/ (the Directional Change detector, baseline sleeve and null: F5, synthetic data only).
+              There is no sleeve of its own for the sequence network: it trades through the ML sleeve
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
 review/       reading a run back: round trips against the cost model, a sleeve's day beside its null    F3
 features/     causal, exact features of one pair's quote stream, the same offline and live             F5
 labels/       cost-aware outcomes and triple-barrier outcomes, each with the time its window ends      F5
-models/       the hashed model file, the registry, an exact ridge model, boosted trees as whole        F5
-              numbers, two baselines, the scorer (neural networks are not built)
+models/       the hashed model file, the registry, an exact ridge model, boosted trees and a small     F5
+              sequence network as whole numbers, two baselines, the scorer
 scoring/      the scorer in a process of its own: the message format, the child, the trader's side     F6
               of the pipe and the record a replay abstains by (off as shipped; synthetic data only)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
@@ -76,8 +78,11 @@ exec/         the order manager: idempotent order ids, order state machine, writ
 trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay,         F4
               and the sleeves' states kept across a restart
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
-learn/        datasets with a look-ahead check, walk-forward validation, the promotion decision        F6
-              (foundations only: no training run, no weekly promotion, no process)
+learn/        datasets with a look-ahead check, walk-forward validation, the fits of the three kinds   F6
+              of model, the training run, the promotion decision and the drift look as commands
+lineup/       which model is champion and which are challengers, in a hash-chained journal; the        F6
+              trader's loading of them by hash; the weekly decision and the drift look behind the
+              commands (synthetic data only: no lineup journal exists on any host)
 history/      imported history: tick files the owner exported, read from disk into a store of their    F6
               own in the recording format, with provenance in every day. It downloads nothing (ADR 0028)
 ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
@@ -182,7 +187,11 @@ hold-out, the trial count and the promotion decision as a function
 ([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)), the model file, an exact ridge
 model and the scorer ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)), gradient-boosted trees fitted
 with an optional library and kept and scored as whole numbers
-([ADR 0025](adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)), and the weekly loop as
+([ADR 0025](adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)), a small sequence network
+fitted on the arrays the base requirements already hold and kept and scored the same way
+([ADR 0029](adr/0029-sequence-network-windows-and-fixed-point-scoring.md)), an import of tick files the
+owner exported, kept in a store of its own and counted towards no promotion
+([ADR 0028](adr/0028-imported-history.md)), and the weekly loop as
 processes: the training run, the hash-chained lineup journal the trader reads its models from, the weekly
 decision with its rollback and drill, and the drift look ([ADR 0023](adr/0023-weekly-learning-loop.md)).
 The scorer can run in a process of its own, behind a timeout, a restart with back-off and a record that lets

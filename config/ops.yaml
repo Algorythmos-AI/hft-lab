@@ -18,6 +18,13 @@ backup:
                                 #   [restic, backup, --tag, "{tag}", --files-from, "{list}"]
                                 # A command that forgets, prunes or deletes is refused.
 
+# What `python -m hftlab.ops.deploy prune` keeps (docs/runbooks/deploy.md). The checkout in service, the one a
+# step back goes to and every checkout a running unit still runs in are always kept, whatever this says. Of
+# the rest, the newest this many are kept as well, and the others are removed with the environments nothing
+# links to any more.
+deploy:
+  keep_more_releases: 2         # ENGINEERING DEFAULT. Zero or more
+
 # When the learning loop's two weekend jobs start (ADR 0023, docs/runbooks/learning.md). The unit files are
 # rendered from these two values: after changing one, run `python -m hftlab.ops.units render --out deploy/systemd`.
 # Both are PLACEHOLDERS and both are the owner's: training must not overlap the other desks' weekend jobs on

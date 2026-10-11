@@ -13,6 +13,11 @@ not carry this platform's prefix.
 The address, the key id and the key come from the environment and from nowhere else. With any of them missing
 the snapshot is not sent, and the refusal says which one. A snapshot that does not conform to its contract is
 not sent either. Neither the key nor the address is ever in a message.
+
+The site holds this platform's key under this platform's own key id, scoped to this desk alone, and is
+configured before the publisher is (docs/runbooks/publish.md). What its refusals mean to this sender is
+`MEANS`. The publisher is told a status and nothing else of the answer, so where one status has two causes
+both are named.
 """
 from __future__ import annotations
 
@@ -31,6 +36,18 @@ from hftlab.publish import contract
 NEEDED: Final = ("HFT_PUBLISH_URL", "HFT_PUBLISH_KEY_ID", "HFT_PUBLISH_KEY")
 ALREADY_NEWER: Final = 409  # the site holds a snapshot with a later as_of: nothing to do, and not a failure
 _KEY_ID: Final = re.compile(r"[A-Za-z0-9._-]{1,40}")
+MEANS: Final = {
+    401: "the site does not know this key id or this key, or the two clocks are more than five minutes apart",
+    403: (
+        "key-scope: the site's scope for this key id does not cover this desk's snapshot; "
+        "or its deployment protection refused the request"
+    ),
+    422: "the site refused the body: it does not hold this schema, or holds an older copy of the contract",
+    503: (
+        "key-scope-config: the site's scope setting cannot be read, and until it is mended the site refuses "
+        "scoped keys; or the site is not serving"
+    ),
+}
 # The id the site gives a sender that names none. It belongs to another desk's host, so it is never ours.
 _NOT_OURS: Final = "default"
 
@@ -60,6 +77,12 @@ def destination(settings: Mapping[str, str]) -> Destination:
         raise Refused(f"not sending: HFT_PUBLISH_URL is {reason.removeprefix('refused: ')}")
     key, bypass = Secret(settings["HFT_PUBLISH_KEY"].strip()), Secret(settings.get("HFT_PUBLISH_BYPASS", "").strip())
     return Destination(url, key_id, key, bypass)
+
+
+def meaning(outcome: Outcome) -> str:
+    """What became of a send, with what the site's answer means where that is known. Never the address or the key."""
+    known = MEANS.get(outcome.status) if outcome.status is not None else None
+    return f"{outcome}: {known}" if known else str(outcome)
 
 
 def body_of(snapshot: Mapping[str, object]) -> bytes:

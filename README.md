@@ -61,17 +61,18 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | Labels: cost-aware outcomes priced as the shadow venue prices, and triple-barrier outcomes | `src/hftlab/labels/` |
 | Datasets with a look-ahead check, walk-forward validation with a hold-out read once, the promotion decision as a function | `src/hftlab/learn/` |
 | An import of tick files the owner exported himself, read from disk into a store of its own, with provenance in every day (nothing is downloaded; no file has been imported yet) | `src/hftlab/history/` |
-| The model file and its registry, an exact ridge regression, gradient-boosted trees and a small sequence network kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
+| The model file and its registry (a file says, under its own hash, how many of the rows it was fitted to were recorded and how many imported), an exact ridge regression, gradient-boosted trees and a small sequence network kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
+| The lineup: a hash-chained journal of which model is champion and which are challengers, the trader's loading of them by hash, the weekly decision and the drift look | `src/hftlab/lineup/` |
 | An ML sleeve skeleton that asks a scorer and reports that it may not leave shadow on placeholder costs | `src/hftlab/strategy/ml.py` |
 | The scorer in a process of its own: a versioned message format, a child that holds no venue, a timeout, a restart with back-off, and a record a replay abstains by (off as shipped) | `src/hftlab/scoring/` |
 | The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
 | Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
-| The research registry: its lint, the trial count, two hypotheses and two experiments, registered and not run | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The research registry: its lint, the trial count, 6 hypotheses and 6 experiments, registered and not run, and 0 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
-| The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
+| The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate with its pruning of old checkouts (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
 | What the owner runs on the host: the pre-flight sampler, the install script, the status wrapper, the unit files | `deploy/` |
 | Design records | `docs/` |
 
@@ -79,8 +80,9 @@ What that does and does not mean:
 
 - **Proven against:** a deterministic fake broker, a stub of the broker library, synthetic quote streams, and
   recordings the tests make themselves.
-- **Not done:** nothing has connected to a real gateway, nothing has been recorded from the real feed, and no
-  experiment has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
+- **Not done:** the capability probe has connected to the real paper gateway once, at a weekend, when there
+  are no quotes, and that is all that has touched anything real. Nothing has been recorded from the real
+  feed, and no experiment has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
   place a broker order. The trader can only once the risk limits are in force and a sleeve has earned a
   stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. The capability probe can,
   on the paper account, when the owner runs it with `--orders`.
@@ -89,8 +91,9 @@ What that does and does not mean:
   any host, no unit has been loaded by a service manager, and nothing has been published. Recording starts
   only after the owner has run the capability probe, the pre-flight day and the install
   ([runbook](docs/runbooks/install.md)).
-- **F1 is open** until the owner runs the capability probe against the real paper account
-  ([runbook](docs/runbooks/ibkr-probe.md)).
+- **F1 is open** until the owner runs the capability probe against the real paper account with the market
+  open ([runbook](docs/runbooks/ibkr-probe.md)): its report needs quotes, and the one connection so far was
+  at a weekend.
 - **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days. The command that
   compares the control run with its recording trip by trip, which the registered experiment names, is
   written (`python -m hftlab.review.trip_costs`,
@@ -101,7 +104,7 @@ What that does and does not mean:
   run).
 
 - **F5 has not started as a phase.** Its foundations are written: features, labels, datasets, validation, a
-  model file format, one exact ridge model and an ML sleeve skeleton. So is the Directional Change sleeve
+  model file format, three kinds of model (below) and an ML sleeve skeleton. So is the Directional Change sleeve
   ([ADR 0024](docs/adr/0024-directional-change-sleeve.md)): a detector, a rule-based baseline in two
   variants and a random-walk null to read it against. It is tested on synthetic streams, has seen no real
   data, sits at stage `shadow` with placeholder numbers, and is expected to show no advantage over the

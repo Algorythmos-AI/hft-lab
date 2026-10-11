@@ -131,3 +131,27 @@ The addendum above that neural networks are still not built no longer holds.
 kind of model file, `seq`. Its floats end where it is exported, as the trees' do; its scorer adds, multiplies
 and shifts whole numbers, and abstains wherever the rounding of its weights could change the decision. Its
 row is a window of rows, which the request and the reply lines of section 5 carry as they are.
+
+## Addendum, 2026-10-11: the sleeve and the loop this record said were not built
+
+Two more of the consequences above no longer hold.
+
+- **The Directional Change sleeve is built**, as a rule-based baseline in shadow and not as a claimed edge
+  ([ADR 0024](0024-directional-change-sleeve.md)). It has seen synthetic streams only.
+- **The weekend training run, the weekly promotion and the drift watch are built**
+  ([ADR 0023](0023-weekly-learning-loop.md)): `python -m hftlab.learn.train`, `python -m hftlab.learn.promote`
+  and `python -m hftlab.learn.drift`. They have run on synthetic weeks and against the fake broker only, and
+  as shipped the rule they apply is not in force.
+
+## Addendum, 2026-10-11: version 2 of the model file says where its rows came from
+
+Section 1 above lists what a model file holds. It now also holds `sources`: how many of the rows the model
+was fitted to, and of the days they are from, came from the platform's own recordings (`recorded`) and how
+many from imported history (`imported:<label>`), written at fit time from the dataset
+([ADR 0028](0028-imported-history.md), addendum). It is under the hash like everything else, and the file's
+`version` is 2.
+
+- A file of version 2 without `sources`, or with one that is not rows and days by source, is refused.
+- A file of version 1 is still read, exactly: the same bytes, the same hash. It has no such field, so its
+  split is unknown, which is never reported as zero. Nothing writes version 1 any more.
+- The scorer does not read the field. A model of either version is scored as it always was.

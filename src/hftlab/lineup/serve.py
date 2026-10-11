@@ -5,6 +5,8 @@ The trader's configuration names places:
     - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}
     - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process}
 
+and so on for `challenger-2` and `challenger-3`: the shipped settings hold three challengers' places.
+
 `scorer` says where a row is scored: `in_process`, in the trader's own process, or `process`, by a child the
 trader talks to over a pipe (ADR 0023, section 5). A place that says `process` is handed its scorer by whoever
 runs the session (`scoring`); with nobody to hand one over the place is refused rather than quietly served in

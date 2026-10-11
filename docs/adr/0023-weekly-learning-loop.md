@@ -247,7 +247,7 @@ that pages.
   model, which is all that exists.
 - **The backup does not hold the lineup journal, the models or the reports yet.** A lost disk loses the
   lineup's history; the models are trained again from the recordings.
-- **As shipped the scorer shares the trader's process.** Both ML places say `scorer: in_process`, where a
+- **As shipped the scorer shares the trader's process.** Every ML place says `scorer: in_process`, where a
   scorer that hangs, hangs the trader's turn. The two kinds of model there are score with exact sums, so this
   is a limit for models that are not built yet; `scorer: process` is there for them.
 - **A scorer process costs a timeout when it fails.** The loop waits up to `timeout_ms` once for a child that
@@ -269,3 +269,23 @@ The training run fits the kind of model the settings name: `ridge`, as before an
 ([ADR 0025](0025-gradient-boosting-optional-set-and-whole-number-trees.md)). One run fits one kind. Nothing
 else of this record changes: the report, the registry, the lineup journal, the weekly decision and the drift
 look do not ask what kind a model is. `last-run.json` now also says which kind the run fitted.
+
+## Addendum, 2026-10-12: three of the consequences above no longer hold
+
+- **"Gradient boosting, neural networks and a deep challenger are not built."** Gradient-boosted trees are a
+  second kind of model ([ADR 0025](0025-gradient-boosting-optional-set-and-whole-number-trees.md)) and a small
+  sequence network, the plan's deep challenger, a third
+  ([ADR 0029](0029-sequence-network-windows-and-fixed-point-scoring.md)). The loop fits whichever one the
+  settings name, and nothing else of it asks what kind a model is. All three have been fitted to synthetic
+  rows only.
+- **"The backup does not hold the lineup journal, the models or the reports yet."** It does: the backup
+  takes the trader's folder and the learning folder whole, so the lineup journal, the model files and the
+  evaluation reports are in it ([ADR 0027](0027-deploy-gate-and-reports.md), section 1). No backup has been
+  made on a host and no restore of a lineup has been drilled.
+- **"The two kinds of model there are score with exact sums, so this is a limit for models that are not built
+  yet."** There are three kinds now, and all three are scored with whole numbers: exact fractions, sums of
+  leaves, integer sums and shifts. As shipped every place still scores in the trader's process, and
+  `scorer: process` is still off.
+
+The shipped trader settings hold a champion's place and three challengers', as many as the registered shadow
+weeks name. Nothing here has run on a host.

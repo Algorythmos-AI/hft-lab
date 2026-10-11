@@ -36,8 +36,8 @@ checks every snapshot it builds with the same code, before the snapshot is print
   without the two steps above.
 
 The publisher is `python -m hftlab.publish` ([ADR 0018](../docs/adr/0018-snapshot-publish.md)). It prints
-the snapshot unless it is told to send it. **Nothing has been sent yet**: the signing key, and the key id the
-site accepts for this desk, are the owner's decisions and are still open
-([runbook](../docs/runbooks/publish.md)). This round it sends identity, windows, stage, phases and health,
+the snapshot unless it is told to send it. **Nothing has been sent yet**: this platform signs with a key and
+a key id of its own, which the site holds scoped to this desk, and giving them to the site, before the
+publisher is configured, is the owner's to do ([runbook](../docs/runbooks/publish.md)). This round it sends identity, windows, stage, phases and health,
 the recorder part once something has been recorded, the sleeves and books parts once a trader has run, and
 the learning part once training has registered a candidate in the lineup journal; pairs stays absent.

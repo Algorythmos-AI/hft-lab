@@ -58,6 +58,11 @@ def register(
         model = gbm_model(made, everything, BOOSTING)
     else:
         model = ridge_model(made, everything, Fraction(1, 1000))
+    days = {"recorded": 5} if fitted_days is None else fitted_days
+    # The model file says the same days as the report does, as a training run's two files do; the stream of a
+    # test has no day folders, so both are stated here.
+    rows = {key: 100 * count for key, count in days.items()}
+    model = dataclasses.replace(model, sources={"rows": rows, "days": days})
     columns = by_column(made.features, [row.features for row in made.rows])
     columns[EXPECTED_KEY] = [WIN, -WIN, WIN // 2, 0, WIN]
     report = {
@@ -66,7 +71,7 @@ def register(
         "serving": {"features": {**SERVING, **({"window_rows": NETWORK.window} if kind == "seq" else {})},
                     "feasibility": the_map(stream)},
         "summary": summarise(columns, 5, rows=len(made.rows)),
-        "sources": {"model": {"days": {"recorded": 5} if fitted_days is None else fitted_days}},
+        "sources": {"model": {"days": days}},
     }  # fmt: skip
     ModelRegistry(registry / "models").put(model)
     return Named(model.content_hash, keep_report(registry / "reports", (canonical(report) + "\n").encode("ascii")))

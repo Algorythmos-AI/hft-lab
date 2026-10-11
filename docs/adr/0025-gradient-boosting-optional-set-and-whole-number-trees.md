@@ -180,7 +180,10 @@ change: declared in configuration beforehand, small, and every member counted.
   make it impossible instead of untested-for, at the cost of a second copy of everything.
 - **An environment that is rebuilt loses the set** unless `--with-ml` is given again. The next gbm run is
   then refused, loudly, and registers nothing.
-- **The tests that fit ran on macOS arm64.** The `ml` job's first run is the first on Linux x86-64.
+- **The tests that fit ran on macOS arm64.** The `ml` job's first run is the first on Linux x86-64. One of
+  them now compares a tiny fit's model file with the hash it has on macOS arm64
+  (`tests/learn/test_portable.py`; [ADR 0029](0029-sequence-network-windows-and-fixed-point-scoring.md),
+  last addendum). Section 4 does not promise that they agree, and no Linux result is recorded here.
 - **The same hash across machines is not promised** (section 4). Two hosts that train on the same recordings
   may register two models. This platform has one host.
 - **The agreement check at fit time is a sample** of at most 512 training rows. The test of the boundary is
@@ -196,3 +199,11 @@ Section 7 said no neural network is built. [ADR 0029](0029-sequence-network-wind
 adds a small one as a third kind of model file, `seq`. It took another route than this record's for its
 dependency: nothing is installed for it, and the optional set here is still LightGBM alone. It kept this
 record's boundary: floats to fit, whole numbers to keep and to score.
+
+## Addendum, 2026-10-12: the scorer's own process is built
+
+Section 7 said the scorer in its own process is still not built. It is
+([ADR 0023](0023-weekly-learning-loop.md), section 5; `src/hftlab/scoring/`): a place whose settings say
+`scorer: process` is scored by a child of the trader, and a gbm model is scored there as it is in the
+trader's process, by the same whole-number sums. As shipped every place says `in_process`, and no scorer
+process has run on a host.

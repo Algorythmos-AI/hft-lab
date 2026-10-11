@@ -45,6 +45,10 @@ It is public for now, by the owner's decision, and is written to be safe to read
   exception to the network rule is `src/hftlab/ops/post.py`, which sends pages and the status snapshot over
   HTTPS: it may import five names of the standard library's HTTP client, and it refuses any address on this
   machine, so it cannot be pointed at the gateway.
-- **Every order will pass an independent risk gate** that rebuilds positions from fills and owns the `KILL`
-  and `FLATTEN` switches. The gate is built in a later phase; its requirements are already in
+- **Every order a sleeve wants passes an independent risk gate** that rebuilds positions from fills and owns
+  the `KILL` and `FLATTEN` switches. The gate is written (`src/hftlab/risk/`,
+  [ADR 0015](docs/adr/0015-risk-gate.md)), and the trader's orders reach a venue only through the order
+  manager, which asks it first. Every limit in `config/risk.yaml` is still a null placeholder and the file is
+  not in force: until a decision record sets the limits no gate can be built from it, and the trader runs in
+  shadow-only mode, holding no object that could send an order. Its requirements are in
   [`docs/requirements/requirements.yaml`](docs/requirements/requirements.yaml).

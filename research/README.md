@@ -20,7 +20,7 @@ research/
 | [HFT-EXP-0001](experiments/HFT-EXP-0001-control-shadow/protocol.md) | The control sleeve in shadow on five recorded days, with its seed, entry rate, holding time and waiting time fixed | Registered. **Not run**: nothing has been recorded from the real feed yet. The trip-by-trip tool its protocol says is not built has been written since (`python -m hftlab.review.trip_costs`); the protocol is frozen |
 
 | [HFT-HYP-0002](hypotheses/HFT-HYP-0002-order-path-agrees-with-the-broker.yaml) | The order path agrees with the broker, and the shadow venue fills no better than the paper account | Registered. No evidence yet |
-| [HFT-EXP-0002](experiments/HFT-EXP-0002-control-min-size-paper/protocol.md) | The control sleeve at minimum size on the paper account for five trading days: zero reconciliation breaks expected, and the shadow-versus-broker slippage reported with the direction the cost model is meant to err in | Registered. **Not run**: nothing has connected to a gateway, and the risk limits are not in force |
+| [HFT-EXP-0002](experiments/HFT-EXP-0002-control-min-size-paper/protocol.md) | The control sleeve at minimum size on the paper account for five trading days: zero reconciliation breaks expected, and the shadow-versus-broker slippage reported with the direction the cost model is meant to err in | Registered. **Not run**: no order has been placed, the risk limits are not in force, and the one connection to the paper gateway so far was the capability probe's, at a weekend with no quotes |
 | [HFT-HYP-0003](hypotheses/HFT-HYP-0003-first-ridge-challenger-has-no-advantage.yaml) | The first ridge challenger shows no advantage over the control sleeve after costs. Stated as the expected outcome, so that a week that seems to show an edge has something to refute | Registered. No evidence yet |
 | [HFT-EXP-0003](experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md) | The first ridge challenger's week in shadow beside the control sleeve: trained on Saturday, weighed the Sunday after, with the numbers it is measured with fixed and no promotion rule | Registered. **Not run**: nothing has been recorded or trained on real data |
 | [HFT-HYP-0004](hypotheses/HFT-HYP-0004-first-gbm-challenger-has-no-advantage.yaml) | The first gradient-boosted challenger shows no advantage over the control sleeve or the ridge challenger after costs. Stated as the expected outcome | Registered. No evidence yet |
@@ -30,7 +30,7 @@ research/
 | [HFT-HYP-0006](hypotheses/HFT-HYP-0006-first-seq-challenger-has-no-advantage.yaml) | The first sequence-network challenger shows no advantage over the control sleeve, the ridge challenger or the gradient-boosted challenger after costs. Stated as the expected outcome | Registered. No evidence yet |
 | [HFT-EXP-0006](experiments/HFT-EXP-0006-first-seq-challenger-shadow-week/protocol.md) | A ridge, a gradient-boosted and a sequence-network challenger in shadow for the same week beside the control sleeve, with the network's settings, its one seed and the measuring numbers fixed, no search and no promotion rule | Registered. **Not run**: nothing has been recorded or trained on real data |
 
-There is no decision record yet, and the trial registry is empty.
+6 hypotheses and 6 experiments are registered. There is no decision record yet, and the trial registry is empty.
 
 ## Rules
 

@@ -135,7 +135,8 @@ unchanged.
 
 **What that gives.** The same rows, settings and seed give the same model file: a test fits twice in one
 process and once in another that is told to use four threads, and compares the hashes. Across processors it
-follows from the list above and is **not yet shown**: every test that fits ran on macOS arm64.
+follows from the list above and is **not yet shown**: every test that fits ran on macOS arm64. (A test now
+puts it to the question: see the addendum at the end.)
 
 ### 5. The boundary: floats to fit, whole numbers to keep and to score
 
@@ -278,3 +279,19 @@ configuration, written into the ledger before it is scored.
 - **On real data the likeliest outcome** of the first sequence challenger's week is no advantage after costs
   over the control sleeve, the ridge challenger or the tree challenger (`HFT-HYP-0006`, `HFT-EXP-0006`:
   registered, not run).
+
+## Addendum, 2026-10-12: the same file on another machine is now tested, and not yet read
+
+Section 4 and the consequences say that the same fit on another processor is argued and not shown. There is
+now a test of it. `tests/learn/expected_model_hashes.json` holds, for one tiny synthetic fit of each kind
+(ridge, the sequence network, and the trees), the hash of the dataset, of the fitted parameters and of the
+model file as they came out on macOS arm64. `tests/learn/test_portable.py` makes the same stream by
+whole-number arithmetic, the same dataset and the same fit, and compares the three in that order, so that a
+difference says where it arose: before any fit, in the fit, or in the file's format.
+
+CI runs on Linux x86-64. The `test` job runs the ridge and the network; the `ml` job runs all three. Nothing
+is marked as expected to fail. **No run of it on Linux is recorded here:** until one is, "argued, not shown"
+stands, and a disagreement there is a finding about the fit, to be written into this record, not a test to
+quiet. For the trees a difference across builds of the library was foreseen
+([ADR 0025](0025-gradient-boosting-optional-set-and-whole-number-trees.md), section 4); for the network it
+was argued away, and that argument is what the test is for.

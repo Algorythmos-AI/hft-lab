@@ -165,7 +165,8 @@ it is why such a day is flagged rather than passed off: the day's provenance say
   line per candidate, and the weekly scorecard says how many of the fitted rows were not recorded.
 - **A model file** names its dataset by that hash, so two models fitted to different mixes of sources are two
   models, and the report that carries the split is pinned beside the model, hash by hash, in the lineup. The
-  model file was not given a field of its own for the split: see "What is not here".
+  model file was not given a field of its own for the split in this record; it has one since (the addendum
+  at the end).
 - **The feasibility map** says the days and the events by source, and names the days whose sizes are
   placeholders.
 - **A run that read a day with placeholder sizes says it is not a result**, in the way a run on placeholder
@@ -234,10 +235,9 @@ the owner; the record of it is this one.
 
 ## What is not here
 
-- **A field for the split in the model file.** The model file's format belongs to work that was under way in
-  parallel, and was not touched. The model is bound to the split through its dataset's hash and through the
-  report pinned beside it; reading the split needs the report. Adding `sources` to the model file is a new
-  version of that file and a small change.
+- **A field for the split in the model file.** The model file's format belonged to work that was under way in
+  parallel, and was not touched. The model was bound to the split through its dataset's hash and through the
+  report pinned beside it; reading the split needed the report. **Added since: see the addendum below.**
 - **A number of its own for the data requirement**, for the reason in decision 8.
 - **A mark on the week's shadow evidence.** The weekly decision counts shadow days from the trader's
   journals, and the trader reads no day folder of any store: it sees the venue's quotes, and its replay
@@ -245,3 +245,25 @@ the owner; the record of it is this one.
   nothing checks that it never will. Anything that later lets the trader run over a store has to carry the
   day's origin into its journal first.
 - **A way to set `terms_verified`.** Decision 4.
+
+## Addendum, 2026-10-11: the model file says where its rows came from
+
+The first point of "What is not here" no longer holds. A model file is of version 2 and has a field
+`sources`: the rows the model was fitted to, and the days they are from, by source
+(`{"rows": {"recorded": ..., "imported:<label>": ...}, "days": {...}}`).
+
+- **It is written at fit time, from the dataset**, for all three kinds (ridge, trees, sequence network):
+  `Dataset.split` of exactly the rows handed to the fit. A day that gave no fitted row is not counted.
+- **It is under the file's hash**, like every other field: the same weights fitted to another mix of sources
+  are another model.
+- **A file of version 2 that lacks it is refused on load.** A file of version 1 never had it and still
+  loads, byte for byte and under the hash it always had. Its split is **unknown**, and is said so
+  (`unknown`), never as no rows or no days.
+- **The weekly decision reads it.** Where the model file says its days they must be the days its report
+  says, or no day is counted and the challenger is kept with `too_few_own_days`. A file of version 1 is
+  judged by its report alone, as before. This can turn a "promote" into a "keep" and never the other way.
+  The decision report shows both: `fitted_days_by_source` and `model_file_days_by_source`.
+- **Training says it** on a line of its own for each candidate, read from the file it has just written.
+
+No model file exists outside a test, so nothing was converted. The baselines (`flat`, `random`) are fitted to
+nothing; their `sources` are those of the dataset they are for.

@@ -32,12 +32,15 @@ sleeves:
     hold_seconds: 60            # PLACEHOLDER
     retry_seconds: 10           # PLACEHOLDER
 
-  # The ML places (ADR 0023). A place names no model: the lineup journal in the state directory says which
-  # model stands in it, by hash, and an empty place runs idle. With nothing registered both run idle.
+  # The ML places (ADR 0023): the champion's and three challengers', as many as the registered shadow weeks name
+  # (HFT-EXP-0003, HFT-EXP-0004, HFT-EXP-0006). A place names no model: the lineup journal in the state directory
+  # says which model stands in it, by hash, and an empty place runs idle. With nothing registered all four run idle.
   # `scorer` is where a row is scored: in_process, or process, a child of the trader behind a timeout (its
   # times are `scorer:` in config/learn.yaml). in_process is the shipped value.
   - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}                 # PLACEHOLDER margin
   - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
+  - {name: ml-challenger-2, kind: ml, slot: challenger-2, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
+  - {name: ml-challenger-3, kind: ml, slot: challenger-3, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
 
   # The Directional Change sleeve (ADR 0024): a rule-based baseline, not a claimed edge. EVERY NUMBER BELOW IS A
   # PLACEHOLDER. A run that is compared with anything takes its numbers from its registered experiment
@@ -96,6 +99,16 @@ rollout:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
       normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
   ml-challenger-1:                                    # a challenger is judged in shadow, and stays there
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml-challenger-2:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml-challenger-3:
     start: shadow
     promote:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met

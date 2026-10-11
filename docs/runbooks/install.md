@@ -237,7 +237,7 @@ has been done on any host.
 |---|---|---|
 | The deploy gate | From the first deploy on, the code moves through `python -m hftlab.ops.deploy` and no longer through this script. It needs the install root turned into a link once, with everything stopped (`adopt`). Until you have done that, a deploy is refused and says so | [deploy](deploy.md), [rollback](rollback.md) |
 | The reports | `hft-report.timer` is installed with the other units and is enabled by nobody. This script refuses `--enable hft-report.timer`: a page every trading day is yours to ask for | [reports](reports.md) |
-| The tapes | The hourly housekeeping also compresses the closed parts of the trader's tapes, once a trader has run. The tape quota in `config/trader.yaml` is a placeholder until this host's disk has been measured with a trader running | [trader](trader.md), section 8 |
+| The tapes | The hourly housekeeping also compresses the closed parts of the trader's tapes, once a trader has run. The tape quota in `config/trader.yaml`, the share of it at which entries stop and the time a closing may take are placeholders until this host's disk has been measured with a trader running. Full tapes stop entries and then close positions; they do not stop the trader | [trader](trader.md), section 8 |
 
 The nightly backup takes the trader's folder and the learning folder as well, once they exist
 ([backup](backup.md)).

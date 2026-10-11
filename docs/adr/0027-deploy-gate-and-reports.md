@@ -51,7 +51,8 @@ the tape as one file would have held it, so a replay does not know where the cut
 - All tapes are counted against `tape.quota_bytes`. No session is begun at the quota, and one that reaches
   it takes no further turn and ends as one told to stop: journals flushed, orders left to the order
   manager's rules, **positions left as they are**. The alternative, to go on trading without recording
-  inputs, would break the replay silently. The owner is paged at 90%.
+  inputs, would break the replay silently. The owner is paged at 90%. **This rule is replaced by the
+  addendum below:** the quota still bounds the tapes, and no longer ends a session with a position open.
 - A closed file is synced before the next is opened. With `fsync` on, the part being written is synced on
   every beat, so a power cut loses at most a beat of turns. Recovery never reads the tape.
 
@@ -119,7 +120,7 @@ test now names the deploy beside the backup as a module that may start a program
   served. It is not replayable for the days before the loss.
 - The trader can stop itself, at the tape quota, with a position open. That is chosen over a full disk and
   over an unrecorded input. The quota in `config/trader.yaml` is a placeholder until the host's disk is
-  measured.
+  measured. (No longer: see the addendum.)
 - The owner gets at most one page a trading day and one more on a Friday, when the timer is enabled.
 - A deploy is one command and going back is one command, and both ask the same gate.
 
@@ -138,4 +139,162 @@ test now names the deploy beside the backup as a module that may start a program
   unchanged.
 - **Old releases and old environments are never removed.** Thinning them is the owner's, by hand.
 - **The status screen does not show the tape quota.** The trader pages at 90% and the daily summary shows
-  the figure.
+  the figure. (It does since the addendum.)
+
+## Addendum, 2026-10-11: a full tape closes positions; it does not stop watching them
+
+Built and tested against the fake broker only, like the rest of this record. Nothing here has run on a host.
+
+### What was wrong
+
+Section 2 ended a session at the quota with its positions left as they were, and refused the next start. A
+byte budget ran out, and the answer was to stop watching what was held: the one thing a trader that is short
+of anything should do last. The reason given, that trading on without recording would break the replay, is a
+reason not to open anything. It is not a reason to look away.
+
+### The rule
+
+There are two limits under the quota, and the tape says on a turn's own line when the room changes, so a
+replay sees the same room at the same turn ([ADR 0005](0005-deterministic-replay.md)).
+
+```
+0 ............ soft .............. hard ............................ quota
+  everything     exits only           closing only: the reserve
+```
+
+| The tapes hold | What the trader does | How |
+|---|---|---|
+| less than the soft limit (`tape.soft_percent` of the quota, 90 as shipped, a placeholder) | everything its stages allow | |
+| the soft limit or more | **opens nothing; exits go on.** One line in the decision journal, one page (`hft:tape_near_quota`) | The risk gate is shown the room (`hftlab.risk.TapeRoom`) and its verdict is `EXITS_ONLY` under one code, `TAPE_SOFT_LIMIT`, for every sleeve. A sleeve that trades on the shadow venue alone is stopped the way the switches stop it. No stage is touched |
+| the hard limit or more: the quota less the reserve | **closes everything, then ends the session.** One line, one page (`hft:tape_hard_limit`) | The gate proposes the closes it proposes under `FLATTEN`, with no switch set and even when the switches cannot be read. Each passes `check` as an exit, against the exit collar, and a refused one comes again after `flatten_retry_seconds` ([ADR 0015](0015-risk-gate.md)). The trader passes them on, on every beat, by the path it already had |
+
+No stage is used for this, on purpose: a stage goes up only by its rule and a decision record, and room on a
+disk comes back when the housekeeping job has passed. The gate's verdict follows the room both ways.
+
+**How the session ends at the hard limit.**
+
+1. **Flat, and it stops.** When the broker book holds no line, no order is on its way and the connection has
+   been made safe, the session writes `tape_flat` and ends as a stop does: the closes, their fills and the
+   `stop` are on the tape, in the reserve, and the session replays byte for byte. The shadow book is closed
+   too, as under `FLATTEN`, and waited for, but no longer than the time limit: it holds nobody's money, and
+   what it still holds then is written into that line. The process does not exit. It waits, with no session
+   and nothing written, counting the tapes on every beat, and begins the next session by itself when they
+   are under the hard limit.
+2. **The time limit passes with something open** (`tape.flatten_seconds`, 300 as shipped, a placeholder): a
+   close is being refused, by the exit collar on a blown-out book, by a stale quote, by a market that is
+   shut. The owner is paged at the highest priority (`hft:tape_flatten_overdue`), the decision journal says
+   exactly what is open (`tape_overdue`: each line with its quantity, each order on its way, and whether the
+   connection is safe), and **the session, the reconciler and the closes go on.** Nothing is forced through
+   a bad book, and nothing is left unwatched. When the book comes back it is closed, and 1 applies.
+3. **The reserve itself is used up.** This is the one case in which the trader stops writing its tape: a
+   line that would not fit under the quota is not written, and the tape's last line is `["dark"]`, whose few
+   bytes are held back from every line before it. What is guaranteed then: the tapes are not past the
+   quota; the session goes on exactly as in 2, with the decision journal, the outbox and the books' journals
+   written as always; the owner is paged at the highest priority (`hft:tape_reserve_exhausted`); and the
+   replay of that session is the same as far as its tape goes (`"ended": "dark"`). What is lost is the
+   replay of the rest of that one session. When room is made the session ends and the next one is recorded.
+
+**The next start is not refused.** It begins a session whatever the tapes hold, because only a session
+reconciles and only a session closes what a kill left open. At the soft limit it starts on exits only and
+says so. At the hard limit it finishes the closing and ends as in 1. With no room at all it writes its head,
+two lines, and its `["dark"]`, and runs unrecorded: that head is the only thing that can pass the quota, by
+about a kilobyte for each start. What the trader still refuses to start on is a quota that cannot hold the
+reserve.
+
+### The reserve, and where its size comes from
+
+From the hard limit on, the tape is thinned so that the reserve lasts: a turn is taken on a beat and on
+nothing else, and of each pair's quotes since the last turn only the newest is kept. What is dropped was
+never shown to the trader, so the tape is still everything it decided on.
+
+The reserve is the most the tape can take in `tape.flatten_seconds`, with the worst of everything at once
+(`hftlab.trader.room`):
+
+```
+reserve = STARTS x head  +  turns x (step + asked)  +  orders x order  +  the last line
+```
+
+| Term | What it is | Where the number comes from |
+|---|---|---|
+| `turns` | one a beat for the whole of the time limit, and one at each end | `tape.flatten_seconds`, `beat_ms` |
+| `step` | a turn's line: the newest quote of every pair, and a beat | `pairs` |
+| `asked` | the venue's whole answer when the connection is made safe on that turn: every order that can be listed as working, every fill that can be listed, a position a pair | the desk's `max_orders_per_minute`, over the time limit and the five minutes before it that the reconciler asks back |
+| `orders` | every order the gate can let through, exits, retries and the sleeves' own orders alike | the desk's `max_orders_per_minute`, over the time limit and the minute before it. The gate counts every order against that limit and refuses the next: no order is outside it |
+| `order` | its send and its cancel as the order manager saw them, its reports, its fills and their commissions | assumed, below |
+| `head` | a session's two first lines, for the start in hand and two restarts | assumed, below |
+
+The largest book the limits allow is every sleeve at its cap (the pair's `max_position` or its own,
+whichever is less) in `max_open_pairs` pairs; sleeves may hold against each other, so the desk's cap does
+not make it smaller. Closing it takes that many orders of at most `max_order_size`, each filled in full. **A
+start is refused** unless the reserve's `orders` covers them, the deepest line can be closed one order a
+beat inside the time limit, and the hard limit lies above the soft limit by the sends of one turn's
+entries. A turn whose own line ends at or past the soft limit is already on exits only, so no entry is taken
+on a turn that reaches the reserve.
+
+So the reserve holds the closing of every book the limits allow, and every retry the rate limit lets through
+on top of it, for the whole of the time limit.
+
+Three things are not limits and are assumed, generously for what the fake broker and the adapter send: no
+number on a line is larger than 2^63, no text a venue writes into one field is longer than 96 bytes, and one
+order has at most four reports and four fills. Where one of them does not hold, or the closing takes longer
+than its time limit (case 2), the reserve runs out sooner, and that is case 3.
+
+**It is large on purpose.** `asked` is the term that decides it: a connection that is lost for the whole of
+the time limit is made safe again on every turn, and each time the venue may list everything. With thirty
+orders a minute, one pair and 300 seconds that is about 150 MB; with six a minute and 60 seconds, 4 MB. A
+quota that cannot hold it above the soft limit is refused at the start with the least quota that would, and
+the ways out are in that message: a larger quota, a lower `soft_percent`, a shorter `flatten_seconds`, fewer
+orders a minute.
+
+### What holds, each with a test
+
+- At the soft limit the only order that goes out closes what is held, every entry is refused under one
+  code, there is one line and one page, and no stage moves; the same for a sleeve on the shadow venue alone
+  (`tests/trader/test_tape_room.py`).
+- At the hard limit a held position is closed by one order of the gate's, its send and its fill are on the
+  tape after the line that says `hard`, the tape ends with `stop`, and from that line on every turn has a
+  beat and at most one quote a pair.
+- A spread blown out beyond the exit collar at the hard limit: the closes are refused at the gate's own
+  interval and no faster, the owner is paged once the time limit has passed and not before, the journal
+  names the open line, the session goes on taking turns and the reconciler goes on asking; when the spread
+  returns the position is closed and the session ends.
+- With a reserve too small: the tapes never pass the quota, the tape ends with `["dark"]`, the session goes
+  on deciding and closes the position when it can, and its replay is identical as far as the tape goes. A
+  process killed then, with a position open and no room at all, starts again, writes its head, reconciles
+  and closes.
+- A kill before and after every step of the closing, from the turn that says `hard` to the line that says
+  flat: the next start reconciles first, finishes the closing and stops; the broker executed one entry and
+  one close, each once; both sessions replay (`tests/faults/test_trader_kill.py`).
+- A start at the soft limit begins on exits only, and opens positions again, with a journalled line, once
+  the housekeeping job has made room. Flat at the hard limit the process waits with no session, and begins
+  one when there is room.
+- For generated limits, any book they allow, closed with every order the rate limit lets through, each
+  with the most reports and fills assumed, on every turn of the time limit with everything listed, written
+  with the tape's own encoders, fits the reserve, and the reserve is less than twice that
+  (`tests/trader/test_tape_reserve.py`). A quota that cannot hold the reserve, and a time limit too short
+  for the limits, are refused by the arithmetic, by the trader and by the command.
+- The status screen shows the tapes' bytes, counted when it is run, against the soft limit, the hard limit
+  and the quota, with a warning at the soft limit and a failure at the hard one; the daily summary shows
+  the same against the limits the day's last session journalled (`tests/ops/`).
+
+### What it costs, and what it does not cover
+
+- **Closing at the hard limit is closing at the market, whenever that is.** A sleeve's position is closed
+  for a reason that has nothing to do with the sleeve. The soft limit and its page exist so that room is
+  made first: the hard limit is the stop, not the plan.
+- **A sleeve whose state was restored loses its position there** like any other. `FLATTEN` does the same.
+- **The time limit is counted by a session.** A session that ends at the rollover while it is closing is
+  followed by another, which is told `hard` on its first turn and counts from there.
+- **While the process waits for room nobody watches the account.** It waits only when its book was flat,
+  nothing was on its way and the connection had been reconciled. A position opened by another hand in that
+  time is found by the next session's reconciliation, not before.
+- **The status file is not refreshed while it waits.** The screen counts the tapes itself, so the bytes and
+  the level are current; the trader shows as stopped by the age of its last word.
+- **A session that went dark cannot be replayed past its tape,** and the sleeves' records of rows a scorer
+  process did not score are counted with the tapes and are not thinned.
+- **An operator's requests during a closing are on the tape and are not in the arithmetic.** Each is a
+  short line.
+- **Nothing removes a tape, still.** Room is made by the housekeeping job compressing closed parts, the
+  last part of a session that stopped or went dark among them, and by the owner moving old sessions away.
+- **The reserve is a bound on bytes, not on time or money.** That the closing can finish inside the time
+  limit is checked against the limits; that the market lets it is not something a limit can promise.

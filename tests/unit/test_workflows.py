@@ -1,8 +1,9 @@
 """Rules for .github/workflows that a workflow linter does not check.
 
 The repository is public, so the workflow is part of the attack surface: it must hold no secret, publish no
-artifact and ask for no permission beyond reading the code. The two job names are required checks; renaming
-one would leave every pull request waiting for a check that never reports.
+artifact and ask for no permission beyond reading the code. The job names `test` and `leakcheck` are required
+checks; renaming one would leave every pull request waiting for a check that never reports. The third job,
+`ml`, is the only one that installs the optional ML set (ADR 0025).
 """
 from __future__ import annotations
 
@@ -39,10 +40,10 @@ def test_there_is_exactly_one_workflow_and_it_is_ci():
     assert [p.name for p in WORKFLOWS] == ["ci.yml"]
 
 
-def test_the_jobs_are_exactly_test_and_leakcheck():
+def test_the_jobs_are_exactly_test_ml_and_leakcheck():
     jobs = load(CI)["jobs"]
-    assert set(jobs) == {"test", "leakcheck"}
-    assert {key: job.get("name") for key, job in jobs.items()} == {"test": "test", "leakcheck": "leakcheck"}
+    assert set(jobs) == {"test", "ml", "leakcheck"}
+    assert {key: job.get("name") for key, job in jobs.items()} == {key: key for key in jobs}
 
 
 def test_the_workflow_may_only_read_the_code():
@@ -125,6 +126,45 @@ def test_the_test_job_installs_by_hash_and_runs_every_check():
         assert command in script, command
     assert script.index("-m ruff") < script.index("-m mypy") < script.index("-m pytest") < script.index("registry lint")
     assert '--base "$base"' in script
+    assert "requirements-ml" not in script and "lightgbm" not in script, "the base job stays as light as it was"
+
+
+def test_the_ml_job_adds_the_optional_set_by_hash_and_runs_the_tests_that_need_it():
+    script = run_text(load(CI)["jobs"]["ml"])
+    assert script.count("--require-hashes") == 3 == script.count("uv pip install")
+    for lock in ("requirements.lock.txt", "requirements-dev.lock.txt", "requirements-ml.lock.txt"):
+        assert f"-r {lock}" in script, lock
+    assert script.index("import lightgbm") < script.index("-m pytest"), "a missing library fails; it does not skip"
+    assert "-m pytest tests/models tests/learn tests/lineup" in script
+    for path in ("tests/learn/test_boost.py", "tests/lineup/test_gbm.py"):
+        assert 'pytest.importorskip(\n    "lightgbm", reason="the optional ML set is not installed (make ml)' in (
+            ROOT / path
+        ).read_text(), f"{path} is skipped, with its reason, where the set is absent"
+
+
+def test_the_optional_set_is_one_pinned_library_in_a_lock_of_its_own_and_the_base_locks_do_not_have_it():
+    asked = [line.strip() for line in (ROOT / "requirements-ml.in").read_text().splitlines()
+             if line.strip() and not line.startswith("#")]  # fmt: skip
+    assert asked[:2] == ["-c requirements.lock.txt", "-c requirements-dev.lock.txt"] and len(asked) == 3
+    assert re.fullmatch(r"lightgbm==[0-9]+(\.[0-9]+)+", asked[2]), "one library, pinned to one version"
+
+    def pinned(name: str) -> dict[str, str]:
+        text = (ROOT / name).read_text()
+        assert "--generate-hashes" in text.splitlines()[1] and "--hash=sha256:" in text
+        return dict(re.findall(r"^([a-z0-9_-]+)==(\S+) \\$", text, re.MULTILINE))
+
+    base, dev, ml = (pinned(f"requirements{part}.lock.txt") for part in ("", "-dev", "-ml"))
+    assert f"lightgbm=={ml['lightgbm']}" == asked[2]
+    assert not {"lightgbm", "scipy", "narwhals", "scikit-learn"} & {*base, *dev}
+    assert {name: version for name, version in ml.items() if name in base} == {
+        name: base[name] for name in ml if name in base
+    }, "what both pin, they pin alike: one environment holds all three files"
+    makefile = (ROOT / "Makefile").read_text()
+    assert "$(LOCK) requirements-ml.in -o requirements-ml.lock.txt" in makefile
+    body = re.search(r"^ml:.*\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+    assert body and "--require-hashes" in body.group(1) and "requirements-ml.lock.txt" in body.group(1)
+    bootstrap = re.search(r"^bootstrap:.*\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+    assert bootstrap and "requirements-ml" not in bootstrap.group(1), "make bootstrap does not install it"
 
 
 def test_the_leakcheck_job_scans_history_and_verifies_the_attestation():

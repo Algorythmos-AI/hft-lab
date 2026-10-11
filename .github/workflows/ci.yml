@@ -3,6 +3,10 @@ name: ci
 # Required checks on main: `test` and `leakcheck`. Keep both job names stable and never add path filters to this
 # workflow: a required check that does not run leaves pull requests waiting forever. No secrets and no
 # artifacts are used here, and none may be added (tests/unit/test_workflows.py).
+#
+# `ml` installs the optional ML set as well and runs the tests that fit a gradient-boosted model (ADR 0025).
+# `test` never installs it: there those tests are skipped, and the ones that show the platform needs none of
+# it run. Whether `ml` becomes a required check is the owner's setting on the branch, not this file's.
 on:
   pull_request:
   push:
@@ -54,6 +58,30 @@ jobs:
             echo "no usable base commit: linting without the append-only comparison"
             .venv/bin/python -m hftlab.registry lint
           fi
+
+  ml:
+    name: ml
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONPATH: src
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: Install the locked environment and the optional ML set (hash-checked)
+        run: |
+          uv venv --python 3.12 .venv
+          uv pip install --require-hashes --python .venv/bin/python -r requirements.lock.txt
+          uv pip install --require-hashes --python .venv/bin/python -r requirements-dev.lock.txt
+          uv pip install --require-hashes --python .venv/bin/python -r requirements-ml.lock.txt
+      - name: The library is there, so no test below is skipped for want of it
+        run: .venv/bin/python -c "import lightgbm; print('lightgbm', lightgbm.__version__)"
+      - name: Tests of the models, the learning loop and the lineup, with the ML set
+        run: .venv/bin/python -m pytest tests/models tests/learn tests/lineup -rs
 
   leakcheck:
     name: leakcheck

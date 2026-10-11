@@ -134,7 +134,7 @@ def test_every_design_record_that_is_cited_anywhere_exists():
 
 # Numbers handed out ahead of the run above, to work that was written in parallel with the record before them.
 # When every number below them exists, these move into `topics` and this goes.
-GIVEN_AHEAD = {"0025": "gradient-boosting", "0027": "deploy-gate"}
+GIVEN_AHEAD = {"0025": "gradient-boosting", "0027": "deploy-gate", "0028": "imported-history"}
 
 
 def test_the_design_records_given_a_number_ahead_are_there_and_well_formed():

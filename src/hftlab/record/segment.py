@@ -60,6 +60,12 @@ def read_segment(path: Path) -> tuple[Header, BlockScan, Iterator[Record]]:
     return header, scan, records()
 
 
+def header_of(path: Path) -> Header:
+    """A segment's header, checked against its own checksum. None of its blocks is read."""
+    with _open(path) as stream:
+        return read_header(stream)
+
+
 def inspect(path: Path) -> SegmentInfo:
     """Read a whole segment for its header, its last record and where its good data ends."""
     with _open(path) as stream:

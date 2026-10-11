@@ -199,3 +199,11 @@ Section 7 said no neural network is built. [ADR 0029](0029-sequence-network-wind
 adds a small one as a third kind of model file, `seq`. It took another route than this record's for its
 dependency: nothing is installed for it, and the optional set here is still LightGBM alone. It kept this
 record's boundary: floats to fit, whole numbers to keep and to score.
+
+## Addendum, 2026-10-12: the scorer's own process is built
+
+Section 7 said the scorer in its own process is still not built. It is
+([ADR 0023](0023-weekly-learning-loop.md), section 5; `src/hftlab/scoring/`): a place whose settings say
+`scorer: process` is scored by a child of the trader, and a gbm model is scored there as it is in the
+trader's process, by the same whole-number sums. As shipped every place says `in_process`, and no scorer
+process has run on a host.

@@ -81,7 +81,8 @@ defines one of them is refused when its class is created.
 | Drive the clock | With a `SimClock`, `poll(timeout)` moves time to the next thing that happens |
 
 Its fills are optimistic on purpose, like a paper account's. It exercises plumbing. The conservative fill
-model is the shadow venue's job ([ADR 0003](0003-two-books.md)) and is not built yet.
+model is the shadow venue's job ([ADR 0003](0003-two-books.md)) and is not built yet. (It has been since:
+[ADR 0013](0013-shadow-cost-model.md).)
 
 The fake broker is not a registered venue. The registry still holds exactly `ibkr_paper` and `sim`.
 

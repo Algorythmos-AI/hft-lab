@@ -104,7 +104,8 @@ no model and sets no stage.
 
 - The promotion gate of [ADR 0008](0008-learning-loop.md) now has a definition that can be tested, and a
   forced rollback is one of its tests. The process that would call it weekly, move a model and tell the trader
-  is not built.
+  is not built. (It has been since: `python -m hftlab.learn.promote`,
+  [ADR 0023](0023-weekly-learning-loop.md).)
 - The two-sided trial count costs a file on the host. Without the ledger the registry's number is used, which
   is the weaker of the two guards.
 - The hold-out guard is a discipline of the code path, not a lock on the data: a dataset's rows are in the

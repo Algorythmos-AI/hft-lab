@@ -30,7 +30,9 @@ then the parts of the snapshot that later phases make real. More pairs and a sec
 tests against a deterministic fake broker and against synthetic streams and recordings the tests make
 themselves. That is all it has been run against:
 
-- Nothing has connected to a gateway. The capability probe has not been run with the paper login.
+- The capability probe has connected to the real paper gateway once, at a weekend, when there are no quotes.
+  That is the one thing here that has touched anything real. The probe report the F1 gate asks for needs an
+  open market, and F1 is still open. Nothing else has connected to a gateway.
 - **Nothing has traded.** No order has been placed on the paper account. The process that would is written,
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
@@ -39,15 +41,15 @@ themselves. That is all it has been run against:
   ([ADR 0028](adr/0028-imported-history.md)) and has read hand-written rows in tests only. Imported days are
   for fitting a model before enough recordings exist: they are never this venue's results, and they count
   towards no promotion.
-- No experiment has been run on real data. The research registry holds five hypotheses and five
-  experiments, all registered and none run.
+- No experiment has been run on real data. The research registry holds 6 hypotheses and 6 experiments, all
+  registered and none run, and 0 decision records.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
 - **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
   streams and against the fake broker only (see "Where F5 and F6 stand"). Its gate is not met and code
   cannot meet it. No model has been trained on real data, and nothing in this repository is evidence of an
   edge.
-- **Three pieces were written last, and are in the same state as the rest:** the scorer in a process of its
-  own ([ADR 0023](adr/0023-weekly-learning-loop.md), section 5), sleeve state kept across a restart, and the
+- **The pieces written after the first loop are in the same state as the rest:** the scorer in a process of
+  its own ([ADR 0023](adr/0023-weekly-learning-loop.md), section 5), sleeve state kept across a restart, and the
   two commands the registered experiments name ([ADR 0026](adr/0026-sleeve-state-across-a-restart.md)). Each
   is written and tested on synthetic data. None has run on a host, and none has seen real data.
 
@@ -58,7 +60,7 @@ themselves. That is all it has been run against:
 | F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
 | F4 | Open | The capability probe of F1, risk limits put in force by a decision record, the owner's decision to let the control sleeve place minimum-size paper orders, then the registered run `HFT-EXP-0002`: five trading days on the real paper account with zero reconciliation breaks and the slippage report. Code cannot close it: the days have to pass |
 
-| F6 | Open | Recorded weeks to train on, the owner's two times for the weekend jobs and their timers enabled, then two full weekly cycles on the host that needed no manual help ([`HFT-EXP-0003`](../research/experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md) is the first, registered and not run) and one rollback drill there ([runbook](runbooks/learning.md)). A deep challenger is not built. Code cannot close it: the weeks have to pass |
+| F6 | Open | Recorded weeks to train on, the owner's two times for the weekend jobs and their timers enabled, then two full weekly cycles on the host that needed no manual help ([`HFT-EXP-0003`](../research/experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md) is the first, registered and not run) and one rollback drill there ([runbook](runbooks/learning.md)). The deep challenger of the plan's line is written, as a small sequence network, and has been fitted to synthetic rows only. Code cannot close it: the weeks have to pass |
 
 ## Where F5 and F6 stand
 
@@ -173,8 +175,8 @@ waits, the timer times) is a first choice, marked as one where it is written.
 | Venue port | Done: `src/hftlab/venues/port.py`, with the shared guard ([ADR 0009](adr/0009-venue-port-guard-and-fake-broker.md), [ADR 0011](adr/0011-synchronous-pumped-port.md)) |
 | Paper lock in stages | Done: before connecting, after the handshake, before every order; a reconnect starts unchecked |
 | IBKR adapter against the fake broker | Done: `src/hftlab/venues/ibkr/` over `ib_async`, `src/hftlab/venues/fake/`, and a contract suite both pass. Written and tested without a gateway |
-| The probe | Written and tested against the fake broker. **Not yet run with the paper login** ([runbook](runbooks/ibkr-probe.md)) |
-| Exit gate: the probe report | Open. It needs the owner's run |
+| The probe | Written and tested against the fake broker. It has connected to the real paper gateway once, at a weekend, when there are no quotes; **it has not been run with the market open** ([runbook](runbooks/ibkr-probe.md)) |
+| Exit gate: the probe report | Open. It needs the owner's run with the market open: update rate, depth and the order round trip cannot be measured at a weekend |
 | Exit gate: decision records for the access route and the instrument form | Open. They follow the report; [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
 
 F1 is not finished until the last two rows are. Everything the adapter assumes about the gateway and could
@@ -188,7 +190,7 @@ not check offline is listed at the end of the runbook.
 | Leak mechanism | Done: `tools/leakcheck.py`, hooks, attestation ([ADR 0006](adr/0006-public-repo-and-leak-mechanism.md)) |
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
-| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4 |
-| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, the weekly loop 0023, the Directional Change sleeve 0024, gradient boosting 0025, sleeve state 0026, the deploy gate 0027, imported history 0028 and the sequence network 0029 |
-| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Twenty-three of the first file's 31 are verified by tests they name and the other 8 are open. Twelve of the second file's 80 are verified, all of them by tests on synthetic streams; the other 68 are open. Its last twelve, on directional change, come from a second release of the knowledge base |
+| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 12 records: 6 hypotheses, 6 experiments and 0 decisions |
+| ADRs | Done: 0001 to 0008, and 29 records now. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, the weekly loop 0023, the Directional Change sleeve 0024, gradient boosting 0025, sleeve state 0026, the deploy gate 0027, imported history 0028 and the sequence network 0029 |
+| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). 23 of the first file's 31 requirements are verified by tests they name and the other 8 are open. 12 of the second file's 80 requirements are verified, all of them by tests on synthetic streams; the other 68 are open. Its last 12, on directional change, come from a second release of the knowledge base |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

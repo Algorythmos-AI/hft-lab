@@ -7,7 +7,8 @@ these must hold:
   * `MODE` is exactly "paper"
   * `LIVE_TRADING_ENABLED` is unset, empty or an explicit false; any other value refuses
   * the gateway port is a paper port: IB Gateway 4002 or TWS 7497
-  * the broker reported at least one managed account, and every one of them is a paper id (`DU` and digits)
+  * the broker reported at least one managed account, and every one of them is a paper id (`DU`, at most one more
+    capital letter, then digits: the broker issues both `DU1234567` and `DUK123456`)
   * if a live username is declared, the configured username is known and is not that one
 
 `paper_violations` is pure: it reads nothing but its arguments, so every rule is testable without a broker.
@@ -34,7 +35,9 @@ LIVE_FLAG_VAR: Final = "LIVE_TRADING_ENABLED"
 USERNAME_VAR: Final = "HFT_IBKR_USERNAME"
 LIVE_USERNAME_VAR: Final = "HFT_IBKR_LIVE_USERNAME"
 _FALSE: Final = frozenset({"", "0", "false", "no", "off"})
-_PAPER_ACCOUNT = re.compile(r"DU[0-9]+")
+# The broker's paper ids: `DU` and digits, or, on newer accounts, `DU`, one capital letter and digits. Nothing looser:
+# a live id is `U` and digits, and an adviser's or an unknown prefix is refused.
+_PAPER_ACCOUNT = re.compile(r"DU[A-Z]?[0-9]+", re.ASCII)
 _LIVE_ACCOUNT = re.compile(r"U[0-9]+")
 
 
@@ -93,7 +96,8 @@ def _account_violations(accounts: object) -> list[str]:
         if isinstance(account, str) and _LIVE_ACCOUNT.fullmatch(account.strip()):
             out.append(f"managed account {position} of {len(accounts)} is a live account id")
         if not isinstance(account, str) or not _PAPER_ACCOUNT.fullmatch(account):
-            out.append(f"managed account {position} of {len(accounts)} is not a paper account id (DU and digits)")
+            where = f"managed account {position} of {len(accounts)}"
+            out.append(f"{where} is not a paper account id (DU, one letter at most, digits)")
     return out
 
 

@@ -1,7 +1,8 @@
 """Features, labels, learning and models compute. They hold no venue, so there is nothing they could send.
 
-And three things about what they compute with: the future stays in the label package, floats stay in the one
-module that reports statistics, and randomness is a hash of a seed, never a generator.
+And three things about what they compute with: the future stays in the label package, floats stay in the module
+that reports statistics and the module that fits with a library, and randomness is a hash of a seed, never a
+generator. And one about the optional ML set: one function of one module imports it (ADR 0025).
 """
 from __future__ import annotations
 
@@ -13,9 +14,9 @@ PACKAGES = {
     "src/hftlab/features/": ["__init__.py", "builder.py", "spec.py"],
     "src/hftlab/labels/": ["__init__.py", "outcome.py"],
     "src/hftlab/learn/": [
-        "__init__.py", "config.py", "dataset.py", "drift.py", "promote.py", "train.py", "validate.py",
+        "__init__.py", "boost.py", "config.py", "dataset.py", "drift.py", "promote.py", "train.py", "validate.py",
     ],
-    "src/hftlab/models/": ["__init__.py", "baseline.py", "file.py", "ridge.py", "scorer.py"],
+    "src/hftlab/models/": ["__init__.py", "baseline.py", "file.py", "ridge.py", "scorer.py", "trees.py"],
 }
 ML_SLEEVE = "src/hftlab/strategy/ml.py"
 WIRES = {"ib_async", "socket", "ssl", "asyncio", "http", "urllib", "subprocess"}
@@ -29,6 +30,9 @@ FROM_THE_VENUES = {
     "hftlab.venues.sim.cost.CostModelError", "hftlab.venues.sim.cost.load_cost_model",  # the training run's file
 }  # fmt: skip
 STATISTICS = "src/hftlab/learn/validate.py"
+BOOST = "src/hftlab/learn/boost.py"  # the one module that fits with a library, in the library's floats
+ML_SET = {"lightgbm", "scipy", "narwhals"}  # what requirements-ml.in adds to an environment
+ARRAYS = "numpy"  # the library's input. It comes with the broker's client library too, and is used nowhere else
 
 
 def learning_sources():
@@ -64,7 +68,7 @@ def test_the_future_is_known_to_the_label_package_and_to_nothing_a_decision_is_m
     """A label is hindsight. What computes features, what scores them and what trades on the score cannot import one."""
     blind = [(rel, tree) for rel, tree in sources()
              if rel.startswith(("src/hftlab/features/", "src/hftlab/models/", "src/hftlab/strategy/"))]  # fmt: skip
-    assert len(blind) == 3 + 5 + 8
+    assert len(blind) == 3 + 6 + 8
     for rel, tree in blind:
         for _, name in imports(tree, rel):
             assert not name.startswith(("hftlab.labels", "hftlab.learn")), f"{rel} imports {name}"
@@ -82,9 +86,11 @@ def uses_a_float(tree: ast.AST) -> list[int]:
     return lines
 
 
-def test_floats_are_confined_to_the_statistics_of_one_module():
+def test_floats_are_confined_to_the_statistics_of_one_module_and_the_library_fit_of_another():
+    """What scores a row (`models/`), what builds one and what decides a promotion hold no float at all."""
     found = {rel: uses_a_float(tree) for rel, tree in [*learning_sources(), (ML_SLEEVE, dict(sources())[ML_SLEEVE])]}
-    assert {rel for rel, lines in found.items() if lines} == {STATISTICS}
+    assert {rel for rel, lines in found.items() if lines} == {STATISTICS, BOOST}
+    assert not any(rel.startswith("src/hftlab/models/") for rel, lines in found.items() if lines)
     tree = dict(sources())[STATISTICS]
     floating = {"Sharpe", "Deflated", "sharpe", "_signed_root", "null_variance", "deflated_sharpe"}
     for node in tree.body:
@@ -99,10 +105,30 @@ def test_floats_are_confined_to_the_statistics_of_one_module():
 def test_randomness_is_a_hash_of_a_seed_and_never_a_generator():
     for rel, tree in [*learning_sources(), (ML_SLEEVE, dict(sources())[ML_SLEEVE])]:
         tops = {name.split(".")[0] for _, name in imports(tree, rel)}
-        assert not tops & {"random", "secrets", "uuid", "numpy"}, rel
+        assert not tops & {"random", "secrets", "uuid"}, rel
+        assert ARRAYS not in tops or rel == BOOST, f"{rel}: arrays are the library's input and nothing else's"
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 assert called_name(node) not in ("hash", "urandom", "shuffle", "sample"), f"{rel} line {node.lineno}"
+            if rel == BOOST and isinstance(node, ast.Attribute):
+                assert node.attr != "random", f"{rel} line {node.lineno}: the array library's generator"
+
+
+def test_the_optional_ml_set_is_imported_by_one_module_inside_a_function_and_by_nothing_else():
+    """Importing any module of the platform, `hftlab.learn.boost` among them, needs none of the optional set."""
+    users, at_the_top = set(), []
+    for rel, tree in sources():
+        heavy = {name.split(".")[0] for _, name in imports(tree, rel)} & (ML_SET | {ARRAYS})
+        if heavy:
+            users.add(rel)
+            assert rel == BOOST and heavy == {"lightgbm", ARRAYS}, f"{rel} imports {sorted(heavy)}"
+        if rel == BOOST:
+            at_the_top = [name.split(".")[0] for node in tree.body for _, name in imports(node, rel)
+                          if isinstance(node, ast.Import | ast.ImportFrom)]  # fmt: skip
+    assert users == {BOOST} and not {*at_the_top} & (ML_SET | {ARRAYS}), "imported where it is used, not on import"
+    blind = [rel for rel, tree in sources() if rel.startswith("src/hftlab/models/")
+             for _, name in imports(tree, rel) if name.startswith("hftlab.learn")]  # fmt: skip
+    assert blind == [], "what scores a model cannot reach what fits one"
 
 
 def test_nothing_is_iterated_in_an_order_that_depends_on_a_hash():

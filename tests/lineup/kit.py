@@ -7,9 +7,10 @@ from pathlib import Path
 
 from hftlab import lineup
 from hftlab.journal import Journal, canonical
+from hftlab.learn.config import Boosting
 from hftlab.learn.dataset import build
 from hftlab.learn.drift import EXPECTED_KEY, by_column, summarise
-from hftlab.learn.train import keep_report, ridge_model
+from hftlab.learn.train import gbm_model, keep_report, ridge_model
 from hftlab.lineup import Lineup, Named
 from hftlab.models import ModelRegistry
 from hftlab.record.format import describe
@@ -28,11 +29,19 @@ SERVING = {
 }  # fmt: skip
 
 
-def register(registry: Path, seed: int = 1, *, blocks: int = 40, not_a_result: int = 1) -> Named:
-    """Fit a ridge model to a planted stream and keep it, with a report that says how it is served, by their hashes."""
+BOOSTING = Boosting(trees=20, max_depth=3, leaves=8, learning_rate_ppm=200_000, min_leaf_rows=5, bins=63,
+                    l2_ppm=1_000_000, leaf_scale=1000, seed=1)  # fmt: skip
+
+
+def register(registry: Path, seed: int = 1, *, blocks: int = 40, not_a_result: int = 1, kind: str = "ridge") -> Named:
+    """Fit a model to a planted stream and keep it, with a report that says how it is served, by their hashes.
+
+    A ridge model unless `kind` is `gbm`, which needs the optional ML set to be fitted.
+    """
     stream = planted(seed, blocks)
     made = build(stream, features(), labels())
-    model = ridge_model(made, range(len(made.rows)), Fraction(1, 1000))
+    everything = range(len(made.rows))
+    model = gbm_model(made, everything, BOOSTING) if kind == "gbm" else ridge_model(made, everything, Fraction(1, 1000))
     columns = by_column(made.features, [row.features for row in made.rows])
     columns[EXPECTED_KEY] = [WIN, -WIN, WIN // 2, 0, WIN]
     report = {

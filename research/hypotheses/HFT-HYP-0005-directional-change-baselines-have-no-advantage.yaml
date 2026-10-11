@@ -1,5 +1,5 @@
-# HFT-HYP-0004. A hypothesis record (research/README.md). Written before any result it concerns exists.
-id: HFT-HYP-0004
+# HFT-HYP-0005. A hypothesis record (research/README.md). Written before any result it concerns exists.
+id: HFT-HYP-0005
 title: The two Directional Change baselines show no advantage over the control sleeve after costs
 status: registered            # registered | supported | refuted. Changed only by a decision record
 registered: "2026-10-11"
@@ -7,7 +7,7 @@ phase: F5                     # the first shadow run of the Directional Change s
 
 statement: >
   Neither variant of the Directional Change sleeve (ADR 0024), at any of the three thresholds of
-  HFT-EXP-0004, beats the control sleeve after costs in the shadow book. For every one of the six sleeves:
+  HFT-EXP-0005, beats the control sleeve after costs in the shadow book. For every one of the six sleeves:
   (a) the lower bound of the day-block bootstrap interval of its mean result per round trip, after the
   modelled costs, is not above zero;
   (b) the lower bound of the same interval for its mean result per round trip less the control sleeve's,
@@ -30,7 +30,7 @@ why: >
 
 what_would_show_it_is_wrong:
   - For one sleeve, both lower bounds above zero and a place among its null of one in a hundred, with at
-    least the round trips and the trading days HFT-EXP-0004 asks for, on a cost model that is not a
+    least the round trips and the trading days HFT-EXP-0005 asks for, on a cost model that is not a
     placeholder. That refutes the hypothesis for that variant, threshold, pair and stretch of days. It
     promotes nothing (see below).
   - A run that does not replay to the decisions it took (ADR 0005). Then it measured nothing, and says
@@ -39,14 +39,14 @@ what_would_show_it_is_wrong:
 what_it_does_not_say: >
   Nothing about other thresholds, another pair, another price series or a rule that is not one of these
   two. Nothing about a live account: every result is the shadow book's. And it is not a promotion rule.
-  No rule is in force and HFT-EXP-0004 chooses none: a refuted hypothesis here is a reason to register a
+  No rule is in force and HFT-EXP-0005 chooses none: a refuted hypothesis here is a reason to register a
   longer experiment on days this one did not see, with these six configurations counted as trials, never
   a reason to move a sleeve out of shadow.
 
 tested_by:
-  - HFT-EXP-0004              # registered, NOT RUN
+  - HFT-EXP-0005              # registered, NOT RUN
 
 evidence: >
-  None. Nothing has been recorded from the real feed and the sleeve has seen no real data. HFT-EXP-0004
+  None. Nothing has been recorded from the real feed and the sleeve has seen no real data. HFT-EXP-0005
   has not been run. The detector, the sleeve and the null run on synthetic streams in tests/strategy/.
   Those tests check the code; they are not this experiment and are not evidence for this hypothesis.

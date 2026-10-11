@@ -153,8 +153,9 @@ def test_an_instrument_is_built_from_what_the_gateway_reports():
 
 @pytest.mark.parametrize(
     "changes",
-    [{"minTick": 0.0}, {"minTick": NAN}, {"minSize": 0.0}, {"sizeIncrement": 0.0}, {"minSize": 0.5},
-     {"sizeIncrement": 0.01}, {"minSize": NAN}],
+    [{"minTick": 0.0}, {"minTick": NAN}, {"minSize": 0.0}, {"sizeIncrement": 0.0}, {"minSize": 1.5},
+     {"minSize": 0.3}, {"sizeIncrement": 0.03}, {"sizeIncrement": 2.5}, {"minSize": -1.0}, {"minSize": NAN},
+     {"minSize": True}, {"sizeIncrement": "1"}],
 )  # fmt: skip
 def test_a_gateway_answer_that_leaves_a_number_out_is_refused_not_defaulted(changes):
     with pytest.raises(TranslationError):
@@ -162,6 +163,18 @@ def test_a_gateway_answer_that_leaves_a_number_out_is_refused_not_defaulted(chan
     with pytest.raises(TranslationError):
         nameless = ContractDetails(minTick=5e-05, minSize=1.0, sizeIncrement=1.0)
         tr.instrument_from(nameless, "EUR.USD", InstrumentKind.CASH)
+
+
+@pytest.mark.parametrize("stated", [0.01, 0.1, 0.5, 0.25, 1.0, 1])
+def test_a_size_finer_than_one_unit_is_taken_as_one_unit(stated):
+    """The paper gateway reports EUR.USD with a minimum of 0.01. One whole unit is a multiple of it."""
+    built = tr.instrument_from(details(minSize=stated, sizeIncrement=stated), "EUR.USD", InstrumentKind.CASH)
+    assert (built.min_order_size, built.size_increment) == (1, 1)
+
+
+def test_a_whole_size_is_kept_as_reported():
+    built = tr.instrument_from(details(minSize=20000.0, sizeIncrement=0.01), "EUR.USD", InstrumentKind.CASH)
+    assert (built.min_order_size, built.size_increment) == (20_000, 1)
 
 
 def test_an_answer_for_another_contract_is_refused():

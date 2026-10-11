@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Final
@@ -26,7 +26,7 @@ MB: Final = 1_000_000
 _TOP: Final = frozenset(
     {
         "version", "status", "state_dir", "lineup", "pairs", "horizons_seconds", "features", "label", "ridge_penalty",
-        "validation", "memory_budget_mb", "promotion", "drift", "scorer",
+        "validation", "memory_budget_mb", "promotion", "drift", "scorer", "model", "boosting",
     }
 )  # fmt: skip
 _FEATURES: Final = frozenset({"lookbacks_ms", "rate_window_ms", "range_window_ms", "stale_after_ms"})
@@ -38,6 +38,14 @@ _RULE: Final = ("decision", "min_trades", "min_days", "max_drawdown_micro", "dra
 _PROMOTION: Final = frozenset({*_RULE, "baseline_sleeve"})
 _DRIFT: Final = frozenset({"min_rows", "feature_shift_ppm", "calibration_gap_micro", "spread_ratio_x100"})
 _SCORER: Final = frozenset({"timeout_ms", "restart_first_ms", "restart_last_ms"})
+RIDGE: Final = "ridge"
+GBM: Final = "gbm"
+MODELS: Final = (RIDGE, GBM)
+# The most a boosted model may be, whatever the file says: it is fitted on a small shared host and scored in the
+# trader's loop (ADR 0025). The model file's own limits (`hftlab.models.trees`) are no tighter than these.
+MOST_TREES: Final = 500
+MOST_DEPTH: Final = 6
+MOST_BINS: Final = 255
 _SLEEVE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 NOT_IN_FORCE: Final = Rule(None, 1, 1, 0, 1, 500_000, 0)  # names no decision record, so it can pass nothing
 
@@ -61,6 +69,41 @@ class Drift:
 
 
 @dataclass(frozen=True, slots=True)
+class Boosting:
+    """The numbers a gradient-boosted model is fitted with (ADR 0025). Fixed in the file: nothing searches them."""
+
+    trees: int  # per target
+    max_depth: int
+    leaves: int  # per tree, at most
+    learning_rate_ppm: int  # how much of each tree is added, in millionths
+    min_leaf_rows: int  # a leaf holds at least this many training rows
+    bins: int  # the values of a feature are grouped into at most this many before a split is looked for
+    l2_ppm: int  # the penalty on a leaf's value, in millionths
+    leaf_scale: int  # a leaf is kept as a whole number of 1 / leaf_scale millionths of the quote currency
+    seed: int
+
+    def __post_init__(self) -> None:
+        if not (1 <= self.trees <= MOST_TREES and 1 <= self.max_depth <= MOST_DEPTH and 2 <= self.bins <= MOST_BINS):
+            raise ValueError(
+                f"boosting: at most {MOST_TREES} trees, a depth of at most {MOST_DEPTH} and 2 to {MOST_BINS} bins"
+            )
+        if not 2 <= self.leaves <= 2**self.max_depth:
+            raise ValueError("boosting: a tree of this depth has between 2 leaves and 2 to the power of its depth")
+        if not 0 < self.learning_rate_ppm <= 1_000_000 or not 1 <= self.leaf_scale <= 1_000_000:
+            raise ValueError("boosting: a learning rate of 1 to 1,000,000 ppm and a leaf scale of 1 to 1,000,000")
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "trees": self.trees, "max_depth": self.max_depth, "leaves": self.leaves,
+            "learning_rate_ppm": self.learning_rate_ppm, "min_leaf_rows": self.min_leaf_rows, "bins": self.bins,
+            "l2_ppm": self.l2_ppm, "leaf_scale": self.leaf_scale, "seed": self.seed,
+        }  # fmt: skip
+
+
+_BOOSTING: Final = frozenset(field.name for field in fields(Boosting))
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     state_dir: Path
     lineup: Path
@@ -70,6 +113,8 @@ class Settings:
     exit_wait_ns: int
     stuck_increments: int
     penalty: Fraction
+    model: str  # the kind of model a run fits: `ridge` or `gbm`
+    boosting: Boosting  # read by a run whose model is `gbm`, and by nothing else
     min_train_weeks: int
     hold_out_weeks: int
     seed: int
@@ -102,8 +147,13 @@ class Settings:
     def frozen(self, pair: str, horizon_ns: int, cost_model: dict[str, object]) -> dict[str, object]:
         """Everything an evaluation of one pair and horizon depends on, as plain values: what a trial is counted by."""
         features = self.features
+        # What a kind of model is fitted with is part of its trial and of no other kind's: changing a number
+        # the run does not read makes no new configuration.
+        fitted: dict[str, object] = (
+            {"penalty": str(self.penalty)} if self.model == RIDGE else {"boosting": self.boosting.as_dict()}
+        )
         return {
-            "kind": "ridge",
+            "kind": self.model,
             "pair": pair,
             "horizon_ns": horizon_ns,
             "horizons_ns": list(self.horizons_ns),
@@ -115,7 +165,7 @@ class Settings:
             },
             "exit_wait_ns": self.exit_wait_ns,
             "stuck_increments": self.stuck_increments,
-            "penalty": str(self.penalty),
+            **fitted,
             "min_train_weeks": self.min_train_weeks,
             "hold_out_weeks": self.hold_out_weeks,
             "seed": self.seed,
@@ -187,6 +237,9 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
     features, label = _block(loaded, "features", _FEATURES), _block(loaded, "label", _LABEL)
     validation, promotion = _block(loaded, "validation", _VALIDATION), _block(loaded, "promotion", _PROMOTION)
     drift, scorer = _block(loaded, "drift", _DRIFT), _block(loaded, "scorer", _SCORER)
+    boosting = _block(loaded, "boosting", _BOOSTING)
+    if loaded["model"] not in MODELS:
+        raise LearnConfigError(f"{source}: model is one of {', '.join(MODELS)}, not {loaded['model']!r}")
     lookbacks = features["lookbacks_ms"]
     if not isinstance(lookbacks, list) or any(type(value) is not int for value in lookbacks):
         raise LearnConfigError(f"{source}: features.lookbacks_ms is a list of whole milliseconds")
@@ -200,6 +253,11 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
         )  # fmt: skip
         names = tuple(check_pair(pair) for pair in pairs)
         penalty = Fraction(loaded["ridge_penalty"]) if isinstance(loaded["ridge_penalty"], str) else None
+        boosted = Boosting(
+            _whole(boosting, "trees"), _whole(boosting, "max_depth"), _whole(boosting, "leaves", least=2),
+            _whole(boosting, "learning_rate_ppm"), _whole(boosting, "min_leaf_rows"), _whole(boosting, "bins", least=2),
+            _whole(boosting, "l2_ppm", least=0), _whole(boosting, "leaf_scale"), _whole(boosting, "seed", least=0),
+        )  # fmt: skip
     except (ValueError, ZeroDivisionError) as exc:
         raise LearnConfigError(f"{source}: {exc}") from exc
     if penalty is None or penalty <= 0:
@@ -220,6 +278,8 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
         exit_wait_ns=_whole(label, "exit_wait_seconds", least=0) * SECOND,
         stuck_increments=_whole(label, "stuck_increments", least=0),
         penalty=penalty,
+        model=loaded["model"],
+        boosting=boosted,
         min_train_weeks=_whole(validation, "min_train_weeks"),
         hold_out_weeks=_whole(validation, "hold_out_weeks", least=0),
         seed=_whole(validation, "seed", least=0),

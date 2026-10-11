@@ -37,3 +37,10 @@ strict = true
 warn_unused_configs = true
 # The broker library is typed but leaves some of its own functions unannotated; calling them is not our defect.
 untyped_calls_exclude = ["ib_async", "eventkit"]
+
+[[tool.mypy.overrides]]
+# The optional ML set (ADR 0025). It is imported in one function of hftlab.learn.boost and may not be installed,
+# so it is never followed: the check says the same with it and without it.
+module = ["lightgbm"]
+ignore_missing_imports = true
+follow_imports = "skip"

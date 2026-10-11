@@ -89,7 +89,7 @@ Both variants read only confirmed events that are not warm-up, and the provision
 
 They are baselines because the published method gives no rule to trade by. These two are the plainest things
 one can do with an event, written down before anything is measured. The expected outcome, registered as
-`HFT-HYP-0004`, is no advantage over the control sleeve after costs.
+`HFT-HYP-0005`, is no advantage over the control sleeve after costs.
 
 ### 3. Every result is read against a random walk of the same volatility
 
@@ -134,5 +134,5 @@ same days. A result inside the distribution has shown nothing.
 - The sleeve is the kind `directional_change` in the shadow runner's and the trader's settings. Every number
   of it in `config/shadow.yaml` and `config/trader.yaml` is a placeholder, and its stage is `shadow` with no
   rule that could be met.
-- Its first shadow run is registered as `HFT-EXP-0004`, with both variants at three thresholds, gross and net
+- Its first shadow run is registered as `HFT-EXP-0005`, with both variants at three thresholds, gross and net
   of cost for each. It has not been run.

@@ -1,0 +1,57 @@
+# HFT-HYP-0004. A hypothesis record (research/README.md). Written before any result it concerns exists.
+id: HFT-HYP-0004
+title: The first gradient-boosted challenger shows no advantage over the control sleeve or the ridge challenger after costs
+status: registered            # registered | supported | refuted. Changed only by a decision record
+registered: "2026-10-11"
+phase: F6                     # the learning loop, with a second kind of model
+
+statement: >
+  A gradient-boosted model of small trees (ADR 0025), fitted to the same top-of-book features of the same
+  pair as the ridge model, trained at the weekend on the recordings and served for one trading week as a
+  challenger in shadow, has no advantage after costs:
+  (a) the lower bound of the day-block bootstrap interval of its mean result per round trip, in the shadow
+  book and after the modelled costs, is not above zero;
+  (b) the lower bound of the same interval for its mean result per round trip less the control sleeve's, in
+  the same pair over the same trading days, is not above zero;
+  (c) the lower bound of the same interval for its mean result per round trip less the ridge challenger's,
+  in the same pair over the same trading days of the same week, is not above zero.
+  This is the outcome we expect. It is stated as the hypothesis so that a week that seems to show an edge has
+  to refute something written down beforehand.
+
+why: >
+  The features are the ones HFT-HYP-0003 describes: a handful of exact numbers of the best bid and ask, and
+  three clock features (ADR 0020). Trees can find a step, a band or an interaction in them that a straight
+  line cannot, and the tests show that on a synthetic stream where one was planted. Nothing says the real
+  feed holds one that survives a spread, two commissions and the latency of a fill-or-kill market order at a
+  holding time of a minute. What trees do more readily than a straight line is fit noise: on a synthetic
+  stream with nothing in it they expect a profit of some rows, trade them, and lose their costs. So the
+  likeliest reading of a real week is a challenger that trades more than the ridge one and earns no more.
+  The settings are placeholders chosen small and tuned on nothing, and one week of one pair is little
+  evidence. The control sleeve has no edge and loses its costs, so losing less than it is not an edge
+  either: that is why (a) is asked beside (b). And a second kind of model is a second look at the same data:
+  that is why (c) is asked, and why its trial is counted.
+
+what_would_show_it_is_wrong:
+  - All three lower bounds above zero, with at least the trades and the trading days HFT-EXP-0004 asks for of
+    each of the three sleeves, on reports that do not rest on placeholders. That refutes the hypothesis for
+    that week and that pair. It promotes nothing (see below).
+  - (a) and (b) above zero and (c) not is no refutation. It says the week was a good one for a model of these
+    features and says nothing for trees over a straight line.
+  - A week that does not replay to the decisions it took (ADR 0005), or a challenger's place that served
+    more than one model in the week. Then the week measured nothing, and says nothing either way.
+
+what_it_does_not_say: >
+  Nothing about other settings of the trees, another pair or another holding time, and nothing about a
+  larger model. Nothing about a live account: every result is the shadow book's. And it is not a promotion
+  rule. No rule is in force, no decision record exists, and HFT-EXP-0004 chooses none: a refuted hypothesis
+  here is a reason to register a rule and a longer experiment, never a reason to promote the model that
+  refuted it.
+
+tested_by:
+  - HFT-EXP-0004              # registered, NOT RUN
+
+evidence: >
+  None. Nothing has been recorded from the real feed, no model of either kind has been trained on real data
+  and none has served. HFT-EXP-0004 has not been run, and neither has HFT-EXP-0003. The code runs on
+  synthetic streams in tests/learn/ and tests/lineup/. Those tests check the code; they are not this
+  experiment and are not evidence for this hypothesis.

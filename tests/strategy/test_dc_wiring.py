@@ -133,7 +133,7 @@ def test_a_setting_left_out_is_refused_and_so_is_a_sleeve_with_no_cost_model_or_
 
 # ---- the registered first run ---------------------------------------------------------------------------------------
 
-FOLDER = ROOT / "research" / "experiments" / "HFT-EXP-0004-directional-change-shadow"
+FOLDER = ROOT / "research" / "experiments" / "HFT-EXP-0005-directional-change-shadow"
 
 
 def test_the_registered_first_run_is_a_config_the_runner_accepts_and_it_has_no_result():
@@ -157,7 +157,7 @@ def test_the_registered_first_run_is_a_config_the_runner_accepts_and_it_has_no_r
     assert config["measure"]["null_walks"] == {"count": 99, "seed": 1, "per": "recorded_day"}
     protocol = (FOLDER / "protocol.md").read_text()
     for stated in (
-        "Not run.", "It tests HFT-HYP-0004.", "**Expected outcome: no advantage.**", "0.05, 0.10 and 0.20 percent",
+        "Not run.", "It tests HFT-HYP-0005.", "**Expected outcome: no advantage.**", "0.05, 0.10 and 0.20 percent",
         "**gross:**", "**net of cost:**", "for every threshold tested", "the control sleeve's", "99 random walks",
         "has seen no real data", "**not built**",
     ):  # fmt: skip
@@ -166,8 +166,8 @@ def test_the_registered_first_run_is_a_config_the_runner_accepts_and_it_has_no_r
 
 
 def test_the_hypothesis_is_registered_expects_no_advantage_and_has_no_evidence():
-    path = ROOT / "research" / "hypotheses" / "HFT-HYP-0004-directional-change-baselines-have-no-advantage.yaml"
+    path = ROOT / "research" / "hypotheses" / "HFT-HYP-0005-directional-change-baselines-have-no-advantage.yaml"
     record = yaml.safe_load(path.read_text())
-    assert (record["id"], record["status"], record["tested_by"]) == ("HFT-HYP-0004", "registered", ["HFT-EXP-0004"])
+    assert (record["id"], record["status"], record["tested_by"]) == ("HFT-HYP-0005", "registered", ["HFT-EXP-0005"])
     assert "no advantage" in record["title"] and "This is the outcome we expect." in record["statement"]
     assert record["evidence"].startswith("None.") and "random-walk null" in record["statement"]

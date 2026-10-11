@@ -1,10 +1,10 @@
-# HFT-EXP-0004: the Directional Change sleeve's first run in shadow, on five recorded days
+# HFT-EXP-0005: the Directional Change sleeve's first run in shadow, on five recorded days
 
 **Status: registered on 2026-10-11. Not run.** No quote has been recorded from the real feed yet, so there is
 nothing to run it on. The sleeve has seen no real data. This folder holds no result, and no result of it
 exists anywhere else.
 
-It tests HFT-HYP-0004. The sleeve, its detector and its null are described in
+It tests HFT-HYP-0005. The sleeve, its detector and its null are described in
 [ADR 0024](../../../docs/adr/0024-directional-change-sleeve.md).
 
 **Expected outcome: no advantage.** The likeliest result is that neither variant, at any threshold, beats the
@@ -51,9 +51,9 @@ them.
 ## The run
 
 ```
-python -m hftlab.shadow --config research/experiments/HFT-EXP-0004-directional-change-shadow/config.yaml \
+python -m hftlab.shadow --config research/experiments/HFT-EXP-0005-directional-change-shadow/config.yaml \
     --day <day 1> <day 2> <day 3> <day 4> <day 5>
-python -m hftlab.shadow --verify var/shadow/HFT-EXP-0004/<day 1>.jsonl
+python -m hftlab.shadow --verify var/shadow/HFT-EXP-0005/<day 1>.jsonl
 ```
 
 One session over the five days, into a new journal. It is run once. The settings each sleeve detected its
@@ -107,5 +107,5 @@ for every threshold tested, whatever they show. None is left out.
 ## Afterwards
 
 An experiment that is on `main` is frozen (research/README.md, rule 4), so the results do not come into this
-folder. The run is recorded as a new experiment that names HFT-EXP-0004 and holds its figures and the
+folder. The run is recorded as a new experiment that names HFT-EXP-0005 and holds its figures and the
 journal's last hash, never the journal or any market data. A decision record then cites both.

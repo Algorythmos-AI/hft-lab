@@ -65,8 +65,8 @@ shadow/       the shadow runner and its hash-chained journal                    
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
 features/     causal, exact features of one pair's quote stream, the same offline and live             F5
 labels/       cost-aware outcomes and triple-barrier outcomes, each with the time its window ends      F5
-models/       the hashed model file, the registry, an exact ridge model, two baselines, the scorer     F5
-              (in-process today; gradient boosting and neural networks are not built)
+models/       the hashed model file, the registry, an exact ridge model, boosted trees as whole        F5
+              numbers, two baselines, the scorer (in-process today; neural networks are not built)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
 trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay          F4
@@ -172,7 +172,9 @@ That is the plan. What exists of it is tested on synthetic streams and against t
 and labels with their timing rule ([ADR 0020](adr/0020-features-and-labels-timing.md)), the splits, the
 hold-out, the trial count and the promotion decision as a function
 ([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)), the model file, an exact ridge
-model and the scorer ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)), and the weekly loop as
+model and the scorer ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)), gradient-boosted trees fitted
+with an optional library and kept and scored as whole numbers
+([ADR 0025](adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)), and the weekly loop as
 processes: the training run, the hash-chained lineup journal the trader reads its models from, the weekly
 decision with its rollback and drill, and the drift look ([ADR 0023](adr/0023-weekly-learning-loop.md)).
 Nothing has trained on a real recording, no promotion rule exists so nothing can be promoted, the scorer

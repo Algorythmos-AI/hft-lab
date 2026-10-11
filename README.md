@@ -59,7 +59,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | Features of the quote stream: causal, exact integers, the same from a recording and live | `src/hftlab/features/` |
 | Labels: cost-aware outcomes priced as the shadow venue prices, and triple-barrier outcomes | `src/hftlab/labels/` |
 | Datasets with a look-ahead check, walk-forward validation with a hold-out read once, the promotion decision as a function | `src/hftlab/learn/` |
-| The model file and its registry, an exact ridge regression, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
+| The model file and its registry, an exact ridge regression, gradient-boosted trees kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
 | An ML sleeve skeleton that asks a scorer and reports that it may not leave shadow on placeholder costs | `src/hftlab/strategy/ml.py` |
 | The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
@@ -99,7 +99,7 @@ What that does and does not mean:
   variants and a random-walk null to read it against. It is tested on synthetic streams, has seen no real
   data, sits at stage `shadow` with placeholder numbers, and is expected to show no advantage over the
   control sleeve after costs
-  ([`HFT-EXP-0004`](research/experiments/HFT-EXP-0004-directional-change-shadow/protocol.md), not run).
+  ([`HFT-EXP-0005`](research/experiments/HFT-EXP-0005-directional-change-shadow/protocol.md), not run).
 - **F6 is open:** the weekly loop is written. Weekend training registers a candidate, the trader serves a
   champion and challengers named by hash in a hash-chained lineup journal, and the weekly decision promotes,
   keeps or rolls back ([ADR 0023](docs/adr/0023-weekly-learning-loop.md),
@@ -110,8 +110,15 @@ What that does and does not mean:
   purpose, and against the fake broker. **No real data exists yet, no model has been trained on real data,
   and nothing here is evidence of an edge.** The first challenger's week is registered
   ([`HFT-EXP-0003`](research/experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md), not
-  run), and its expected outcome is no advantage over the control sleeve after costs. Gradient boosting and neural networks need new dependencies and a decision on where training
-  runs; neither has been made.
+  run), and its expected outcome is no advantage over the control sleeve after costs.
+- **Gradient boosting is a second kind of model beside ridge**
+  ([ADR 0025](docs/adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)). It is trained with one
+  library from an optional requirement set (`make ml`), which the recorder and the trader never install or
+  import, and the trained trees are kept and scored as whole numbers by the platform's own code. Ridge stays
+  the default. It has been fitted to synthetic streams only; its first week is registered
+  ([`HFT-EXP-0004`](research/experiments/HFT-EXP-0004-first-gbm-challenger-shadow-week/protocol.md), not run)
+  and its expected outcome is no advantage over the control sleeve or the ridge challenger after costs.
+  Neural networks are not built: they wait for recorded data and a decision on compute.
 
 The [roadmap](docs/roadmap.md) has the state of each part.
 
@@ -121,6 +128,7 @@ You need [uv](https://docs.astral.sh/uv/) and git. Python 3.12 is installed by u
 
 ```
 make bootstrap     # one .venv from the hash-locked requirement files
+make ml            # optional: add the gradient-boosting library, needed only to train a gbm model
 make hooks         # use the tracked git hooks: pre-commit, commit-msg, pre-push
 make ci            # lint + typecheck + test + leakcheck: what CI runs
 ```

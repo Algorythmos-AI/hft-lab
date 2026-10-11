@@ -1,8 +1,8 @@
-# HFT-EXP-0004: the frozen settings of the Directional Change sleeve's first shadow run.
+# HFT-EXP-0005: the frozen settings of the Directional Change sleeve's first shadow run.
 # A config for `python -m hftlab.shadow --config <this file> --day <the five day folders>`.
 # Frozen once it is on main (research/README.md, rule 4). The numbers below are this experiment's, fixed
 # before any result exists. They are not a recommendation and the shipped configs keep their placeholders.
-journal_dir: var/shadow/HFT-EXP-0004
+journal_dir: var/shadow/HFT-EXP-0005
 seed: 1                         # seeds the shadow venue's latency draws
 
 pairs:                          # live mode only; this experiment runs on recorded days

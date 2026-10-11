@@ -108,3 +108,11 @@ is handed a scorer, a feature builder and a feasibility map.
   knowledge base, so that it is built from the source and not from memory.
 - The scorer's own process, the weekend training run, the weekly promotion and the drift watch of ADR 0008
   are not built.
+
+## Addendum, 2026-10-11: gradient boosting is built
+
+The consequence above that gradient boosting is not built no longer holds.
+[ADR 0025](0025-gradient-boosting-optional-set-and-whole-number-trees.md) adds it as a second kind of model
+file, `gbm`. What this record expected of it changed in one respect: the float arithmetic does not stay inside
+the scorer, it stays out of it. The library's floats end where the trees are exported, and the scorer adds
+whole numbers. Neural networks are still not built.

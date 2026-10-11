@@ -59,6 +59,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | Features of the quote stream: causal, exact integers, the same from a recording and live | `src/hftlab/features/` |
 | Labels: cost-aware outcomes priced as the shadow venue prices, and triple-barrier outcomes | `src/hftlab/labels/` |
 | Datasets with a look-ahead check, walk-forward validation with a hold-out read once, the promotion decision as a function | `src/hftlab/learn/` |
+| An import of tick files the owner exported himself, read from disk into a store of its own, with provenance in every day (nothing is downloaded; no file has been imported yet) | `src/hftlab/history/` |
 | The model file and its registry, an exact ridge regression, gradient-boosted trees kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
 | An ML sleeve skeleton that asks a scorer and reports that it may not leave shadow on placeholder costs | `src/hftlab/strategy/ml.py` |
 | The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
@@ -111,6 +112,15 @@ What that does and does not mean:
   and nothing here is evidence of an edge.** The first challenger's week is registered
   ([`HFT-EXP-0003`](research/experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md), not
   run), and its expected outcome is no advantage over the control sleeve after costs.
+- **History can be imported from files, and only from files**
+  ([ADR 0028](docs/adr/0028-imported-history.md), [runbook](docs/runbooks/history-import.md)). The platform's
+  own recordings come first. Before enough of them exist, the owner can export tick files himself, under
+  terms he accepts and nobody here has verified, and `python -m hftlab.history import` reads them from a
+  folder into a second store. It downloads nothing. Every imported day carries `source: imported`, a label,
+  the SHA-256 of its input files and `terms_verified: false`; every dataset, report and map says how many of
+  its rows were recorded and how many imported; and the weekly rule counts no imported day towards a
+  promotion. It has read hand-written rows in tests only: no real export has been imported and no model has
+  been fitted to one.
 - **Gradient boosting is a second kind of model beside ridge**
   ([ADR 0025](docs/adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)). It is trained with one
   library from an optional requirement set (`make ml`), which the recorder and the trader never install or

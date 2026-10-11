@@ -1,4 +1,5 @@
 """Directional Change (ADR 0024): the detector, a rule-based baseline sleeve on top of it, and its null benchmark."""
+from hftlab.strategy.dc import null
 from hftlab.strategy.dc.detector import (
     DOWN,
     MID,
@@ -12,17 +13,22 @@ from hftlab.strategy.dc.detector import (
     from_percent,
     mid,
 )
+from hftlab.strategy.dc.sleeve import CONTRARIAN, TREND, DcSleeve
 
 __all__ = [
+    "CONTRARIAN",
     "DOWN",
     "MID",
+    "TREND",
     "UP",
     "Completed",
     "DcEvent",
+    "DcSleeve",
     "Detector",
     "DetectorError",
     "DetectorState",
     "Provisional",
     "from_percent",
     "mid",
+    "null",
 ]

@@ -126,7 +126,7 @@ class MlSleeve:
             found = self._scorer.score(row)
             if found is not None and found.expected_micro > self.margin_micro:
                 waiting = replace(state, phase=ENTERING, order_id=None, decided_ns=now_ns, tried_ns=now_ns)
-                return waiting, (Intent(self.pair, found.side, self.size, ENTRY),)
+                return waiting, (Intent(self.pair, found.side, self.size, ENTRY, expected_micro=found.expected_micro),)
         elif state.phase == HOLDING and held != 0 and now_ns - state.decided_ns >= self.horizon_ns:
             side = Side.SELL if held > 0 else Side.BUY
             waiting = replace(state, phase=EXITING, order_id=None, exits=state.exits + 1, tried_ns=now_ns)

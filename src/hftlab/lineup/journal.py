@@ -1,7 +1,7 @@
 """The lineup journal: a small hash-chained file that says which model serves in which place (ADR 0023).
 
     {"type": "lineup", "action": "promote", "champion": {...}, "previous": [...], "challengers": [...],
-     "candidates": [...], "reasons": [...], "decision": "HFT-DEC-0007", "week": "2026-10-16", "at_ns": ...}
+     "candidates": [...], "reasons": [...], "decision": "HFT-DEC-0007", "week": "2026-10-18", "at_ns": ...}
 
   champion      the model the ML sleeve trades with. None until one has been promoted.
   previous      the champions before it, the latest last: what a rollback restores.

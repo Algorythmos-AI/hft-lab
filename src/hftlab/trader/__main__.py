@@ -50,7 +50,7 @@ from hftlab.trader.config import Settings, TraderConfigError, digest, load
 from hftlab.trader.replay import replay_day
 from hftlab.trader.session import Notify, Silent, Trader, TraderRefused
 from hftlab.trader.stages import OFF, SHADOW
-from hftlab.trader.tape import REQUESTS, LiveEdge, TapeError
+from hftlab.trader.tape import REQUESTS, LiveEdge, TapeError, leave_request
 from hftlab.venues.port import Venue, VenueError
 from hftlab.venues.sim import CostModel, CostModelError, load_cost_model
 from hftlab.venues.view import MarketDataView, QuoteSource
@@ -235,12 +235,7 @@ def show_stages(settings: Settings, out: IO[str]) -> int:
 
 def ask(settings: Settings, what: str, subject: str, value: str, operator: str) -> int:
     """Leave a request for the running trader. It acts on it at its next beat and journals what it did."""
-    folder = settings.state_dir / REQUESTS
-    folder.mkdir(parents=True, exist_ok=True)
-    number = len(list(folder.glob("*.json"))) + 1
-    partial = folder / f"{number:04d}-{what}.partial"
-    partial.write_text(json.dumps({"what": what, "subject": subject, "value": value, "operator": operator}) + "\n")
-    partial.rename(partial.with_suffix(".json"))
+    leave_request(settings.state_dir / REQUESTS, what, subject, value, operator)
     say(f"asked: {what} {subject} {value}".rstrip() + f", by {operator}. The trader's journal says what came of it.")
     return EXIT_OK
 

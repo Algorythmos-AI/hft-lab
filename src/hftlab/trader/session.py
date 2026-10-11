@@ -52,7 +52,10 @@ from hftlab.core import (
 from hftlab.exec import TERMINAL, OrderManager, Outbox, Stage
 from hftlab.exec.manager import Asked
 from hftlab.exec.outbox import commission_from, fill_fields, fill_from
-from hftlab.journal import Journal, JournalState, read, verify
+from hftlab.journal import Journal, JournalError, JournalState, read, verify
+from hftlab.lineup import FILE as LINEUP
+from hftlab.lineup.journal import LineupError
+from hftlab.lineup.serve import MakeScorer, in_process, lineup_or_none, make
 from hftlab.record.format import Heartbeat, describe
 from hftlab.risk import Reason, RiskConfig, RiskGate
 from hftlab.shadow.__main__ import make_sleeves, minimum_sizes
@@ -76,6 +79,7 @@ ANSWERS_PER_EVENT: Final = 64
 STATE: Final = ("outbox", "risk", "reconcile", "stages", "shadow")  # the journals that outlive a day, by file name
 SEEDS: Final = 1_000_000  # the shadow venue's seed is the configured one times this, plus the session's number
 SLEEVE, FLATTEN, INHERIT, ALIGN = "sleeve", "flatten", "inherit", "align"  # where an order came from
+UNVERIFIED: Final = -1  # in a mark, where the number of entries would be: the journal's chain does not verify
 _SLEEVE_LATCHES: Final = (Reason.DAILY_LOSS_SLEEVE.value, Reason.DRAWDOWN_SLEEVE.value)
 _ENDED: Final = {
     Stage.FILLED: OrderState.FILLED,
@@ -147,6 +151,14 @@ def mark(path: Path) -> list[object]:
     return [state.entries, state.last_hash, state.good_bytes]
 
 
+def lineup_mark(path: Path) -> list[object]:
+    """Where the lineup journal stands. One that does not verify is marked as such, by its length: it serves nothing."""
+    try:
+        return mark(path)
+    except JournalError:
+        return [UNVERIFIED, "", path.stat().st_size]
+
+
 def _opposes(side: Side, held: int, quantity: int) -> bool:
     """Would this order only bring a position of `held` towards zero, and not through it?"""
     return held != 0 and side.sign * held < 0 and quantity <= abs(held)
@@ -166,6 +178,7 @@ class Trader:
         config_digest: str,
         folder: Path | None = None,
         status: bool = True,
+        scorer: MakeScorer = in_process,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -176,6 +189,7 @@ class Trader:
         days = self._folder / "days" / self.label
         paths = {"decisions": days / "decisions.jsonl", **{name: self._folder / f"{name}.jsonl" for name in STATE}}
         marks = {name: mark(path) for name, path in paths.items()}  # before anything of this session is written
+        marks["lineup"] = lineup_mark(self._folder / LINEUP)  # written by the weekly decision (ADR 0023)
         fsync = settings.fsync
 
         self._stages = Stages(
@@ -239,7 +253,16 @@ class Trader:
         # ---- the sleeves ------------------------------------------------------------------------------------------
         sizes = minimum_sizes(list(self._instruments.values()), model)
         self._sizes = sizes
-        self._sleeves: list[Sleeve[Any]] = make_sleeves(settings.sleeves, sizes)
+        lineup, problem = lineup_or_none(self._folder / LINEUP)
+        try:
+            served = make(
+                settings.sleeves, lineup, registry=settings.registry, calendar=calendar, scorer=scorer,
+                others=lambda entry: make_sleeves([entry], sizes)[0], problem=problem,
+            )  # fmt: skip
+        except LineupError as exc:
+            raise TraderRefused(str(exc)) from exc
+        self._sleeves: list[Sleeve[Any]] = served.sleeves
+        self._renew = False  # the lineup changed: this session ends and the next one reads it
         self._names = [sleeve.name for sleeve in self._sleeves]
         self._states: dict[str, Any] = {sleeve.name: sleeve.initial() for sleeve in self._sleeves}
         self._views: dict[str, SleeveView] = {}
@@ -282,7 +305,18 @@ class Trader:
             mode="paper" if self.paper else "shadow_only", stages=self._stages.all(), opening=self._opening,
             limits=risk.decision if risk else None, cost_model=model.as_dict(), config=config_digest,
             instruments=[describe(instrument) for instrument in self._instruments.values()],
+            serving=served.serving,
         )  # fmt: skip
+        for name in sorted(served.serving):
+            if name in served.refused:
+                self._write("lineup_refused", sleeve=name)
+                text = f"{name} runs idle: {served.refused[name]}"
+                self._notify.fire(_key("lineup", name), f"No model is served in {name}", text, 4)
+            else:
+                self._notify.resolve(_key("lineup", name), f"A model is served in {name}", "Its place is filled.")
+            change = self._stages.serve(name, served.serving[name], opened.at_ns)
+            if change is not None:
+                self._changed(change)
         if not self.paper:
             self._inherited = {key: 0 for key in self._shadow_book.open_lines() if key[0] in self._names}
             self._note_inherited()
@@ -328,7 +362,7 @@ class Trader:
     def run(self) -> bool:
         """Take turns until the edge has no more or the day is over. True when the day's close was seen."""
         try:
-            while not self._day_over:
+            while not (self._day_over or self._renew):
                 step = self._edge.next(urgent=self._manager is not None and self._manager.blind)
                 if step is None:
                     break
@@ -435,6 +469,8 @@ class Trader:
                 if change is not None:
                     self._stale_views = True
                     self._changed(change)
+        elif request.what == "lineup":
+            self._renew, done = True, 1  # the turn is finished; the next session reads the lineup as it is now
         self._write(
             "request", what=request.what, subject=request.subject, value=request.value, operator=request.operator,
             done=done, refused=said,
@@ -755,7 +791,7 @@ class Trader:
         self._write(
             "decision", sleeve=name, source=source, pair=intent.pair, side=intent.side.value,
             quantity=intent.quantity, leg=intent.leg, attempt=intent.attempt, tif=intent.tif.value,
-            limit_price=intent.limit_price,
+            limit_price=intent.limit_price, expected_micro=intent.expected_micro,
         )  # fmt: skip
 
     def _decide(self, name: str, intent: Intent, source: str, now: int) -> Placed | Refused:
@@ -996,4 +1032,4 @@ def _key(kind: str, name: str) -> str:
     return f"{kind}.{name.lower().replace('/', '.').replace('_', '-')}"[:59]
 
 
-__all__ = ["STATE", "Notify", "Silent", "Trader", "TraderRefused", "Why", "day_label", "mark"]
+__all__ = ["STATE", "UNVERIFIED", "Notify", "Silent", "Trader", "TraderRefused", "Why", "day_label", "mark"]

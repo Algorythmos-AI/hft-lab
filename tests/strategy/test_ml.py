@@ -201,7 +201,10 @@ def test_it_enters_on_the_first_row_its_features_complete_and_leaves_one_horizon
     made, state = warmed(tmp_path)
     assert made._scorer.asked == [], "no row yet: the history is not two seconds long"
     state, actions = made.decide(state, quote(2_000), T0 + 2 * SECOND, view())
-    assert list(actions) == [Intent("EUR.USD", Side.BUY, SIZE, "entry")] and state.phase == ENTERING
+    assert list(actions) == [Intent("EUR.USD", Side.BUY, SIZE, "entry", expected_micro=9_000_000)], (
+        "with what the model expected of it, for the journal: nothing routes on it"
+    )
+    assert state.phase == ENTERING
     assert (state.decided_ns, state.tried_ns) == (T0 + 2 * SECOND, T0 + 2 * SECOND) and len(made._scorer.asked) == 1
     order_id = client_order_id(sleeve="ml", pair="EUR.USD", side=Side.BUY, decision_seq=21)
     state, _ = made.decide(state, Placed(actions[0], order_id), T0 + 2 * SECOND, view())

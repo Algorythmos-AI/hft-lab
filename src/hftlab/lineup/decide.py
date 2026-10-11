@@ -106,6 +106,8 @@ class Evidence:
     breaks: int = 0
     sessions: int = 0
     fees_elsewhere: dict[str, int] = field(default_factory=dict)  # sleeve -> fees charged in another currency
+    # sleeve -> (the model that expected it, what it expected, what the trip made), for the drift monitor
+    expected: dict[str, list[tuple[str, int, int]]] = field(default_factory=dict)
 
     def result(self, sleeve: str | None, pair: str | None, *, latch: bool = False) -> ShadowResult:
         """What a sleeve made in one pair. Results of two pairs are in two currencies, and are never added."""
@@ -128,8 +130,16 @@ class _Trips:
     def __init__(self) -> None:
         self._scale: dict[str, tuple[int, str]] = {}  # pair -> (millionths per price unit, quote currency)
         self._open: dict[tuple[str, str], tuple[int, int, list[str]]] = {}  # (sleeve, pair) -> quantity, cash, fills
-        self._done: list[tuple[str, str, int, int, list[str]]] = []  # sleeve, pair, closed at, cash, fills
+        self._done: list[tuple[str, str, int, int, list[str], tuple[str, int] | None]] = []  # ..., what was expected
         self._fees: dict[str, tuple[int, str]] = {}
+        self._said: dict[tuple[str, str], tuple[str, int]] = {}  # (sleeve, pair) -> the last entry's model and hope
+        self._hoped: dict[tuple[str, str], tuple[str, int]] = {}  # the same, of the trip that is open
+
+    def expect(self, entry: Mapping[str, object], model: str) -> None:
+        """An entry was decided with an expectation. It belongs to the trip the entry opens, if it opens one."""
+        expected = entry.get("expected_micro")
+        if entry.get("leg") == "entry" and type(expected) is int:
+            self._said[str(entry.get("sleeve")), str(entry.get("pair"))] = (model, expected)
 
     def describe(self, described: object) -> None:
         for entry in described if isinstance(described, list) else []:
@@ -148,10 +158,12 @@ class _Trips:
             held, cash, fills = held + sign * closing, cash - sign * closing * price, [*fills, fill_id]
             if held == 0:
                 # A fill that goes through zero closes this trip, with its whole fee, and opens the next.
-                self._done.append((sleeve, pair, at, cash, fills))
+                self._done.append((sleeve, pair, at, cash, fills, self._hoped.pop((sleeve, pair), None)))
                 cash, fills = 0, []
         opening = quantity - closing
         if opening:
+            if held == 0 and (sleeve, pair) in self._said:
+                self._hoped[sleeve, pair] = self._said.pop((sleeve, pair))
             held, cash, fills = held + sign * opening, cash - sign * opening * price, [*fills, fill_id]
         self._open[sleeve, pair] = (held, cash, fills)
 
@@ -160,15 +172,15 @@ class _Trips:
         if type(amount) is int:
             self._fees[str(entry.get("fill_id"))] = (amount, str(entry.get("currency")))
 
-    def closed(self) -> list[tuple[str, str, int, int, int]]:
-        """(sleeve, pair, when it closed, its result, fees it paid in another currency), in the order they closed."""
+    def closed(self) -> list[tuple[str, str, int, int, int, tuple[str, int] | None]]:
+        """(sleeve, pair, when it closed, its result, fees in another currency, what was expected), as they closed."""
         out = []
-        for sleeve, pair, at, cash, fills in self._done:
+        for sleeve, pair, at, cash, fills, hoped in self._done:
             per_unit, quote = self._scale[pair]
             charged = [self._fees[fill_id] for fill_id in dict.fromkeys(fills) if fill_id in self._fees]
             ours = sum(amount for amount, currency in charged if currency == quote)
             elsewhere = sum(1 for _, currency in charged if currency != quote)
-            out.append((sleeve, pair, at, cash * per_unit - ours, elsewhere))
+            out.append((sleeve, pair, at, cash * per_unit - ours, elsewhere, hoped))
         return out
 
 
@@ -198,6 +210,8 @@ def read_week(state_dir: Path, now_ns: int) -> tuple[Week, Evidence]:
                     found.sessions += 1
                     for sleeve, model in serving.items():
                         found.served.setdefault(sleeve, set()).add(model)
+            elif kind == "decision":
+                trips.expect(entry, serving.get(str(entry.get("sleeve")), ""))
             elif kind == "shadow_fill":
                 trips.fill(entry)
             elif kind == "shadow_commission":
@@ -209,10 +223,12 @@ def read_week(state_dir: Path, now_ns: int) -> tuple[Week, Evidence]:
             elif kind == "break" and inside and entry.get("broken") == 1:
                 found.breaks += 1
     labels = set(week.days)
-    for sleeve, pair, at, result, elsewhere in trips.closed():
+    for sleeve, pair, at, result, elsewhere, hoped in trips.closed():
         day = day_of(at)
         if new_york(day).date().isoformat() in labels:
             found.by_day.setdefault(sleeve, {}).setdefault(pair, {}).setdefault(day, []).append(result)
+            if hoped is not None:
+                found.expected.setdefault(sleeve, []).append((*hoped, result))
             if elsewhere:
                 found.fees_elsewhere[sleeve] = found.fees_elsewhere.get(sleeve, 0) + elsewhere
     return week, found

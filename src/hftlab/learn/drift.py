@@ -175,3 +175,9 @@ class Watch:
             "sleeve": self.sleeve, "model": self.model, "breached": [f"{f.monitor}:{f.subject}" for f in self.breached],
             "findings": [finding.plain() for finding in self.findings],
         }  # fmt: skip
+
+
+if __name__ == "__main__":  # `python -m hftlab.learn.drift`. The command is another module's; this one stays pure
+    from hftlab.lineup.watch import main
+
+    raise SystemExit(main())

@@ -309,11 +309,14 @@ def test_what_it_reads_of_a_real_trader_week_is_the_shadow_books_result_to_the_u
 
 def test_nothing_in_the_lineup_package_holds_a_venue_or_calls_one():
     found = [(rel, tree) for rel, tree in sources() if rel.startswith("src/hftlab/lineup/")]
-    assert [rel.rsplit("/", 1)[1] for rel, _ in found] == ["__init__.py", "decide.py", "journal.py", "serve.py"]
+    files = ["__init__.py", "decide.py", "journal.py", "serve.py", "watch.py"]
+    assert [rel.rsplit("/", 1)[1] for rel, _ in found] == files
+    event = "hftlab.venues.port.ConnectionEvent"  # an event of a tape, which the drift look folds into features
     for rel, tree in found:
         for _, name in imports(tree, rel):
             assert name.split(".")[0] not in {"ib_async", "socket", "ssl", "asyncio", "http", "urllib"}, (rel, name)
-            assert not name.startswith(("hftlab.venues", "hftlab.exec", "hftlab.safety", "hftlab.shadow")), (rel, name)
+            assert not name.startswith(("hftlab.exec", "hftlab.safety", "hftlab.shadow")), (rel, name)
+            assert not name.startswith("hftlab.venues") or (rel.endswith("watch.py") and name == event), (rel, name)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 assert called_name(node) not in {"place", "cancel", "mark_reconciled", "connect", "propose"}, rel

@@ -7,7 +7,19 @@ from hftlab.book import BreakEvent
 from hftlab.calendar import Calendar, Closure, MacroEvent, next_close, next_open, rollover_near
 from hftlab.core import Fill, OrderEvent, OrderState, OrderType, Side, SimClock, TimeInForce
 from hftlab.journal import Journal, verify
-from hftlab.risk import LatchError, Outcome, Reason, RiskConfigError, RiskGate, Verdict, file_switches
+from hftlab.risk import (
+    HARD,
+    ROOM,
+    SOFT,
+    LatchError,
+    Outcome,
+    Reason,
+    RiskConfigError,
+    RiskGate,
+    TapeRoom,
+    Verdict,
+    file_switches,
+)
 from hftlab.venues.port import CommissionEvent, ConnectionEvent, ConnectionState
 from tests.risk.kit import ASK, BID, FLATTEN, KILL, MINUTE, MS, SECOND, T0, Desk, an_order, limits
 from tests.venues.kit import EURUSD
@@ -896,3 +908,85 @@ def test_an_order_in_flight_before_the_restart_holds_its_size_and_its_first_answ
     assert desk.code(an_order(5, quantity=40_000)) == "POSITION_LIMIT", "half of it is booked, half may still fill"
     desk.end(part, OrderState.REJECTED)
     assert desk.gate.latches() == ("REJECT_STREAK",), "never answered before the restart: its reject counts now"
+
+
+# ---- the room on the event tape (ADR 0027, addendum) ---------------------------------------------------------------
+
+
+def test_a_tape_at_its_soft_limit_stops_entries_and_lets_exits_through_and_proposes_no_close(tmp_path):
+    desk = Desk(tmp_path)
+    held = desk.hold(1)
+    desk.gate.observe(TapeRoom(SOFT))
+    entry = desk.check(an_order(2))
+    assert (entry.outcome, entry.allowed, codes(entry)) == (Outcome.EXITS_ONLY, False, ["TAPE_SOFT_LIMIT"])
+    assert desk.gate.flatten_orders() == (), "the soft limit closes nothing: the sleeves leave by their own rules"
+    leaving = desk.check(an_order(3, SELL, held.quantity))
+    assert (leaving.outcome, leaving.allowed, leaving.code) == (Outcome.EXITS_ONLY, True, "TAPE_SOFT_LIMIT")
+    desk.fill(an_order(3, SELL, held.quantity), BID)
+    desk.gate.observe(TapeRoom(ROOM))
+    assert desk.check(an_order(4)).outcome is Outcome.ALLOW, "room again: nothing of it is kept"
+
+
+def test_a_tape_at_its_hard_limit_closes_what_the_book_holds_by_the_flatten_orders_with_no_switch_set(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/USD.JPY/max_order_size": 20_000})
+    desk.hold(1, BUY, 40_000)
+    for number in (2, 3):
+        desk.hold(number, SELL, 20_000, pair="USD.JPY", sleeve="ml")
+    desk.gate.observe(TapeRoom(HARD))
+    assert desk.switched == set() and codes(desk.check(an_order(4))) == ["TAPE_HARD_LIMIT"]
+    closes = desk.gate.flatten_orders()
+    assert [(o.sleeve, o.pair, o.side, o.quantity) for o in closes] == [
+        ("control", "EUR.USD", SELL, 40_000), ("ml", "USD.JPY", BUY, 20_000),
+    ]  # fmt: skip
+    verdicts = [desk.check(order) for order in closes]
+    assert all(v.allowed and v.outcome is Outcome.EXITS_ONLY and v.code == "TAPE_HARD_LIMIT" for v in verdicts)
+    assert desk.gate.flatten_orders() == (), "a line with an order in flight gets no second close"
+    desk.fill(closes[0], BID)
+    desk.fill(closes[1], 151_240)
+    (rest,) = desk.gate.flatten_orders()
+    assert desk.check(rest).allowed
+    desk.fill(rest, 151_240)
+    assert desk.gate.flatten_orders() == () and desk.gate.book.open_lines() == {}
+
+
+def test_the_closes_of_the_hard_limit_are_proposed_when_the_switches_cannot_be_read(tmp_path):
+    desk = Desk(tmp_path)
+    desk.hold(1)
+    desk.unreadable = True
+    assert desk.gate.flatten_orders() == (), "an unreadable switch stops entries; it is not an order to close"
+    desk.gate.observe(TapeRoom(HARD))
+    (close,) = desk.gate.flatten_orders()
+    verdict = desk.check(close)
+    assert verdict.allowed and codes(verdict) == ["SWITCHES_UNREADABLE", "TAPE_HARD_LIMIT"]
+
+
+def test_a_close_of_the_hard_limit_keeps_the_exit_collar_and_the_retry_interval(tmp_path):
+    desk = Desk(tmp_path, {"per_pair/EUR.USD/max_spread_ticks": 10_000})
+    desk.hold(1)
+    desk.gate.observe(TapeRoom(HARD))
+    desk.quote(108_300, 108_710)  # beyond the exit collar
+    (close,) = desk.gate.flatten_orders()
+    assert desk.code(close) == "PRICE_COLLAR", "a record that is filling does not force an order through a bad book"
+    assert desk.gate.flatten_orders() == ()
+    desk.after(5 * SECOND)
+    desk.quote(108_355, 108_655)  # inside the exit collar, far outside the entry collar
+    (again,) = desk.gate.flatten_orders()
+    assert desk.check(again).allowed
+    desk.fill(again, 108_355)
+    desk.gate.observe(TapeRoom(SOFT))
+    desk.quote()
+    assert desk.gate.flatten_orders() == () and desk.code(an_order(9)) == "TAPE_SOFT_LIMIT"
+
+
+def test_the_room_on_the_tape_is_one_of_three_levels_and_is_not_kept_across_a_restart(tmp_path):
+    for wrong in (3, -1, True, "hard", None):
+        with pytest.raises(ValueError, match="the tape's room is one of"):
+            TapeRoom(wrong)
+    desk = Desk(tmp_path)
+    desk.gate.observe(TapeRoom(HARD))
+    before = verify(tmp_path / "risk.jsonl").entries
+    desk.gate.observe(TapeRoom(SOFT))
+    assert verify(tmp_path / "risk.jsonl").entries == before, "it is the tape's to say, at every start: not a latch"
+    desk.restart()
+    desk.quote()
+    assert desk.check(an_order(1)).outcome is Outcome.ALLOW, "the trader shows a new gate the room on its first turn"

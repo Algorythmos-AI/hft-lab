@@ -27,8 +27,8 @@ TRADER = "src/hftlab/trader/"
 def trader_sources():
     found = [(rel, tree) for rel, tree in sources() if rel.startswith(TRADER)]
     assert [rel.removeprefix(TRADER) for rel, _ in found] == [
-        "__init__.py", "__main__.py", "config.py", "replay.py", "resume.py", "session.py", "slippage.py", "stages.py",
-        "tape.py",
+        "__init__.py", "__main__.py", "config.py", "replay.py", "resume.py", "room.py", "session.py", "slippage.py",
+        "stages.py", "tape.py",
     ]  # fmt: skip
     return found
 

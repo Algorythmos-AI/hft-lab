@@ -16,7 +16,7 @@ hftrun() { sudo -u hft sh -c 'cd /home/hft/hft-lab && PYTHONPATH=src PYTHONDONTW
 
 | Report | For | It holds |
 |---|---|---|
-| Daily summary | the trading day that closed last, from one 17:00 New York rollover to the next | the recorder's share of the market's open time and its unexplained gaps, by pair; each sleeve's stage, fills and result by currency; the desk's result in both books; the slippage report; reconciliation breaks; latches tripped and reset; stage changes; the disk against its quotas |
+| Daily summary | the trading day that closed last, from one 17:00 New York rollover to the next | the recorder's share of the market's open time and its unexplained gaps, by pair; each sleeve's stage, fills and result by currency; the desk's result in both books; the slippage report; reconciliation breaks; latches tripped and reset; stage changes; the disk: the recording against its quota, and the tapes against their soft limit, their hard limit and their quota |
 | Weekly scorecard | the week that closed last, on a Friday at 17:00 New York | the same summed over the week's trading days; each sleeve less the control sleeve; the lineup's changes since the Friday before, with the training report each rests on; the counts so far towards the gates of F2, F4 and F6 |
 
 How to read them:

@@ -197,7 +197,7 @@ in force as it was.
 |---|---|
 | `refused: the lineup holds no challenger and no candidate to drill with` | Nothing is registered. Run after the first training |
 | `refused: the market is open` | Wait for the weekend |
-| `FAILED` with `"loads": 0` | A model file or report of the lineup is missing or is not what its name says. Never rename a file to fit. The nightly backup does not hold `var/learn/` yet (see the end of this page): a model that is gone is trained again, and until then its place runs idle |
+| `FAILED` with `"loads": 0` | A model file or report of the lineup is missing or is not what its name says. Never rename a file to fit. The nightly backup holds `var/learn/` ([backup](backup.md)): a model that is gone is brought back from it or trained again, and until then its place runs idle |
 | `FAILED` otherwise | Keep the journal and the drill's report, stop, and open an issue. `hft-status` warns `rollback_drill_failed` until a drill passes |
 
 The gate of F6 asks for one drill on the host, after two full weekly cycles that needed no manual help.
@@ -240,9 +240,9 @@ Keep it, stop both timers, and open an issue with the file.
 
 ## Not here yet
 
-- **The backup does not hold the lineup journal, the models or the reports.** `hft-backup.service` hands over
-  the recordings and the shadow journal. Until it also takes `var/trader/lineup.jsonl` and `var/learn/`, a
-  lost disk loses the lineup's history, and every model is trained again from the recordings.
+- **No restore of the lineup has been drilled.** The backup takes the trader's folder and the learning folder
+  whole: the lineup journal, the models and the reports are in it ([backup](backup.md)). Nobody has brought
+  them back from one yet.
 - **The scorer in its own process** (`scorer: process` on an ML place) is built and tested with real child
   processes off the host (ADR 0023, section 5). It has never run on a host. As shipped every place scores in
   the trader's process.

@@ -58,6 +58,7 @@ holds that for generated scripts.
 | The pair has limits | `PAIR_NOT_CONFIGURED` | refuse |
 | The sleeve has limits | `SLEEVE_NOT_CONFIGURED` | exits only |
 | `KILL`, `FLATTEN`, or switches that cannot be read | `KILL_SWITCH`, `FLATTEN_SWITCH`, `SWITCHES_UNREADABLE` | exits only |
+| The trader's event tape is under its soft limit (addendum 3) | `TAPE_SOFT_LIMIT`, `TAPE_HARD_LIMIT` | exits only |
 | The market is open | `MARKET_SHUT` | refuse |
 | There is a quote, the venue confirmed it lately, and it is not crossed | `NO_QUOTE`, `STALE_QUOTE`, `CROSSED_QUOTE` | refuse |
 | The price is within the collar of the mid: the entry collar, or the wider exit collar for an order that can only reduce | `PRICE_COLLAR` | refuse |
@@ -193,3 +194,12 @@ runs on a paper account are where a loss should bring a person, not a calendar.
    The outbox is the one record of what was sent, and it is on the disk before every send, so nothing is
    written twice. Tests: `tests/risk/test_gate.py` and `tests/exec/test_manager.py` (a restart is not a
    reset).
+3. **The record running out of room is a reason to stop entries, and then to close** (settled with
+   [ADR 0027](0027-deploy-gate-and-reports.md)'s addendum). The gate is shown the room on the trader's event
+   tape as an event, `TapeRoom`, the way it is shown a reconciliation break: it measures nothing itself, so a
+   replayed day shows it the same room at the same turn. At the soft limit the verdict is `EXITS_ONLY` under
+   `TAPE_SOFT_LIMIT`. At the hard limit it is `EXITS_ONLY` under `TAPE_HARD_LIMIT`, and `flatten_orders()`
+   proposes what it proposes under `FLATTEN`, with no switch set and when the switches cannot be read: the
+   same orders, the same `check`, the same exit collar and the same retry interval. Nothing of it is
+   journalled or kept across a restart; the trader shows a new gate the room on its first turn. Tests:
+   `tests/risk/test_gate.py` (the room on the event tape).

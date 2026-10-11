@@ -5,6 +5,7 @@ New York is four hours behind UTC, so the 17:00 rollover is 21:00 UTC and a week
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime
 
@@ -439,6 +440,43 @@ def test_the_report_holds_whole_numbers_and_text_and_no_float(tmp_path):
     walk(report.as_dict(weekly(read, places.calendar, WEEK, DAYS)))
     assert report._amount({"USD": -1}) == "-0.000001 USD" and report._amount({}) == "nothing in any currency"
     assert Disk("x", 1_999, 2_000).percent == 99 and Disk("x", 5, None).percent is None
+
+
+def test_the_tapes_are_shown_against_the_soft_and_the_hard_limit_the_trader_journalled_and_their_quota(tmp_path):
+    places = a_week(tmp_path)
+    limits = {"soft_bytes": 900_000_000, "hard_bytes": 960_000_000, "quota_bytes": 1_000_000_000}
+    friday = Journal(places.trader / "days" / "2025-10-17" / "decisions.jsonl")
+    friday.open()
+    friday.write("start", sleeves=SLEEVES, stages={name: "shadow" for name in SLEEVES}, mode="paper", tape=limits)
+    friday.close()
+    tape = places.trader / "days" / "2025-10-17" / "session-001.part-0001.2025-10-17.jsonl"
+    tape.write_bytes(b"x" * 1_234)
+    (places.trader / "days" / "2025-10-17" / "session-001.tape.jsonl").write_bytes(b"x" * 100)
+    (disk,) = [one for one in gather(places, ["2025-10-17"]).disks if one.what == "the tapes"]
+    assert (disk.used_bytes, disk.soft_bytes, disk.hard_bytes, disk.quota_bytes) == (
+        1_334, 900_000_000, 960_000_000, 1_000_000_000
+    )  # fmt: skip
+    text = report.render_daily(daily(gather(places, ["2025-10-17"]), places.calendar, DAYS[4]))
+    assert (
+        "disk       the tapes: 1,334 bytes of 1,000,000,000 bytes (0%); soft limit 900,000,000, hard limit "
+        "960,000,000: under both"
+    ) in text.splitlines()
+    labels = [f"2025-10-{day}" for day in (13, 14, 15, 16, 17)]
+    week = report.render_weekly(weekly(gather(places, labels), places.calendar, WEEK, DAYS))
+    assert "soft limit 900,000,000, hard limit 960,000,000: under both" in week, "the last session's word in the week"
+    assert Disk("the tapes", 899, 1_000, 900, 950).standing == "under both"
+    assert Disk("the tapes", 900, 1_000, 900, 950).standing == "AT THE SOFT LIMIT"
+    assert Disk("the tapes", 950, 1_000, 900, 950).standing == "AT THE HARD LIMIT"
+    assert Disk("the tapes", 950, 1_000).standing is None
+
+    (earlier,) = [one for one in gather(places, ["2025-10-15"]).disks if one.what == "the tapes"]
+    assert (earlier.soft_bytes, earlier.hard_bytes) == (None, None), "a day whose sessions journalled no limits"
+    other = dataclasses.replace(places, tape_quota=2_000_000_000)
+    (changed,) = [one for one in gather(other, ["2025-10-17"]).disks if one.what == "the tapes"]
+    assert changed.standing is None, "limits worked out for another quota are not shown against this one"
+    assert "disk       the tapes: 1,334 bytes of 2,000,000,000 bytes (0%)" in report.render_daily(
+        daily(gather(other, ["2025-10-17"]), places.calendar, DAYS[4])
+    ).splitlines()
 
 
 def test_a_long_report_is_cut_at_a_line_for_the_page_and_whole_in_its_file(tmp_path):

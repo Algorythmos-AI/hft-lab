@@ -1,0 +1,46 @@
+# HFT-HYP-0002. A hypothesis record (research/README.md). Written before any result it concerns exists.
+id: HFT-HYP-0002
+title: The order path agrees with the broker, and the shadow venue fills no better than the paper account
+status: registered            # registered | supported | refuted. Changed only by a decision record
+registered: "2026-10-11"
+phase: F4                     # this is the F4 exit gate, stated as a hypothesis
+
+statement: >
+  With the control sleeve placing minimum-size orders on the broker's paper account through the risk gate and
+  the order manager, for five trading days:
+  (a) the broker's positions and the book built from the broker's fills never disagree for longer than the
+  configured grace time: there is no reconciliation break, and no fault of the order path;
+  (b) for the orders both venues filled, the shadow venue's fill price is, on average, no better than the
+  paper account's: the mean difference, shadow against broker, is zero or against us.
+
+why: >
+  (a) Everything later trusts that an order the platform sent is an order the platform knows about, and that
+  a fill at the broker is a fill in the book. The fault tests show it against a fake broker written by the
+  same hands as the code under test. Only the paper account can show that a real gateway reports what the
+  fake assumes it reports (ADR 0016, "A real gateway").
+  (b) The shadow book is the result of record because it is meant to be the conservative one (ADR 0003): a
+  paper account fills at the displayed price, at once, for any size, and the cost model adds latency, the
+  displayed size, slippage and a wider spread near the rollover (ADR 0013). If the shadow venue fills better
+  than the paper account, the model is optimistic somewhere, and every result read from the shadow book is
+  too good by that much.
+
+what_would_show_it_is_wrong:
+  - Any reconciliation break in the five days, or any ORDER_FAULT latch.
+  - Any day of the five that does not replay to the decisions it took (ADR 0005, ADR 0019).
+  - In any pair, a mean difference of shadow against broker below zero over the orders both venues filled
+    alike (defined in HFT-EXP-0002).
+
+what_it_does_not_say: >
+  Nothing about whether the control sleeve, or any sleeve, makes money: it has no edge and is expected to lose
+  the cost of trading. Nothing about a live account: a paper fill is not evidence of a live fill. Nothing
+  about the size of the cost model's error, only its direction; the numbers of the model are set by the
+  capability probe and by a decision record, not by this.
+
+tested_by:
+  - HFT-EXP-0002              # registered, NOT RUN
+
+evidence: >
+  None. Nothing has connected to a gateway and no order has been placed on the paper account. HFT-EXP-0002
+  has not been run. The order path holds its invariants against the fake broker in tests/faults/ and
+  tests/trader/. Those tests check the code; they are not this experiment and are not evidence for this
+  hypothesis.

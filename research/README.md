@@ -19,6 +19,9 @@ research/
 | [HFT-HYP-0001](hypotheses/HFT-HYP-0001-shadow-accounting-is-honest.yaml) | The shadow accounting is honest: a sleeve that never trades earns exactly zero, and one that trades at random loses the modelled cost | Registered. No evidence yet |
 | [HFT-EXP-0001](experiments/HFT-EXP-0001-control-shadow/protocol.md) | The control sleeve in shadow on five recorded days, with its seed, entry rate, holding time and waiting time fixed | Registered. **Not run**: nothing has been recorded from the real feed yet |
 
+| [HFT-HYP-0002](hypotheses/HFT-HYP-0002-order-path-agrees-with-the-broker.yaml) | The order path agrees with the broker, and the shadow venue fills no better than the paper account | Registered. No evidence yet |
+| [HFT-EXP-0002](experiments/HFT-EXP-0002-control-min-size-paper/protocol.md) | The control sleeve at minimum size on the paper account for five trading days: zero reconciliation breaks expected, and the shadow-versus-broker slippage reported with the direction the cost model is meant to err in | Registered. **Not run**: nothing has connected to a gateway, and the risk limits are not in force |
+
 There is no decision record yet, and the trial registry is empty.
 
 ## Rules

@@ -1,0 +1,25 @@
+# HFT-EXP-0002: the frozen part of the trader's settings for the control sleeve's five days on paper.
+# REGISTERED ON 2026-10-11, NOT RUN.
+#
+# This is the `sleeves` block the run's config/trader.yaml must hold, value for value. Nothing here is tuned
+# and nothing here may be: a different seed, entry rate, holding time or waiting time is a new experiment with
+# a new id. They are the values of HFT-EXP-0001, so the two control runs can be read side by side.
+#
+# What is NOT fixed here, because it does not exist yet and is not this record's to choose:
+#   - the risk limits: config/risk.yaml, put in force by a decision record;
+#   - the step of the control sleeve from `shadow` to `min_size`: the rollout rule in config/trader.yaml, with
+#     the decision record that approved it;
+#   - the pairs: the ones the capability probe of F1 reports tradable, as config/venues/ibkr.yaml lists them;
+#   - the cost model: config/cost_model.yaml as of the commit the run is made from.
+# Each of those is recorded with the run: the first entry of every session in the decision journal holds the
+# limits' decision id, every parameter of the cost model and a hash of all four files.
+sleeves:
+  - {name: idle, kind: idle}    # never trades; expected to end on exactly zero in both books
+  - name: control
+    kind: control
+    seed: 1                     # with each quote's pair, receive time and sequence number, fixes every entry
+    entry_per_million: 2000     # the entry rate: a flat pair enters on this share of its quotes, in millionths
+    hold_seconds: 60            # the holding time: the exit is sent this long after the entry was filled
+    retry_seconds: 10           # the least time between two orders of a pair after one came to nothing
+
+stage: min_size                 # the control sleeve's stage for all five days; a day in any other is not counted

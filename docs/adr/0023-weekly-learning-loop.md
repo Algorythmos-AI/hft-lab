@@ -211,3 +211,10 @@ that pages.
   scorer is one exact sum, so this is a limit for the models that are not built yet.
 - **None of it has run on the host,** and on real data the likeliest outcome of the first challenger's week
   is no advantage over the control sleeve after costs (`HFT-HYP-0003`).
+
+## Addendum, 2026-10-11: a second kind of model
+
+The training run fits the kind of model the settings name: `ridge`, as before and by default, or `gbm`
+([ADR 0025](0025-gradient-boosting-optional-set-and-whole-number-trees.md)). One run fits one kind. Nothing
+else of this record changes: the report, the registry, the lineup journal, the weekly decision and the drift
+look do not ask what kind a model is. `last-run.json` now also says which kind the run fitted.

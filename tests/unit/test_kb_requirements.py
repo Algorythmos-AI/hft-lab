@@ -49,4 +49,9 @@ def test_the_release_is_pinned() -> None:
     lock = json.loads((ROOT / "kb.lock.json").read_text(encoding="utf-8"))
     assert re.fullmatch(r"hft-\d{4}\.\d{2}\.\d{2}(\.\d+)?", lock["release"])
     assert lock["verified"] == lock["claims"], "requirements are taken only from a fully verified release"
-    assert lock["requirements_taken"] == len(_load())
+    taken = lock["requirements_taken"]
+    for other in lock.get("also", []):
+        assert re.fullmatch(r"[a-z]+-\d{4}\.\d{2}\.\d{2}(\.\d+)?", other["release"])
+        assert other["verified"] == other["claims"], "and so is every further release"
+        taken += other["requirements_taken"]
+    assert taken == len(_load())

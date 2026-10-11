@@ -13,7 +13,7 @@
 #   status             open (nothing here proves it yet) | verified (the tests in verified_by prove it)
 #   verified_by        Repository paths of the tests that prove it.
 #
-# The release these were taken from is recorded in kb.lock.json at the repository root. Most of the evidence is
+# The releases these were taken from are recorded in kb.lock.json at the repository root. Most of the evidence is
 # from equity markets between 2008 and 2015; a requirement says what to do, not that the evidence transfers to
 # currencies unchanged.
 version: 1
@@ -1078,5 +1078,179 @@ requirements:
   - CLM-gomber2011-0098
   - CLM-monson2013-0002
   - CLM-woodward2017-0039
+  status: open
+  verified_by: []
+- id: KBREQ-070
+  area: features
+  statement: A directional-change detector must take the mid of bid and ask as its input on every tick in arrival order,
+    must never resample to a clock first, and must log which price series it was fed.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0002
+  - CLM-glattfelder2008-0041
+  - CLM-golub2014-0030
+  - CLM-golub2014-0047
+  status: verified
+  verified_by:
+  - tests/strategy/test_dc_detector.py
+- id: KBREQ-071
+  area: features
+  statement: The detector must be a two-state machine per threshold that follows the running extreme of its current mode
+    and confirms an event when the relative move back from that extreme reaches the threshold, with one event per switch
+    of mode.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0004
+  - CLM-glattfelder2008-0046
+  - CLM-golub2014-0003
+  - CLM-golub2014-0048
+  - CLM-golub2014-0051
+  status: verified
+  verified_by:
+  - tests/strategy/test_dc_detector.py
+- id: KBREQ-072
+  area: features
+  statement: Each event must be recorded at the price and time of the tick that actually crossed the threshold, not at the
+    threshold level itself.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0013
+  - CLM-golub2014-0050
+  status: verified
+  verified_by:
+  - tests/strategy/test_dc_detector.py
+- id: KBREQ-073
+  area: evaluation
+  statement: A strategy or backtest may use only confirmed events and the extreme so far, and must not read the full length
+    of a move before the next opposite event has confirmed it.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0006
+  - CLM-golub2014-0004
+  status: verified
+  verified_by:
+  - tests/strategy/test_dc_detector.py
+  - tests/strategy/test_dc_sleeve.py
+- id: KBREQ-074
+  area: features
+  statement: The first events after start-up or after a gap in the data must be flagged and not traded on, and detector
+    state should be kept across restarts.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0047
+  - CLM-golub2014-0049
+  status: verified
+  verified_by:
+  - tests/strategy/test_dc_detector.py
+  - tests/strategy/test_saved_state.py
+- id: KBREQ-075
+  area: evaluation
+  statement: 'Published scaling relations must be treated as descriptions of averages: a per-event target or stop must come
+    from the measured distribution for that pair and threshold, and parameters must be fitted per pair and re-estimated
+    out of sample.'
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  kb_claims:
+  - CLM-glattfelder2008-0014
+  - CLM-glattfelder2008-0017
+  - CLM-glattfelder2008-0019
+  - CLM-glattfelder2008-0048
+  - CLM-glattfelder2008-0051
+  status: open
+  verified_by: []
+- id: KBREQ-076
+  area: evaluation
+  statement: Every directional-change result must be reported gross and net of the spread for each threshold tested, and
+    thresholds should be large relative to the quoted spread.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  kb_claims:
+  - CLM-glattfelder2008-0034
+  - CLM-glattfelder2008-0036
+  - CLM-glattfelder2008-0037
+  status: open
+  verified_by: []
+- id: KBREQ-077
+  area: evaluation
+  statement: Every directional-change signal must be compared with a random walk of matched volatility before any edge is
+    claimed.
+  strength_of_basis: moderate
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0053
+  - CLM-glattfelder2008-0056
+  - CLM-golub2014-0007
+  status: verified
+  verified_by:
+  - tests/strategy/test_dc_null.py
+- id: KBREQ-078
+  area: data
+  statement: Recordings used for event detection must carry their provenance (provider, quote type, time resolution) and
+    a documented rule for bad ticks and repeated prices.
+  strength_of_basis: weak
+  sources:
+  - glattfelder2008
+  - golub2014
+  kb_claims:
+  - CLM-glattfelder2008-0041
+  - CLM-glattfelder2008-0042
+  - CLM-golub2014-0037
+  status: open
+  verified_by: []
+- id: KBREQ-079
+  area: evaluation
+  statement: Durations compared with published time parameters must be measured in the same clock the source used, and a
+    trading-time variant should be reported separately.
+  strength_of_basis: weak
+  sources:
+  - glattfelder2008
+  kb_claims:
+  - CLM-glattfelder2008-0024
+  status: open
+  verified_by: []
+- id: KBREQ-080
+  area: risk
+  statement: An event-based liquidity score must not replace spread and depth guards, and may be used only as a slow flag
+    that scales risk down after its alarm rule has been fixed in advance and its false-alarm rate measured on held-out data.
+  strength_of_basis: weak
+  sources:
+  - golub2014
+  kb_claims:
+  - CLM-golub2014-0023
+  - CLM-golub2014-0041
+  - CLM-golub2014-0042
+  - CLM-golub2014-0046
+  status: open
+  verified_by: []
+- id: KBREQ-081
+  area: models
+  statement: If an event-based score is built, its constants must be derived numerically for the thresholds in use and checked
+    on simulated random-walk prices, and published constants must not be copied.
+  strength_of_basis: moderate
+  sources:
+  - golub2014
+  kb_claims:
+  - CLM-golub2014-0026
+  - CLM-golub2014-0035
+  - CLM-golub2014-0054
   status: open
   verified_by: []

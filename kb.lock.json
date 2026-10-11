@@ -1,4 +1,14 @@
 {
+ "also": [
+  {
+   "claims": 113,
+   "collection": "shared",
+   "release": "shared-2026.10.11.1",
+   "requirements_taken": 12,
+   "sources": 2,
+   "verified": 113
+  }
+ ],
  "claims": 869,
  "collection": "hft",
  "release": "hft-2026.10.10.1",

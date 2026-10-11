@@ -33,6 +33,9 @@ import yaml
 from hftlab.calendar import Calendar, CalendarError, load_calendar, new_york, next_close, next_open
 from hftlab.calendar.week import OPEN_TIME, instant
 from hftlab.core import Clock, WallClock
+from hftlab.lineup.journal import DRILL, PROMOTE, REGISTER, ROLL_BACK, LineupError
+from hftlab.lineup.journal import FILE as LINEUP_FILE
+from hftlab.lineup.journal import history as lineup_history
 from hftlab.ops import host
 from hftlab.ops.alerts import Alerts, sender_from
 from hftlab.record.format import CorruptSegment
@@ -60,6 +63,7 @@ COUNTED: Final = {"decision": "decisions", "order": "orders", "refused": "refuse
 PAGED: Final = (
     "recorder_status_unreadable", "recorder_not_on_paper_venue", "recorder_io_error", "recorder_quota",
     "recorder_stale", "recorder_stopped", "connection_down", "shadow_journal_broken", "backup_failed",
+    "lineup_journal_broken",
 )  # fmt: skip
 
 
@@ -78,6 +82,7 @@ class Sources:
     dead_man_ns: int
     disk_warn_percent: int
     trader_status: Path | None = None  # the trader's status file; None where no trader is set up
+    lineup: Path | None = None  # the lineup journal, in the trader's state directory (ADR 0023)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +173,20 @@ class TraderReading:
 
 
 @dataclass(frozen=True, slots=True)
+class LearningReading:
+    """What the lineup journal says: who serves, and when it last changed. A hash is shortened to an id."""
+
+    champion: str | None  # the first twelve characters of the champion's hash; None: no model has been promoted
+    challengers: int
+    candidates: int
+    last_training_ns: int | None  # when training last registered a candidate
+    last_promotion_ns: int | None
+    last_rollback_ns: int | None
+    last_drill_ns: int | None
+    drill_passed: bool | None  # None: no rollback drill has run
+
+
+@dataclass(frozen=True, slots=True)
 class Reading:
     """Everything the screen and the snapshot say, read once."""
 
@@ -181,6 +200,7 @@ class Reading:
     backup: BackupReading | None  # None: the backup has never run here
     problems: tuple[Problem, ...]
     trader: TraderReading | None = None  # None: no trader has run here
+    learning: LearningReading | None = None  # None: training has registered nothing here
 
     @property
     def level(self) -> str:
@@ -391,6 +411,40 @@ def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[P
     return reading, problems
 
 
+def _learning(path: Path | None) -> tuple[LearningReading | None, list[Problem]]:
+    """The lineup in force and the times of its changes, from a journal that verifies. Nothing registered: None."""
+    if path is None or not path.is_file():
+        return None, []
+    try:
+        lines = lineup_history(path)
+    except (LineupError, OSError) as exc:
+        text = f"The lineup journal does not verify ({exc}). No model is served from it, and it is never repaired."
+        return None, [Problem("lineup_journal_broken", BAD, text)]
+    if not lines:
+        return None, []
+    last: dict[str, int] = {}
+    passed = None
+    for line in lines:
+        action, at = line.get("action"), line.get("at_ns")
+        if isinstance(action, str) and type(at) is int:
+            last[action] = at
+            if action == DRILL:
+                passed = line.get("reasons") == ["passed"]
+    now = lines[-1]
+    champion, challengers, candidates = now.get("champion"), now.get("challengers"), now.get("candidates")
+    named = str(champion.get("model"))[:12] if isinstance(champion, dict) else None
+    reading = LearningReading(
+        named, len(challengers) if isinstance(challengers, list) else 0,
+        len(candidates) if isinstance(candidates, list) else 0, last.get(REGISTER), last.get(PROMOTE),
+        last.get(ROLL_BACK), last.get(DRILL), passed,
+    )  # fmt: skip
+    problems = []
+    if passed is False:
+        text = f"The rollback drill of {stamp(last[DRILL])} failed: see the learning runbook before the next decision."
+        problems.append(Problem("rollback_drill_failed", WARN, text))
+    return reading, problems
+
+
 def read(sources: Sources, now_ns: int) -> Reading:
     """Read everything once and judge it. The same files and the same time give the same reading."""
     market_open = sources.calendar.is_open(now_ns)
@@ -398,10 +452,11 @@ def read(sources: Sources, now_ns: int) -> Reading:
     shadow, more = _shadow(sources.shadow_journal)
     backup, last = _backup(sources.state)
     trader, said = _trader(sources, now_ns)
+    learning, learned = _learning(sources.lineup)
     kill, flatten = host.switches(sources.state)
-    found = tuple(problems + more + last + said)
+    found = tuple(problems + more + last + said + learned)
     weeks = trading_weeks(now_ns)
-    return Reading(now_ns, market_open, weeks, kill, flatten, recorder, shadow, backup, found, trader)
+    return Reading(now_ns, market_open, weeks, kill, flatten, recorder, shadow, backup, found, trader, learning)
 
 
 def exit_code(reading: Reading) -> int:
@@ -482,6 +537,21 @@ def render(reading: Reading) -> str:
             )
         if trader.latched:
             lines.append(f"             latched: {', '.join(trader.latched)}")
+    learning = reading.learning
+    if learning is None:
+        lines.append("  learning   nothing registered: no training run has kept a candidate here")
+    else:
+
+        def when(at: int | None) -> str:
+            return stamp(at) if at is not None else "never"
+
+        drill = "never run" if learning.drill_passed is None else "passed" if learning.drill_passed else "FAILED"
+        lines += [
+            f"  learning   champion {learning.champion or 'none'}; {learning.challengers} challenger(s) in shadow; "
+            f"{learning.candidates} candidate(s) waiting",
+            f"             last training {when(learning.last_training_ns)}; promotion "
+            f"{when(learning.last_promotion_ns)}; rollback {when(learning.last_rollback_ns)}; drill {drill}",
+        ]
     if reading.backup is None:
         lines.append("  backup     never run")
     else:
@@ -546,6 +616,7 @@ def load_sources(
         state=state or host.state_dir(host.settings()["HFT_STATE_DIR"]), calendar=load_calendar(calendar),
         dead_man_ns=dead_man * SECOND, disk_warn_percent=warn,
         trader_status=Path(trader_dir) / STATUS_FILE if isinstance(trader_dir, str) else None,
+        lineup=Path(trader_dir) / LINEUP_FILE if isinstance(trader_dir, str) else None,
     )  # fmt: skip
 
 

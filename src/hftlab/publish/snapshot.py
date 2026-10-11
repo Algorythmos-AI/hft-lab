@@ -6,8 +6,9 @@ page on the status site cannot disagree. What it holds to, each with a test:
   * `desk.mode` is "paper". Nothing here chooses it: there is no other value.
   * States, counts, times and codes only. A problem's sentence stays on the host; its code goes out.
   * A part that does not exist yet is absent, never zeros. There is no recorder part before something has
-    been recorded on the paper venue, no sleeves or books part before a trader has run, and no pairs or
-    learning part at all yet.
+    been recorded on the paper venue, no sleeves or books part before a trader has run, no learning part
+    before training has registered a candidate in the lineup journal, and no pairs part at all yet.
+  * A model goes out as the first twelve characters of its hash: an id, and nothing of what it holds.
   * Money leaves as a number in one currency, from the shadow book for a sleeve. A result spread over several
     currencies is not added up: it goes out as null, "not worked out".
   * `expected_windows` lists the trading week that is open or the next one to open, and the week after it,
@@ -173,4 +174,17 @@ def build(reading: Reading, *, phases: Mapping[str, str], version: str | None) -
         }
     if reading.trader is not None:
         snapshot.update(trader_parts(reading.trader))
+    learning = reading.learning
+    if learning is not None:
+
+        def when(at: int | None) -> str | None:
+            return stamp(at) if at is not None else None
+
+        snapshot["learning"] = {
+            "champion": learning.champion,
+            "challengers": learning.challengers,
+            "last_training_at": when(learning.last_training_ns),
+            "last_promotion_at": when(learning.last_promotion_ns),
+            "last_rollback_at": when(learning.last_rollback_ns),
+        }
     return snapshot

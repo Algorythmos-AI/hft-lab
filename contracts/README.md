@@ -39,4 +39,5 @@ The publisher is `python -m hftlab.publish` ([ADR 0018](../docs/adr/0018-snapsho
 the snapshot unless it is told to send it. **Nothing has been sent yet**: the signing key, and the key id the
 site accepts for this desk, are the owner's decisions and are still open
 ([runbook](../docs/runbooks/publish.md)). This round it sends identity, windows, stage, phases and health,
-and the recorder part once something has been recorded; pairs, sleeves, books and learning stay absent.
+the recorder part once something has been recorded, the sleeves and books parts once a trader has run, and
+the learning part once training has registered a candidate in the lineup journal; pairs stays absent.

@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from tests.learn.test_structure import uses_a_float
+from tests.ops.test_structure import STARTS_PROGRAMS
 from tests.safety.test_isolation import is_network, violations
 from tests.support import ROOT, called_name, imports, sources
 
@@ -55,7 +56,8 @@ def test_the_package_imports_no_network_and_only_the_traders_side_starts_a_proce
                 starts.add((rel.removeprefix(PACKAGE), top))
     assert starts == {("client.py", "subprocess"), ("client.py", "threading"), ("client.py", "queue")}
     users = {rel for rel, tree in sources() for _, name in imports(tree, rel) if name.split(".")[0] == "subprocess"}
-    assert users == {PACKAGE + "client.py", "src/hftlab/ops/backup.py", "src/hftlab/registry/records.py"}
+    # The operations layer's own are named once, by its structure test, and are not listed again here.
+    assert users == {PACKAGE + "client.py", "src/hftlab/registry/records.py", *STARTS_PROGRAMS}
 
 
 def test_nothing_in_the_package_calls_a_venue_reaches_one_by_name_or_holds_a_float():

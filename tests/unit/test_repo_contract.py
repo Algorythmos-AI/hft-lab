@@ -107,7 +107,7 @@ def test_the_design_records_exist_in_order():
     topics += ["venue-port", "access-route", "synchronous", "recording-format", "cost-model", "sleeves"]
     topics += ["risk-gate", "order-manager", "host-layer", "snapshot-publish", "trader-loop"]
     topics += ["features-and-labels", "validation", "model-file", "weekly-learning-loop"]
-    topics += ["directional-change"]
+    topics += ["directional-change", "gradient-boosting", "sleeve-state"]
     assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, len(topics) + 1)]
     for name, topic in zip(records, topics, strict=True):
         text = read(f"docs/adr/{name}")
@@ -134,7 +134,7 @@ def test_every_design_record_that_is_cited_anywhere_exists():
 
 # Numbers handed out ahead of the run above, to work that was written in parallel with the record before them.
 # When every number below them exists, these move into `topics` and this goes.
-GIVEN_AHEAD = {"0025": "gradient-boosting"}
+GIVEN_AHEAD: dict[str, str] = {}
 
 
 def test_the_design_records_given_a_number_ahead_are_there_and_well_formed():

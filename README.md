@@ -65,6 +65,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
+| Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
 | The research registry: its lint, the trial count, two hypotheses and two experiments, registered and not run | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |

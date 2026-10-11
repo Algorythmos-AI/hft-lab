@@ -31,10 +31,27 @@ from hftlab.core.ids import check_sleeve
 from hftlab.features import FeatureBuilder, FeatureState
 from hftlab.models.scorer import Scorer
 from hftlab.record.format import Heartbeat, Marker
-from hftlab.strategy.sleeve import ENTRY, EXIT, Action, Event, Intent, Placed, Refused
+from hftlab.strategy.sleeve import (
+    ENTRY,
+    EXIT,
+    Action,
+    Event,
+    Intent,
+    Placed,
+    Refused,
+    StateError,
+    one_of,
+    opened,
+    text_or_none,
+    whole,
+    whole_or_none,
+)
 from hftlab.venues.port import ConnectionEvent
 
 FLAT, ENTERING, HOLDING, EXITING = "flat", "entering", "holding", "exiting"
+PHASES = (FLAT, ENTERING, HOLDING, EXITING)
+KIND, VERSION = "ml", 1  # of a saved state
+_SAVED = frozenset({"features", "phase", "order_id", "decided_ns", "trips", "exits", "tried_ns"})
 _DEAD = (OrderState.CANCELLED, OrderState.REJECTED, OrderState.EXPIRED)
 
 
@@ -96,6 +113,40 @@ class MlSleeve:
 
     def initial(self) -> MlState:
         return MlState(self._features.initial())
+
+    # ---- written down and read back (ADR 0026) --------------------------------------------------------------------
+
+    def settings(self) -> dict[str, object]:
+        """What a saved state was reached under: the model by its hash, its features and windows, and the rules.
+
+        A place whose model changed has other settings, so the state of the model before it is never read.
+        """
+        return {
+            "model": self._scorer.model.content_hash, "features": self._features.settings(), "size": self.size,
+            "horizon_ns": self.horizon_ns, "margin_micro": self.margin_micro, "retry_ns": self.retry_ns,
+            "viable": int(self.viable),
+        }  # fmt: skip
+
+    def save(self, state: MlState) -> dict[str, object]:
+        plain = {
+            "features": self._features.dump(state.features), "phase": state.phase, "order_id": state.order_id,
+            "decided_ns": state.decided_ns, "trips": state.trips, "exits": state.exits, "tried_ns": state.tried_ns,
+        }  # fmt: skip
+        return {"kind": KIND, "version": VERSION, "settings": self.settings(), "state": plain}
+
+    def restore(self, saved: Mapping[str, object]) -> MlState:
+        plain = opened(saved, KIND, VERSION, self.settings())
+        if not isinstance(plain, Mapping) or set(plain) != _SAVED:
+            raise StateError("not a saved state of the ML sleeve")
+        try:
+            features = self._features.load(plain["features"])
+        except ValueError as exc:
+            raise StateError(str(exc)) from exc
+        return MlState(
+            features, one_of(plain["phase"], PHASES, "phase"), text_or_none(plain["order_id"], "order"),
+            whole(plain["decided_ns"], "decided_ns"), whole(plain["trips"], "trips"), whole(plain["exits"], "exits"),
+            whole_or_none(plain["tried_ns"], "tried_ns"),
+        )  # fmt: skip
 
     def decide(self, state: MlState, event: Event, now_ns: int, view: SleeveView) -> tuple[MlState, Sequence[Action]]:
         if isinstance(event, Quote | Heartbeat | ConnectionEvent | Marker):

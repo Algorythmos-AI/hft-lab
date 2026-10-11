@@ -71,7 +71,8 @@ scoring/      the scorer in a process of its own: the message format, the child,
               of the pipe and the record a replay abstains by (off as shipped; synthetic data only)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
-trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay          F4
+trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay,         F4
+              and the sleeves' states kept across a restart
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets with a look-ahead check, walk-forward validation, the promotion decision        F6
               (foundations only: no training run, no weekly promotion, no process)

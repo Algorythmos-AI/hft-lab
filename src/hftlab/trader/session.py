@@ -61,7 +61,8 @@ from hftlab.risk import Reason, RiskConfig, RiskGate
 from hftlab.scoring.client import READY, Scorers, Times
 from hftlab.scoring.record import SUFFIX as ABSTAINED
 from hftlab.shadow.__main__ import make_sleeves, minimum_sizes
-from hftlab.strategy import Action, Cancel, Event, Intent, Placed, Refused, Sleeve
+from hftlab.strategy import Action, Cancel, Event, Intent, Placed, Refused, Saves, Sleeve
+from hftlab.trader import resume
 from hftlab.trader.config import Settings
 from hftlab.trader.slippage import Matched, report
 from hftlab.trader.stages import BREAK, LATCH, MIN_SIZE, OFF, PAPER, SHADOW, STEPPED_DOWN, Change, Stages, day_of
@@ -154,7 +155,10 @@ def mark(path: Path) -> list[object]:
 
 
 def lineup_mark(path: Path) -> list[object]:
-    """Where the lineup journal stands. One that does not verify is marked as such, by its length: it serves nothing."""
+    """Where a journal stands that the trader starts without: the lineup's, and the one of saved sleeve states.
+
+    One that does not verify is marked as such, by its length: nothing is served from it and nothing restored.
+    """
     try:
         return mark(path)
     except JournalError:
@@ -182,6 +186,7 @@ class Trader:
         status: bool = True,
         scorer_times: Times | None = None,
         abstained: Path | None = None,
+        resumed: bool | None = None,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -193,6 +198,15 @@ class Trader:
         paths = {"decisions": days / "decisions.jsonl", **{name: self._folder / f"{name}.jsonl" for name in STATE}}
         marks = {name: mark(path) for name, path in paths.items()}  # before anything of this session is written
         marks["lineup"] = lineup_mark(self._folder / LINEUP)  # written by the weekly decision (ADR 0023)
+        marks[resume.KIND] = lineup_mark(self._folder / resume.FILE)  # the sleeves' saved states (ADR 0026)
+        self._paths, self._fsync = paths, settings.fsync
+        # May the last saved state be believed? Decided here, from where the journals stood before this session
+        # wrote anything, and from the tapes: a replay has no tapes and is handed what the day found (`resumed`).
+        saved, why = resume.last(self._folder / resume.FILE)
+        if saved is not None and not resume.journals_stand(saved, marks, self.label, STATE):
+            saved, why = None, resume.JOURNALS
+        if saved is not None and not (resume.tape_stands(saved, self._folder / "days") if resumed is None else resumed):
+            saved, why = None, resume.TAPE
         fsync = settings.fsync
 
         self._stages = Stages(
@@ -207,8 +221,12 @@ class Trader:
             raise TraderRefused("the risk limits are in force and this run was given no venue to send orders on")
         self.paper = risk is not None
         tapes = len(list(days.glob("session-*.tape.jsonl"))) if days.is_dir() else 0
-        head = {"journals": marks, "config": config_digest, "day": self.label, "paper": self.paper}
-        edge.begin(days / f"session-{tapes + 1:03d}.tape.jsonl", head)
+        head = {
+            "journals": marks, "config": config_digest, "day": self.label, "paper": self.paper,
+            "resumed": int(saved is not None),
+        }  # fmt: skip
+        self._tape = days / f"session-{tapes + 1:03d}.tape.jsonl"
+        edge.begin(self._tape, head)
         self._stages.begin(opened.at_ns)
 
         # ---- the shadow side: its own venue, its own book, its own record of fills ------------------------------
@@ -329,8 +347,15 @@ class Trader:
             change = self._stages.serve(name, served.serving[name], opened.at_ns)
             if change is not None:
                 self._changed(change)
+        cold = self._restore(saved, why)  # once every stage stands as this session runs under it
+        self._write("sleeve_state", restored=sorted(self._restored), cold=cold)
+        if set(cold.values()) - set(resume.QUIET):
+            text = f"Started cold: {', '.join(f'{name} ({why})' for name, why in sorted(cold.items()))}."
+            self._notify.fire("sleeve-state", "A sleeve's saved state was not restored", text, 3)
+        elif self._restored:
+            self._notify.resolve("sleeve-state", "Sleeve states restored", "Every sleeve that keeps one was restored.")
         if not self.paper:
-            self._inherited = {key: 0 for key in self._shadow_book.open_lines() if key[0] in self._names}
+            self._inherited = {key: 0 for key in self._shadow_book.open_lines() if self._is_inherited(key[0])}
             self._note_inherited()
         self._journal.push()
 
@@ -510,7 +535,7 @@ class Trader:
                 del self._watching[order_id]
         if self._inherited is None and not self._manager.blind:
             lines = self._manager.book.open_lines()
-            self._inherited = {key: 0 for key in lines if key[0] in self._names}
+            self._inherited = {key: 0 for key in lines if self._is_inherited(key[0])}
             self._note_inherited(sorted(key for key in lines if key[0] not in self._names))
         self._watch(now)
 
@@ -731,6 +756,14 @@ class Trader:
                 intent = Intent(pair, side, abs(target - shadow), ALIGN, attempt, TimeInForce.IOC)
                 self._decide(name, intent, ALIGN, now)
 
+    def _is_inherited(self, name: str) -> bool:
+        """Is a position of this sleeve, found at the start, the trader's to close?
+
+        Not when the sleeve's state was restored: it remembers taking the position, and leaves it by its own
+        rule, as it would have had the session never ended. A sleeve that started cold remembers nothing.
+        """
+        return name in self._names and name not in self._restored
+
     def _note_inherited(self, unowned: Sequence[tuple[str, str]] = ()) -> None:
         for name, pair in sorted(self._inherited or {}):
             held = self._view_book(name).position(name, pair).quantity
@@ -741,6 +774,53 @@ class Trader:
             self._notify.fire(_key("unowned", f"{name}.{pair}"), "A position nobody owns", text, 4)
 
     # ---- the sleeves ----------------------------------------------------------------------------------------------
+
+    # ---- sleeve state across a restart (ADR 0026) -----------------------------------------------------------------
+
+    def _restore(self, saved: dict[str, Any] | None, why: str) -> dict[str, str]:
+        """Give each sleeve the state it saved, where that may be believed. Returns why each other one starts cold.
+
+        A sleeve that keeps no state is in neither list: it has nothing to restore and nothing to lose.
+        """
+        restored, cold = set(), {}
+        for sleeve in self._sleeves:
+            if not isinstance(sleeve, Saves):
+                continue
+            name, reason = sleeve.name, why
+            if saved is not None:
+                reason = resume.IN_FLIGHT if name in saved["in_flight"] else resume.ABSENT
+                if name in saved["states"] and saved["stages"].get(name) != self._stages.stage(name):
+                    reason = resume.STAGE
+                elif name in saved["states"]:
+                    try:
+                        self._states[name] = sleeve.restore(saved["states"][name])
+                    except (ValueError, KeyError, TypeError):  # a `StateError`, or a state so unlike one that it raised
+                        reason = resume.SETTINGS
+                    else:
+                        restored.add(name)
+                        continue
+            cold[name] = reason
+        self._restored: frozenset[str] = frozenset(restored)
+        return cold
+
+    def _kept(self) -> tuple[dict[str, object], list[str]]:
+        """Each sleeve's state as it writes it, and the sleeves that have none because an order is on its way.
+
+        Asked before the venues are let go of. An order still out when a session ends may fill, die with the
+        shadow venue or be taken back at the next start; whichever, the new session cannot tell the sleeve how
+        it went the way this one would have. So that sleeve starts cold, and the trader closes what it holds.
+        """
+        states: dict[str, object] = {}
+        in_flight = []
+        for sleeve in self._sleeves:
+            if not isinstance(sleeve, Saves):
+                continue
+            name = sleeve.name
+            if name in self._watching.values() or any(self._busy(name, pair) for pair in self._instruments):
+                in_flight.append(name)
+            else:
+                states[name] = sleeve.save(self._states[name])
+        return states, in_flight
 
     def _abstained(self, name: str, row: int, known_ns: int, why: str) -> None:
         """A scorer process did not score this row, and the sleeve abstains on it. A replay writes the same line."""
@@ -1038,6 +1118,7 @@ class Trader:
         next start asks the venue about it, takes it back and reconciles before anything is sent.
         """
         now = self._clock.now_ns()
+        ran_under = {name: self._stages.stage(name) for name in self._names}  # before the day's close moves any
         if self._day_over:
             latched = bool(self._gate.latches()) if self._gate else False
             for change in self._stages.close_day(self._day, now, latched=latched, broken=self._broken):
@@ -1047,7 +1128,14 @@ class Trader:
         self._write("stop", summary=result, day_closed=int(self._day_over))
         self._stages.end(now)
         self._edge.stop(now)
+        states, in_flight = self._kept()
         self._shut()
+        # Last, when every journal is closed and the tape has its last line: the entry is tied to where they stand.
+        resume.write(
+            self._folder / resume.FILE, fsync=self._fsync, day=self.label, session=self.session, tape=self._tape,
+            n=self._n, at_ns=now, marks={name: mark(path) for name, path in self._paths.items()}, states=states,
+            stages=ran_under, in_flight=in_flight,
+        )  # fmt: skip
         return result
 
     def abandon(self) -> None:

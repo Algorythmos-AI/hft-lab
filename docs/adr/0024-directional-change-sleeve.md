@@ -136,3 +136,9 @@ same days. A result inside the distribution has shown nothing.
   rule that could be met.
 - Its first shadow run is registered as `HFT-EXP-0005`, with both variants at three thresholds, gross and net
   of cost for each. It has not been run.
+
+## Addendum, 2026-10-11: the state is carried across sessions
+
+The consequence above that a sleeve warms up again at every start no longer holds for a session that ended
+on purpose: the trader saves the sleeve's state then and restores it at the next start when nothing moved
+since ([ADR 0026](0026-sleeve-state-across-a-restart.md)). After a kill it warms up again, as before.

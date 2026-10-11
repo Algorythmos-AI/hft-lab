@@ -14,6 +14,10 @@ What must hold:
 A replay under other settings than the day ran with is refused, not compared: the tape holds a hash of the
 files the decisions depend on.
 
+A session that began from the sleeves' saved states begins from them again: that file is copied by its mark
+like the others, and whether its last entry matched the tapes is read from the tape's head, because a scratch
+folder has no tapes to look at (hftlab.trader.resume).
+
 A place whose scorer was a process of its own is scored in this process: the day's record of the rows the
 child did not score lies beside the tape, and the replay abstains on exactly those (hftlab.scoring.record).
 """
@@ -30,6 +34,7 @@ from hftlab.journal import verify
 from hftlab.lineup import FILE as LINEUP
 from hftlab.risk import RiskConfig
 from hftlab.scoring.record import beside
+from hftlab.trader import resume
 from hftlab.trader.config import Settings
 from hftlab.trader.session import STATE, UNVERIFIED, Silent, Trader
 from hftlab.trader.tape import ReplayEdge, TapeEnded, TapeError, read_tape
@@ -94,12 +99,20 @@ def replay_day(
         for name in STATE:
             _prefix(state_dir / f"{name}.jsonl", folder / f"{name}.jsonl", marks["journals"][name])
         _prefix(state_dir / LINEUP, folder / LINEUP, marks["journals"]["lineup"])  # the models it ran with
+        kept = marks["journals"].get(resume.KIND)  # the sleeves' saved states it started from (ADR 0026)
+        if kept is not None and kept[0] == UNVERIFIED:
+            # It did not verify then, and may have been set aside since. What the session saw is a file of that
+            # length that does not verify, and that is what it is given.
+            (folder / resume.FILE).write_bytes(b"?" * (int(kept[2]) - 1) + b"\n")
+        elif kept is not None:
+            _prefix(state_dir / resume.FILE, folder / resume.FILE, kept)
         copy = folder / "days" / day.name / "decisions.jsonl"
         _prefix(taken, copy, marks["journals"]["decisions"])
         edge = ReplayEdge(rows, paper=risk is not None)
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=Silent(),
             config_digest=config_digest, folder=folder, status=False, abstained=beside(tape),
+            resumed=marks.get("resumed") == 1,
         )  # fmt: skip
         with contextlib.suppress(TapeEnded):  # the process was gone there; what the replay wrote so far is compared
             trader.run()

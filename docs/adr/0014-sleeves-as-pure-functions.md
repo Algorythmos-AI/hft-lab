@@ -70,3 +70,9 @@ whose answer is known.
   so nothing a sleeve returns can reach a broker ([ADR 0003](0003-two-books.md)).
 - The scan reads syntax, like the isolation scan of [ADR 0001](0001-paper-only-lock.md). Review is the last
   layer here too.
+
+## Addendum, 2026-10-11: a state may be written down
+
+A sleeve may now say how its state is saved and restored, exactly
+([ADR 0026](0026-sleeve-state-across-a-restart.md)). Nothing of this record changes: the sleeve still touches
+no file, and what is kept, where, and whether it is believed are the runner's.

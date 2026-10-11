@@ -92,6 +92,7 @@ class Service:
     no_restart_on: tuple[int, ...] = (REFUSED,)
     secrets: bool = False
     first: tuple[str, ...] = ()  # a command run before the main one; its failure does not stop the main one
+    then: tuple[str, ...] = ()  # a command run after the main one has succeeded; its failure does not fail the unit
     timer: Timer | None = None
     timeout_s: int = 300
     writes: tuple[str, ...] = (host.STATE_DIR,)
@@ -112,9 +113,11 @@ SERVICES: Final = (
     ),
     Service(
         "housekeep",
-        "compress the closed hours of the recording and hand old ones to the offload",
+        "compress the closed hours of the recording and hand old ones to the offload, then compress the closed "
+        "parts of the trader's tapes",
         ("-m", "hftlab.record", "--housekeep"),
         reach="none", memory_max="200M", oom_score=500, timeout_s=1_800,
+        then=("-m", "hftlab.trader", "--housekeep"),
         timer=Timer("*:07:00", "hourly, a few minutes after the hour has closed"),
     ),
     Service(
@@ -281,6 +284,8 @@ def service(spec: Service) -> str:
     if spec.first:
         run.append(f"ExecStartPre=-{python} {' '.join(spec.first)}")
     run.append(f"ExecStart={python} {' '.join(spec.command)}")
+    if spec.then:
+        run.append(f"ExecStartPost=-{python} {' '.join(spec.then)}")
     if spec.daemon:
         run += [
             "Restart=on-failure",

@@ -88,8 +88,10 @@ class Desk:
         reject=None,
         at_ns: int = T0,
         start: bool = True,
+        edge: dict[str, object] | None = None,
     ) -> None:
         self.folder, self.paper = folder, paper
+        self.edge_options = edge or {}  # how the tape is cut and counted: part_bytes, quota_bytes, fsync
         self.settings: Settings = parse(settings or raw_settings())
         self.risk = limits({**WIDE, **(changes or {})}) if paper else None
         self.costs = costs or plain_costs()
@@ -112,7 +114,7 @@ class Desk:
         self.edge = LiveEdge(
             source, self.clock, pairs=PAIRS, switches=lambda: frozenset(self.switched),
             requests=self.folder / "requests", should_stop=lambda: self.clock.now_ns() >= self.until,
-            venue=self.broker if self.paper else None,
+            venue=self.broker if self.paper else None, **self.edge_options,
         )  # fmt: skip
         return self.session()
 

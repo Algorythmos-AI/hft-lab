@@ -33,7 +33,11 @@ _TOP: Final = frozenset(
         "close_retry_seconds", "fsync", "sleeves", "rollout", "clean_day_minutes",
     }
 )  # fmt: skip
-_OPTIONAL: Final = frozenset({"registry"})  # where models and reports are kept: needed once a sleeve is of kind `ml`
+# `registry`: where models and reports are kept, needed once a sleeve is of kind `ml`. `tape`: the size of a part
+# of the event tape and the quota all tapes are counted against (hftlab.trader.tape).
+_OPTIONAL: Final = frozenset({"registry", "tape"})
+_TAPE: Final = frozenset({"part_bytes", "quota_bytes"})
+PART_BYTES: Final = 64_000_000  # ENGINEERING DEFAULT, where the file gives no `tape`
 _LADDER: Final = frozenset({"start", "promote"})
 _STEPS: Final = frozenset({"min_size", "normal"})
 _RULE: Final = frozenset({"clean_days", "decision"})
@@ -59,6 +63,8 @@ class Settings:
     clean_day_ns: int | None  # how long the trader must have run in a trading day for it to count; null: none counts
     placeholder: bool
     registry: Path | None = None  # the folder with models/ and reports/, each file named by its hash (ADR 0023)
+    tape_part_bytes: int = PART_BYTES  # a part of the tape is closed at the first turn after it has grown to this
+    tape_quota_bytes: int | None = None  # all tapes together stay under this; None: the file sets no quota
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -144,6 +150,13 @@ def parse(loaded: object, source: str = "the trader's settings") -> Settings:
         places(sleeves)
     except LineupError as exc:
         raise TraderConfigError(f"{source}: {exc}") from exc
+    tape = loaded.get("tape")
+    part_bytes, quota_bytes = PART_BYTES, None
+    if tape is not None:
+        block = _keys(tape, "tape", _TAPE)
+        part_bytes, quota_bytes = _whole(block, "part_bytes"), _whole(block, "quota_bytes")
+        if quota_bytes < part_bytes:
+            raise TraderConfigError(f"{source}: tape.quota_bytes must be at least one part, {part_bytes}")
     minutes = loaded["clean_day_minutes"]
     if minutes is not None and (type(minutes) is not int or minutes < 1):
         raise TraderConfigError(f"{source}: clean_day_minutes must be null or a whole number of at least 1")
@@ -162,6 +175,8 @@ def parse(loaded: object, source: str = "the trader's settings") -> Settings:
         clean_day_ns=None if minutes is None else minutes * MINUTE,
         placeholder=loaded["status"] != "decided",
         registry=None if registry is None else Path(registry),
+        tape_part_bytes=part_bytes,
+        tape_quota_bytes=quota_bytes,
     )
 
 

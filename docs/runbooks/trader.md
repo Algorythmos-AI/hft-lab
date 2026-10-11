@@ -45,6 +45,7 @@ trader: session 1 of 2026-10-14; stages {"control": "shadow", "idle": "shadow"}
 | `... may place paper orders by the stage journal, and the risk limits are not in force` | A sleeve's stage is above `shadow` and `config/risk.yaml` is not in force. One of the two is wrong |
 | `another trader holds ...` | One is already running |
 | `a journal or a tape cannot be used` | A journal does not verify. It is never repaired: keep the file, and read section 6 |
+| `... the tapes hold N of M bytes: no session is begun until room is made` | The tapes are at their quota. Section 8 |
 
 **If it says `PAPER: limits in force by HFT-DEC-NNNN`** and you did not expect that, stop it (section 4).
 Paper orders are possible only after a decision record set the limits and another approved the sleeve's
@@ -174,3 +175,51 @@ the ones the day left. Nothing is sent and nobody is paged.
 **If one is not identical,** that is a defect to report with the day's folder: something the trader decided
 depended on something it did not record. `refused: ... recorded under other settings` means the
 configuration changed since that day; check out the commit the day ran on and replay there.
+
+A day replays the same whether its tape is in one part or many, and whether the parts are compressed or
+not. `refused: ... one is missing, and the tape has a hole` means a part of that session was moved away or
+removed: bring it back beside the others and replay again.
+
+## 8. The tapes and their quota
+
+The tape is what the trader was shown from outside, one line each: it is what a replay runs on. On disk, in
+the day's folder:
+
+| File | What it is |
+|---|---|
+| `session-001.tape.jsonl` | the head: how the session began. Two lines, written once. The session number comes from counting these, so **never move or rename a head** |
+| `session-001.part-0001.2026-10-14.jsonl` | the turns. A new part begins at each UTC midnight and when one has grown to `tape.part_bytes` (64 MB as shipped), always between two turns |
+| `session-001.part-0001.2026-10-14.jsonl.gz` | a closed part, compressed |
+
+Closed parts are compressed by the hourly `hft-housekeep.service`, after it has done the recording's own
+housekeeping. By hand: `trader --housekeep`.
+
+**You should see** `trader: tapes: compressed N closed part(s); B bytes on disk, a quota of Q`. It never
+touches the part a running trader is writing, and it deletes nothing but the plain copy of a part whose
+compressed copy it has read back and found the same.
+
+All tapes together are held under `tape.quota_bytes` in `config/trader.yaml`. That number is a
+**placeholder**: set it from the host's measured disk budget, by pull request, before the trader runs. The
+decision journals and the other journals are not counted: they are the record, and they are small.
+
+- At 90% you get one page, `hft:tape_near_quota`, when a session starts.
+- At 100% the running session takes no further turn. It ends as it does on a stop: journals flushed, working
+  orders left to the order manager's rules, **positions left as they are**. The next start is refused (exit
+  code 2, not restarted). So make room when the page comes, not after.
+- **To make room:** run `trader --housekeep` first. If that is not enough, move the oldest day folders'
+  `session-*` files to another disk, whole sessions at a time, head and parts together. The days you move
+  can be replayed again only after they are moved back. Nothing in this platform removes a tape, and the
+  backup does not hold them ([backup](backup.md)).
+
+**What a power cut can lose.** A kill of the process loses no line of the tape. A power cut is different:
+
+- The head and every closed part are on the disk before the next file is opened. A power cut loses none of
+  them.
+- With `fsync: true`, as shipped, the part being written is synced on every beat (`beat_ms`, one second as
+  shipped). A power cut can lose the lines written since the last beat: at most a second of turns and the
+  turn in progress. With `fsync: false` it can lose everything in the part being written.
+- The trader never reads the tape to recover. After a power cut it starts from the journals and asks the
+  broker, as after any restart. What the lost lines cost is the end of that one session's replay: it is
+  shown as `"ended": "killed"`, and it can report `"identical": false` with `replayed_bytes` smaller than
+  `live_bytes`, because the tape ends up to a beat before the decision journal does. That is the power cut,
+  not a defect in the trader. Every earlier session of the day still replays whole.

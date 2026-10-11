@@ -1,5 +1,5 @@
 [Unit]
-Description=HFT Lab housekeep: compress the closed hours of the recording and hand old ones to the offload
+Description=HFT Lab housekeep: compress the closed hours of the recording and hand old ones to the offload, then compress the closed parts of the trader's tapes
 Documentation=file:///home/hft/hft-lab/docs/runbooks/README.md
 
 [Service]
@@ -15,6 +15,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=TZ=UTC
 Environment=HFT_STATE_DIR=/home/hft/hft-lab/var
 ExecStart=/home/hft/hft-lab/.venv/bin/python -m hftlab.record --housekeep
+ExecStartPost=-/home/hft/hft-lab/.venv/bin/python -m hftlab.trader --housekeep
 TimeoutStartSec=1800
 Nice=15
 IOSchedulingClass=idle

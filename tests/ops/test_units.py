@@ -139,7 +139,8 @@ def test_only_the_publisher_and_the_weekly_decision_may_reach_the_internet_and_n
 @pytest.mark.parametrize("spec", ALL, ids=lambda spec: spec.name)
 def test_every_command_is_the_installed_python_running_a_module_that_exists(spec):
     text = OURS[spec.unit]
-    for line in values(text, "ExecStart") + [v.removeprefix("-") for v in values(text, "ExecStartPre")]:
+    others = values(text, "ExecStartPre") + values(text, "ExecStartPost")
+    for line in values(text, "ExecStart") + [v.removeprefix("-") for v in others]:
         words = line.split()
         assert words[0] == "/home/hft/hft-lab/.venv/bin/python" and words[1] == "-m", line
         assert importlib.util.find_spec(words[2]) is not None, f"{spec.unit} runs {words[2]}, which is not there"
@@ -162,6 +163,10 @@ def test_the_commands_are_the_ones_the_brief_names():
     before = values(OURS["hft-publish.service"], "ExecStartPre")
     assert before == ["-/home/hft/hft-lab/.venv/bin/python -m hftlab.ops.status --alert --quiet"]
     assert before[0].startswith("-"), "a failing status check must not keep the snapshot from being sent"
+    after = {name: values(text, "ExecStartPost") for name, text in OURS.items() if values(text, "ExecStartPost")}
+    assert after == {"hft-housekeep.service": ["-/home/hft/hft-lab/.venv/bin/python -m hftlab.trader --housekeep"]}, (
+        "the trader's tapes are compressed by the same hourly job, after the recording's own, and cannot fail it"
+    )
 
 
 def test_the_recorder_restarts_with_back_off_stops_on_sigterm_and_is_not_restarted_when_it_was_refused():

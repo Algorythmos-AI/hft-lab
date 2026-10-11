@@ -10,6 +10,7 @@ from hftlab.core import Side, TimeInForce
 from hftlab.journal import read, verify
 from hftlab.strategy import Intent, Placed, Refused
 from hftlab.trader import TraderRefused
+from hftlab.trader.tape import read_tape
 from hftlab.venues.view import MarketDataView
 from tests.trader.kit import SECOND, T0, Desk, put_stage, raw_settings
 from tests.venues.kit import EURUSD, plain_costs
@@ -262,7 +263,7 @@ def test_a_stop_cancels_nothing_and_the_next_start_takes_working_orders_back_bef
     assert desk.kinds()[-1] == "stop" and result["mode"] == "paper"
     assert [b.order.client_order_id for b in desk.market.working()] == [resting.client_order_id], "left working"
     assert "cancel" not in [e["type"] for e in desk.outbox()]
-    assert (desk.day() / "session-001.tape.jsonl").read_bytes().rstrip().endswith(b"]") and verify(
+    assert read_tape(desk.day() / "session-001.tape.jsonl")[-1][0] == "stop" and verify(
         tmp_path / "outbox.jsonl"
     ).torn is False
     desk.start()

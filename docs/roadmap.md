@@ -34,12 +34,13 @@ themselves. That is all it has been run against:
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
 - Nothing has been recorded from the real feed. There is no recorded trading day.
-- No experiment has been run on real data. The research registry holds two hypotheses and two experiments,
-  all registered and none run.
+- No experiment has been run on real data. The research registry holds three hypotheses and three
+  experiments, all registered and none run.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
-- **F5 and F6 have not started as phases.** Their foundations are written and tested on synthetic streams
-  only (see "Where F5 and F6 stand"). No model has been trained on real data, and nothing in this repository
-  is evidence of an edge.
+- **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
+  streams and against the fake broker only (see "Where F5 and F6 stand"). Its gate is not met and code
+  cannot meet it. No model has been trained on real data, and nothing in this repository is evidence of an
+  edge.
 
 | Gate | State | What closes it |
 |---|---|---|
@@ -48,13 +49,15 @@ themselves. That is all it has been run against:
 | F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
 | F4 | Open | The capability probe of F1, risk limits put in force by a decision record, the owner's decision to let the control sleeve place minimum-size paper orders, then the registered run `HFT-EXP-0002`: five trading days on the real paper account with zero reconciliation breaks and the slippage report. Code cannot close it: the days have to pass |
 
+| F6 | Open | Recorded weeks to train on, the owner's two times for the weekend jobs and their timers enabled, then two full weekly cycles on the host that needed no manual help ([`HFT-EXP-0003`](../research/experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md) is the first, registered and not run) and one rollback drill there ([runbook](runbooks/learning.md)). The scorer in its own process and a deep challenger are not built. Code cannot close it: the weeks have to pass |
+
 ## Where F5 and F6 stand
 
-**Foundations only.** What follows needs no new dependency and no strategy idea, and that is all that has been
-built. It has run on synthetic streams the tests make themselves, some with an effect planted in them on
-purpose so that the answer is known. **There is no real data, no model has been trained on real data, and
-nothing here is evidence of an edge.** Neither phase has a gate that code could open: both stay
-`not_started` in `config/ops.yaml`.
+**F5: foundations only. F6: the weekly loop is written, and its gate is open.** What follows needs no new
+dependency and no strategy idea. It has run on synthetic streams the tests make themselves, some with an
+effect planted in them on purpose so that the answer is known, and against the fake broker. **There is no
+real data, no model has been trained on real data, and nothing here is evidence of an edge.** In
+`config/ops.yaml` F5 stays `not_started` and F6 is `open`: its code is written and its gate is not met.
 
 | Part | State |
 |---|---|
@@ -63,12 +66,16 @@ nothing here is evidence of an edge.** Neither phase has a gate that code could 
 | Datasets | Written: `src/hftlab/learn/dataset.py`. Built per pair and horizon from day folders of the store; the builder refuses a feature that reads ahead, by a check that looks at up to sixteen places of the stream and is a test, not a proof. **No dataset of real data exists**, and none is ever committed |
 | Validation | Written: `src/hftlab/learn/validate.py` ([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)). Walk-forward by week with purge and embargo, a hold-out read once per frozen configuration, a trial ledger beside the signed registry, a day-block bootstrap, the deflated Sharpe ratio, and oracle, model and random on the same rows. **Nothing has been validated**: `config/trial_registry.yaml` is still empty |
 | Models | Written: `src/hftlab/models/` ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)). A model file named by its hash and never overwritten, ridge regression on standardised features solved exactly, the flat and the seeded random baseline, and a scorer that runs in the caller's process. **No model ships and none has been fitted to real data.** Gradient boosting and neural networks are **not built**: each needs a new dependency and a decision on where training runs, and neither decision has been made |
-| ML sleeve | A skeleton: `src/hftlab/strategy/ml.py`. It trades a cell the feasibility map marks viable when the model expects more than its margin, leaves at the label's horizon, and reports that it may not leave shadow while its model or its map rests on placeholder costs. In the shadow runner, on a synthetic stream with a planted effect, it earns what the effect is worth and replays byte for byte; without the effect it pays the control sleeve's cost. **That checks the plumbing and says nothing about any market.** It is in no configuration and no process runs it |
+| ML sleeve | A skeleton: `src/hftlab/strategy/ml.py`. It trades a cell the feasibility map marks viable when the model expects more than its margin, leaves at the label's horizon, and reports that it may not leave shadow while its model or its map rests on placeholder costs. In the trader, on a synthetic stream with a planted effect, it earns what the effect is worth and replays byte for byte; without the effect it pays the control sleeve's cost. **That checks the plumbing and says nothing about any market.** The shipped trader settings name two places for it, a champion's and one challenger's, and both run idle: no model is registered |
+| Lineup | Written: `src/hftlab/lineup/` ([ADR 0023](adr/0023-weekly-learning-loop.md)). A hash-chained journal says which model stands in which place. The trader loads a model and its report by hash and by nothing else, journals what each session served, and steps a place down when its model changes. A journal that does not verify serves nothing. **No lineup journal exists on any host** |
+| Weekend training | Written: `python -m hftlab.learn.train`. A walk-forward report as bytes, a ridge candidate in the registry under its hash, a memory budget that fails the run. **It has trained on synthetic weeks only** |
 | Directional Change sleeve | **Not started.** It waits for its published method to be read into the knowledge base, so that it is built from the source |
-| Promotion | The decision only: `src/hftlab/learn/promote.py`, a pure function that answers promote, keep or roll back with reason codes, with a forced-rollback case among its tests. **No process calls it**: no weekend training, no challenger week, no weekly promotion, no automatic rollback, no drift watch |
-| Scorer in its own process, DL challenger | **Not started** |
-| Pre-registration | **Nothing registered.** No hypothesis, experiment or decision exists for any model or for the promotion rule; a rule that names no decision record passes nothing |
-| Exit gates of F5 and F6 | Not started. F5 needs sleeves trading on paper under a pre-registered rollout; F6 needs two weekly cycles without manual help and a rollback drill. Both need recorded data first, so both wait behind F2 |
+| Promotion and rollback | Written: `python -m hftlab.learn.promote`. It reads the week's shadow round trips from the trader's journals, applies the rule through the pure function, and writes the lineup: promote, keep or roll back, with a page and the hash of the report it rests on. A promotion needs the rule in force, its decision record with the owner's approval, the risk limits in force and a week with no reconciliation break. A champion that trips its loss latch is rolled back without a rule; `--drill` proves that path on a copy. **As shipped it says `keep: rule not in force`: no rule exists.** The cycle has run with the trader on the fake broker only |
+| Drift | Written: `python -m hftlab.learn.drift`. Feature shift, calibration and the spread regime against the summary kept at training; a breach asks the trader to take the sleeve down to shadow. **Every threshold is null**, so it reports and steps nothing down |
+| Units, status, runbook | `hft-train` and `hft-promote` are rendered, at placeholder times that are the owner's to set, and the install script enables neither. The status screen and the snapshot show the lineup once something is registered. [Runbook](runbooks/learning.md). **Nothing is installed, and the page has not been followed on the host** |
+| Scorer in its own process, DL challenger | **Not built.** The scorer's process is decided in ADR 0023 and `scorer: process` is refused until it exists. Every model scores in the trader's process |
+| Pre-registration | `HFT-HYP-0003` and `HFT-EXP-0003` register the first ridge challenger's week in shadow. The expected outcome is no advantage over the control sleeve after costs. **Not run. No decision record exists and no promotion rule is registered**; a rule that names no decision record passes nothing |
+| Exit gates of F5 and F6 | F5: not started. It needs sleeves trading on paper under a pre-registered rollout. F6: open. It needs two weekly cycles without manual help and a rollback drill, on the host. Both need recorded data first, so both wait behind F2 |
 
 ## Where F4 stands
 
@@ -162,6 +169,6 @@ not check offline is listed at the end of the runbook.
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
 | Registry | Done: lint and trial count. The first two records came with F3, the next two with F4 |
-| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, and the foundations of F5 and F6 0020 to 0022 |
+| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, and the weekly loop 0023 |
 | Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Twenty-three of the first file's 31 are verified by tests they name and the other 8 are open. Six of the second file's 68 are verified, all of them by tests on synthetic streams; the other 62 are open |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

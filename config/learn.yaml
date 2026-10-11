@@ -54,7 +54,8 @@ drift:                          # null: the monitor reports and steps nothing do
   calibration_gap_micro: null   # PLACEHOLDER: mean predicted less mean realised outcome per trade
   spread_ratio_x100: null       # PLACEHOLDER: the live median spread over the training median, in hundredths
 
-scorer:                         # the scorer in its own process (ADR 0023)
+scorer:                         # the scorer in its own process (ADR 0023): DECIDED, NOT BUILT. Read and unused:
+                                # every ML place scores in the trader's process, and `scorer: process` is refused
   timeout_ms: 20                # ENGINEERING DEFAULT: after this long without a reply the sleeve abstains
   restart_first_ms: 100         # ENGINEERING DEFAULT: the wait before a failed scorer is started again ...
   restart_last_ms: 30000        # ... which doubles up to this

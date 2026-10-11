@@ -55,7 +55,7 @@ from hftlab.exec.outbox import commission_from, fill_fields, fill_from
 from hftlab.journal import Journal, JournalError, JournalState, read, verify
 from hftlab.lineup import FILE as LINEUP
 from hftlab.lineup.journal import LineupError
-from hftlab.lineup.serve import MakeScorer, in_process, lineup_or_none, make
+from hftlab.lineup.serve import lineup_or_none, make
 from hftlab.record.format import Heartbeat, describe
 from hftlab.risk import Reason, RiskConfig, RiskGate
 from hftlab.shadow.__main__ import make_sleeves, minimum_sizes
@@ -178,7 +178,6 @@ class Trader:
         config_digest: str,
         folder: Path | None = None,
         status: bool = True,
-        scorer: MakeScorer = in_process,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -256,7 +255,7 @@ class Trader:
         lineup, problem = lineup_or_none(self._folder / LINEUP)
         try:
             served = make(
-                settings.sleeves, lineup, registry=settings.registry, calendar=calendar, scorer=scorer,
+                settings.sleeves, lineup, registry=settings.registry, calendar=calendar,
                 others=lambda entry: make_sleeves([entry], sizes)[0], problem=problem,
             )  # fmt: skip
         except LineupError as exc:

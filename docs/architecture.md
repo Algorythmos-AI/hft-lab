@@ -167,12 +167,15 @@ hold-out weeks; every trial is counted. A challenger runs in shadow for a week a
 only if it passes a gate written down beforehand, and it is rolled back automatically if it then breaches
 its loss latch ([ADR 0008](adr/0008-learning-loop.md)).
 
-That is the plan. What exists of it are the foundations, tested on synthetic streams only: features and labels
-with their timing rule ([ADR 0020](adr/0020-features-and-labels-timing.md)), the splits, the hold-out, the
-trial count and the promotion decision as a function
-([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)), and the model file, an exact ridge
-model and the scorer ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)). Nothing trains at the weekend,
-nothing is promoted, and no model has been fitted to real data.
+That is the plan. What exists of it is tested on synthetic streams and against the fake broker only: features
+and labels with their timing rule ([ADR 0020](adr/0020-features-and-labels-timing.md)), the splits, the
+hold-out, the trial count and the promotion decision as a function
+([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)), the model file, an exact ridge
+model and the scorer ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)), and the weekly loop as
+processes: the training run, the hash-chained lineup journal the trader reads its models from, the weekly
+decision with its rollback and drill, and the drift look ([ADR 0023](adr/0023-weekly-learning-loop.md)).
+Nothing has trained on a real recording, no promotion rule exists so nothing can be promoted, the scorer
+still runs in the trader's process, and no model has been fitted to real data.
 
 ## How bugs are kept rare, loud and contained
 

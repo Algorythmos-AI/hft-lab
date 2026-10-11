@@ -3,7 +3,10 @@
 The trader's configuration names places:
 
     - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}
-    - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: process}
+    - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process}
+
+`scorer` says where a row is scored. The one value there is, is `in_process`: the scorer in a process of its
+own is decided (ADR 0023) and not built, and `process` is refused here rather than quietly served in process.
 
 Which model stands in a place is the lineup journal's to say. For each place with a model, the evaluation
 report and the model file are read from the registry under their SHA-256, and each is refused unless its bytes
@@ -26,16 +29,15 @@ from typing import Any, Final
 from hftlab.calendar import Calendar
 from hftlab.features import FeatureBuilder, FeatureConfig
 from hftlab.lineup.journal import Lineup, LineupError, Named, read
-from hftlab.models import Model, ModelError, Scorer, parse, scorer_for
+from hftlab.models import Model, ModelError, parse, scorer_for
 from hftlab.strategy import IdleSleeve, Sleeve
 from hftlab.strategy.ml import MlSleeve
 
 ML: Final = "ml"
 CHAMPION: Final = "champion"
-IN_PROCESS, PROCESS = "in_process", "process"
+IN_PROCESS: Final = "in_process"
 SECOND: Final = 1_000_000_000
 _KEYS: Final = frozenset({"name", "kind", "slot", "margin_micro", "retry_seconds", "scorer"})
-MakeScorer = Callable[[str, Model, Path], Scorer]  # the sleeve's name, its model, and the model's file
 
 
 def slot_of(entry: Mapping[str, Any]) -> tuple[str, int]:
@@ -43,8 +45,10 @@ def slot_of(entry: Mapping[str, Any]) -> tuple[str, int]:
     if set(entry) != _KEYS:
         raise LineupError(f"an ml sleeve has exactly the keys {', '.join(sorted(_KEYS))}, not {sorted(entry)}")
     slot, numbers = entry["slot"], (entry["margin_micro"], entry["retry_seconds"])
-    if any(type(number) is not int or number < 0 for number in numbers) or entry["scorer"] not in (IN_PROCESS, PROCESS):
-        raise LineupError(f"sleeve {entry['name']}: two whole numbers, and a scorer that is in_process or process")
+    if any(type(number) is not int or number < 0 for number in numbers):
+        raise LineupError(f"sleeve {entry['name']}: margin_micro and retry_seconds are two whole numbers")
+    if entry["scorer"] != IN_PROCESS:
+        raise LineupError(f"sleeve {entry['name']}: the scorer is in_process; one in its own process is not built")
     if slot == CHAMPION:
         return CHAMPION, 0
     head, _, number = str(slot).partition("-")
@@ -112,10 +116,6 @@ def windows(report: Mapping[str, Any]) -> tuple[FeatureConfig, Mapping[str, obje
     return config, feasibility
 
 
-def in_process(name: str, model: Model, path: Path) -> Scorer:
-    return scorer_for(model)
-
-
 @dataclass(frozen=True, slots=True)
 class Served:
     """The sleeves of a session, and what each place of the lineup got."""
@@ -134,18 +134,17 @@ def lineup_or_none(path: Path) -> tuple[Lineup, str]:
 
 
 def _one(
-    entry: Mapping[str, Any], named: Named, registry: Path | None, calendar: Calendar, scorer: MakeScorer
+    entry: Mapping[str, Any], named: Named, registry: Path | None, calendar: Calendar
 ) -> Sleeve[Any]:
     name = str(entry["name"])
     if registry is None:
         raise LineupError(f"sleeve {name} has a model in the lineup and the settings name no registry")
-    model, report, path = load(named, registry)
+    model, report, _ = load(named, registry)
     config, feasibility = windows(report)
-    asked = scorer(name, model, path) if entry["scorer"] == PROCESS else in_process(name, model, path)
     try:
         return MlSleeve(
-            name, scorer=asked, features=FeatureBuilder(model.pair, config, calendar), feasibility=feasibility,
-            margin_micro=entry["margin_micro"], retry_ns=entry["retry_seconds"] * SECOND,
+            name, scorer=scorer_for(model), features=FeatureBuilder(model.pair, config, calendar),
+            feasibility=feasibility, margin_micro=entry["margin_micro"], retry_ns=entry["retry_seconds"] * SECOND,
         )  # fmt: skip
     except (ValueError, KeyError, TypeError) as exc:
         raise LineupError(f"sleeve {name}: {exc}") from exc
@@ -153,7 +152,7 @@ def _one(
 
 def make(
     entries: Sequence[Mapping[str, Any]], lineup: Lineup, *, registry: Path | None, calendar: Calendar,
-    others: Callable[[Mapping[str, Any]], Sleeve[Any]], scorer: MakeScorer = in_process, problem: str = "",
+    others: Callable[[Mapping[str, Any]], Sleeve[Any]], problem: str = "",
 ) -> Served:  # fmt: skip
     """The sleeves in the order they are configured. An ml place gets the model the lineup puts there.
 
@@ -176,7 +175,7 @@ def make(
             refused[name] = problem
         elif named is not None:
             try:
-                made = _one(entry, named, registry, calendar, scorer)
+                made = _one(entry, named, registry, calendar)
             except LineupError as exc:
                 refused[name] = str(exc)
         sleeves.append(made if made is not None else IdleSleeve(name))

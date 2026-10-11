@@ -13,6 +13,7 @@ from hftlab.book import DESK
 from hftlab.core import InstrumentKind
 from hftlab.exec import TERMINAL
 from hftlab.journal import read, verify
+from hftlab.trader.tape import parts, read_tape
 from tests.faults.kit import AFTER, BEFORE, Kill, Killed
 from tests.trader.kit import TRADED, Desk, put_stage
 
@@ -51,9 +52,9 @@ def disarm(desk: Desk) -> None:
         desk.market.__dict__.pop(name, None)
 
 
-def a_desk(folder) -> Desk:
+def a_desk(folder, **options) -> Desk:
     put_stage(folder, "control", "min_size")
-    return Desk(folder)
+    return Desk(folder, **options)
 
 
 def consistent(desk: Desk, said: str) -> None:
@@ -133,6 +134,66 @@ def test_a_kill_at_any_step_leaves_nothing_duplicated_and_the_next_start_reconci
         desk.run(3 * RUN_SECONDS)
         desk.stop()
         assert len(desk.market._orders) > sent_before, f"{said}: the trader never traded again"
+        consistent(desk, said)
+        found = desk.replay(tmp_path / f"replay-{how}-{at}")
+        assert all(one.identical for one in found), f"{said}: {[one.as_dict() for one in found]}"
+        assert [one.stopped for one in found] == [False, True], said
+
+
+# ---- the moment the tape changes part ------------------------------------------------------------------------------
+
+SMALL = {"edge": {"part_bytes": 2_000}}  # a part is full after a few turns, so the tape changes part all the time
+
+
+def arm_parts(kill: Kill, desk: Desk) -> list:
+    """Also make the two halves of a change of part steps of their own: closing the old file, making the new one.
+
+    Returns the list every line is added to once it has reached its file, in order.
+    """
+    written: list = []
+    write, shut, begin = desk.edge.write, desk.edge._shut_part, desk.edge._open_part
+    desk.edge.write = lambda row: (write(row), written.append(row))[0]
+    desk.edge._shut_part = lambda: kill.step("tape:shut", shut)
+    desk.edge._open_part = lambda day: kill.step("tape:part", lambda: begin(day))
+    arm(kill, desk)
+    return written
+
+
+def changes_of_part(steps: list[str]) -> list[int]:
+    """The three steps of four changes of part in the middle of trading, by number.
+
+    A turn's line is a step, and inside it, when the part is due: closing the old file, then making the new
+    one. The line itself is written last, so a kill after the third step is a kill before the line.
+    """
+    first = steps.index("outbox:intent")
+    made = [n for n, label in enumerate(steps) if label == "tape:part" and n > first][:4]
+    assert len(made) == 4 and all(steps[n - 2 : n] == ["tape:step", "tape:shut"] for n in made)
+    return sorted({n + offset for n in made for offset in (-1, 0, 1)})  # steps are numbered from one
+
+
+@pytest.mark.parametrize("how", [BEFORE, AFTER])
+def test_a_kill_at_the_moment_the_tape_changes_part_loses_no_line_and_writes_none_twice(tmp_path, how):
+    counting, count = a_desk(tmp_path / "count", **SMALL), Kill()
+    arm_parts(count, counting)
+    counting.run(RUN_SECONDS)
+    for at in changes_of_part(count.steps):
+        folder = tmp_path / f"{how}-{at}"
+        desk, kill = a_desk(folder, **SMALL), Kill(at, how)
+        written = arm_parts(kill, desk)
+        with pytest.raises(Killed):
+            desk.run(RUN_SECONDS)
+        said = f"killed {how} step {at} ({kill.died_at})"
+        assert kill.died_at in ("tape:shut", "tape:part", "tape:step"), said
+        head = desk.day() / "session-001.tape.jsonl"
+        on_disk = read_tape(head)
+        assert on_disk[2:] == written, f"{said}: the tape is not exactly the lines that were written"
+        files = parts(head)
+        assert all(path.stat().st_size for path in files[:-1]), f"{said}: only the last part may be empty"
+        disarm(desk)
+        desk.start()  # the dead process closed nothing; the new one begins a session of its own
+        assert read_tape(head) == on_disk, f"{said}: a new session touched the dead one's tape"
+        desk.run(2 * RUN_SECONDS)
+        desk.stop()
         consistent(desk, said)
         found = desk.replay(tmp_path / f"replay-{how}-{at}")
         assert all(one.identical for one in found), f"{said}: {[one.as_dict() for one in found]}"

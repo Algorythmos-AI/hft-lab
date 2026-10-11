@@ -57,6 +57,13 @@ sleeves:
 
 registry: var/learn             # models/ and reports/, each file named by its SHA-256; written by the training run
 
+# The event tape (hftlab.trader.tape): a session's turns go into parts, a new one at each UTC midnight and when
+# one is full. Closed parts are compressed by the hourly housekeeping unit. All tapes together stay under the
+# quota: no session is begun at it, and one that reaches it ends as if told to stop. Nothing removes a tape.
+tape:
+  part_bytes: 64000000          # ENGINEERING DEFAULT. A part is closed at the first turn after it has grown to this
+  quota_bytes: 1000000000       # PLACEHOLDER. Set from the host's measured disk budget before the trader runs (ADR 0007)
+
 clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
 
 rollout:

@@ -95,6 +95,8 @@ for unit in $enable; do
     case "$unit" in
         hft-train.timer|hft-promote.timer)
             refuse "$unit is the owner's to enable by hand, once its time is set: docs/runbooks/learning.md" ;;
+        hft-report.timer)
+            refuse "$unit is the owner's to enable by hand: docs/runbooks/reports.md" ;;
     esac
     case " $allowed " in
         *" $unit "*) ;;

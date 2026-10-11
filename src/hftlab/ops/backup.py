@@ -5,9 +5,19 @@
     python -m hftlab.ops.backup verify --folder DIR     check a backup folder against its own manifest
 
 What has to outlive this disk is small and cannot be made again: the journals of the recording (every gap and
-its reason, the starts and stops, the instruments), the store's run counter, the shadow journals and the alert
-state. Model files join the list when there are models. The recordings themselves are not on it: they are
-large and leave through the store's own offload, which removes a segment only after a confirmed copy (ADR 0012).
+its reason, the starts and stops, the instruments), the store's run counter, the shadow journals, the alert
+state, the record of the deploys, and everything the trader and the learning loop keep:
+
+  * the trader's folder: the order outbox (which is also the broker book's journal: every fill it booked), the
+    shadow book's journal, the risk gate's latches, the reconciler's journal, the stage journal, the lineup
+    journal (which model is champion) and every day's decision journal;
+  * the learning folder: the model registry (`models/`), the evaluation reports (`reports/`), the trial ledger
+    and the word the last training run left.
+
+Those two folders are taken whole: a file nobody has listed is backed up, not dropped. What is left out is
+named in `LEFT_OUT`, each with its reason, and a test holds a running trader and a training run to it. The
+recordings themselves are not in the backup: they are large and leave through the store's own offload, which
+removes a segment only after a confirmed copy (ADR 0012).
 
 Two ways out:
 
@@ -31,6 +41,7 @@ Exit codes: 0 handed over, or the folder matches its manifest; 1 it failed, or t
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -51,8 +62,37 @@ from hftlab.record.store import JOURNAL, days
 SECOND: Final = 1_000_000_000
 MANIFEST: Final = "MANIFEST.json"
 EXIT_OK, EXIT_FAILED, EXIT_NOWHERE = 0, 1, 2
+LEARN_CONFIG: Final = Path("config/learn.yaml")
+TRADER, LEARN, REGISTRY = "trader", "learn", "registry"  # the folders taken whole, by the name they get in a backup
 _DESTROYS: Final = ("forget", "prune", "delete", "remove", "rm", "purge", "expire")
 Runner = Callable[[Sequence[str]], int]
+
+
+@dataclass(frozen=True, slots=True)
+class LeftOut:
+    """A kind of file in a folder that is otherwise taken whole, and why the backup does not hold it."""
+
+    where: str  # TRADER, LEARN, or "*" for any folder
+    pattern: str  # matched against the path below that folder; `*` crosses a `/`
+    why: str
+
+
+LEFT_OUT: Final = (
+    LeftOut(
+        TRADER, "days/*/session-*",
+        "the event tapes. Not rebuilt: a tape cannot be made again. It is left out because it is large, as the "
+        "recordings are, and is evidence for one check only, the replay of its day. It stays on the host under "
+        "the tape quota; losing it loses that check for those days and no record of what was decided or booked",
+    ),
+    LeftOut(TRADER, "status.json", "rebuilt: the running trader replaces it on every beat"),
+    LeftOut(TRADER, "trader.lock", "rebuilt: an empty file that only marks that a trader holds the folder"),
+    LeftOut(
+        TRADER, "requests/*",
+        "rebuilt: a request the trader has not taken yet. What came of a request is in the decision journal; one "
+        "that was lost is asked again",
+    ),
+    LeftOut("*", "*.partial", "rebuilt: a file half written, which its writer renames or writes again"),
+)  # fmt: skip
 
 
 class BackupError(Exception):
@@ -65,15 +105,68 @@ class Entry:
     name: str  # where it goes in the backup: record/2026-10-14/journal.jsonl
 
 
-def manifest(record_root: Path, shadow_dir: Path, state: Path) -> list[Entry]:
-    """What must be backed up, as it is on disk now. A file that is not there yet is simply not listed."""
+def left_out(where: str, below: str) -> LeftOut | None:
+    """The rule that leaves this file of a whole folder out of the backup, or None: it is backed up."""
+    for rule in LEFT_OUT:
+        if rule.where in ("*", where) and fnmatch.fnmatchcase(below, rule.pattern):
+            return rule
+    return None
+
+
+def whole(folder: Path, where: str, name: str) -> list[tuple[Path, str]]:
+    """Every file under `folder` that no rule leaves out, as (path, its name in the backup), in a fixed order."""
+    if not folder.is_dir():
+        return []
+    found = sorted(path for path in folder.rglob("*") if path.is_file())
+    kept = [(path, path.relative_to(folder).as_posix()) for path in found]
+    return [(path, f"{name}/{below}") for path, below in kept if left_out(where, below) is None]
+
+
+def manifest(
+    record_root: Path,
+    shadow_dir: Path,
+    state: Path,
+    *,
+    trader: Path | None = None,
+    learn: Sequence[tuple[str, Path]] = (),
+    lineup: Path | None = None,
+) -> list[Entry]:
+    """What must be backed up, as it is on disk now. A file that is not there yet is simply not listed.
+
+    `trader` is the trader's folder and `learn` the learning folders by the name each gets in the backup; all
+    are taken whole but for `LEFT_OUT`. `lineup` is the lineup journal where the learning settings put it: it
+    is listed by itself when that is not inside the trader's folder.
+    """
     wanted = [(record_root / "state.json", "record/state.json")]
     wanted += [(day / JOURNAL, f"record/{day.name}/{JOURNAL}") for day in days(record_root)]
     if shadow_dir.is_dir():
         wanted += [(path, f"shadow/{path.name}") for path in sorted(shadow_dir.glob("*.jsonl"))]
     wanted.append((state / "alerts" / "state.json", "alerts/state.json"))
-    # Model files: added here, with their registry, when the learning loop exists (ADR 0008).
+    wanted.append((state / "deploy" / "deploys.jsonl", "deploy/deploys.jsonl"))  # which code was in service when
+    if trader is not None:
+        wanted += whole(trader, TRADER, TRADER)
+    for name, folder in learn:
+        wanted += whole(folder, LEARN, name)
+    if lineup is not None and lineup.resolve() not in {path.resolve() for path, _ in wanted}:
+        wanted.append((lineup, f"lineup/{lineup.name}"))
     return [Entry(path, name) for path, name in wanted if path.is_file()]
+
+
+def learning_places(trader_config: Path, learn_config: Path) -> tuple[list[tuple[str, Path]], Path | None]:
+    """Where the models, the reports and the ledger are, and the lineup journal, as the shipped settings say.
+
+    The learning settings name the folder training writes (`state_dir`) and the lineup journal; the trader's
+    name the folder models are served from (`registry`). They are one folder as shipped. When they are two,
+    both are taken. A settings file that is not there names nothing.
+    """
+    said = status._mapping(learn_config) if learn_config.is_file() else {}
+    serving = status._mapping(trader_config) if trader_config.is_file() else {}
+    folders: list[tuple[str, Path]] = []
+    for name, value in ((LEARN, said.get("state_dir")), (REGISTRY, serving.get("registry"))):
+        if isinstance(value, str) and Path(value).resolve() not in {folder.resolve() for _, folder in folders}:
+            folders.append((name, Path(value)))
+    journal = said.get("lineup")
+    return folders, Path(journal) if isinstance(journal, str) else None
 
 
 def _digest(path: Path) -> tuple[str, int]:
@@ -192,6 +285,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--recorder-config", type=Path, default=status.RECORDER_CONFIG)
     parser.add_argument("--shadow-config", type=Path, default=status.SHADOW_CONFIG)
     parser.add_argument("--calendar", type=Path, default=status.CALENDAR)
+    parser.add_argument("--trader-config", type=Path, default=status.TRADER_CONFIG)
+    parser.add_argument("--learn-config", type=Path, default=LEARN_CONFIG)
     args = parser.parse_args(argv)
     if args.command == "verify":
         if args.folder is None:
@@ -202,12 +297,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_FAILED if wrong else EXIT_OK
     settings, clock = host.settings(), WallClock()
     try:
-        sources = status.load_sources(args.config, args.recorder_config, args.shadow_config, args.calendar)
+        sources = status.load_sources(
+            args.config, args.recorder_config, args.shadow_config, args.calendar, trader_config=args.trader_config
+        )
         tool = load_tool(args.config)
+        learn, lineup = learning_places(args.trader_config, args.learn_config)
     except (status.StatusError, BackupError, ValueError) as exc:
         print(f"backup: {exc}", file=sys.stderr)
         return EXIT_NOWHERE
-    entries = manifest(sources.record_root, sources.shadow_journal.parent, sources.state)
+    trader = sources.trader_status.parent if sources.trader_status is not None else None
+    entries = manifest(
+        sources.record_root, sources.shadow_journal.parent, sources.state, trader=trader, learn=learn, lineup=lineup
+    )
     if args.command == "list":
         print("\n".join(f"{entry.name}\t{entry.path.stat().st_size}" for entry in entries) or "backup: nothing yet")
         return EXIT_OK

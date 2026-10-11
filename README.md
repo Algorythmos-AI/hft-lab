@@ -8,7 +8,7 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 and a Directional Change baseline sleeve are written, and F6's weekly learning loop is written with its gate open, all tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
+| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 and a Directional Change baseline sleeve are written, and F6's weekly learning loop is written with its gate open, all tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer, with its deploy gate, its daily and weekly reports, a tape held under a quota and a backup of everything that cannot be rebuilt, is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
 | **Runs at**     | Nothing runs yet and nothing is installed on any host. Target: a shared Linux host, against an Interactive Brokers **paper** account. The units, the pre-flight gate and the install script are written and tested off the host only |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
@@ -70,7 +70,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The research registry: its lint, the trial count, two hypotheses and two experiments, registered and not run | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
-| The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
+| The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
 | What the owner runs on the host: the pre-flight sampler, the install script, the status wrapper, the unit files | `deploy/` |
 | Design records | `docs/` |
 

@@ -102,3 +102,7 @@ new entries and keeps managing exits. `FLATTEN` closes every position.
 A sleeve's stage (`shadow`, `min_size`, `normal`, `stepped_down`, `off`) goes up only by its rule in
 `config/trader.yaml`, which needs the owner's decision record. Never set a stage, a promotion rule or a latch
 reset by hand, and never start `hft-trader.service`: those are the owner's.
+
+The code on the host changes only through `python -m hftlab.ops.deploy`, run by the owner
+(`docs/runbooks/deploy.md`). Never run it, `adopt` and `back` included, and never change a checkout on a host
+in place.

@@ -7,12 +7,30 @@ import json
 
 import pytest
 
+from hftlab import lineup
 from hftlab.core import SimClock
+from hftlab.journal import verify as verify_journal
+from hftlab.learn import train
 from hftlab.ops import backup, host, status
 from hftlab.ops.alerts import Alerts
-from hftlab.ops.backup import BackupError, Entry, manifest, to_directory, to_tool, tool_command, verify
+from hftlab.ops.backup import (
+    LEFT_OUT,
+    BackupError,
+    Entry,
+    learning_places,
+    left_out,
+    manifest,
+    to_directory,
+    to_tool,
+    tool_command,
+    verify,
+)
+from hftlab.trader.__main__ import only_one
+from hftlab.trader.session import STATE
+from tests.learn import kit as learning
 from tests.ops.kit import SATURDAY, Host, a_shadow_session, sources
 from tests.support import ROOT, called_name
+from tests.trader.kit import Desk, put_stage
 
 STAMP = "20261014T030000Z"
 
@@ -50,6 +68,101 @@ def test_the_recordings_themselves_and_the_status_file_are_not_on_it(tmp_path):
 
 def test_on_a_host_with_nothing_yet_the_list_is_empty(tmp_path):
     assert listed(tmp_path) == []
+
+
+# ---- the trader's folder and the learning folder: taken whole, but for what is named ---------------------------------
+
+SHIPPED = ["--cost-model", str(ROOT / "config/cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
+           "--feasibility", str(ROOT / "config/feasibility.yaml")]  # fmt: skip
+
+
+@pytest.fixture(scope="module")
+def lived(tmp_path_factory):
+    """A folder a training run has written into, and a trader on paper has run in, stopped and been asked something.
+
+    Nothing is written by hand: the files are the ones the commands' own code leaves.
+    """
+    folder = tmp_path_factory.mktemp("lived")
+    learning.record(folder / "rec", learning.weeks(1))
+    (folder / "registry.yaml").write_text("history: []\n")
+    argv = ["--config", str(learning.learn_settings(folder)), *SHIPPED, "--store", str(folder / "rec")]
+    assert train.main([*argv, "--trial-registry", str(folder / "registry.yaml")], SimClock(learning.SATURDAY)) == 0
+    put_stage(folder / "trader", "control", "min_size")
+    with only_one(folder / "trader"):
+        desk = Desk(folder / "trader")
+        desk.run(12)
+        desk.ask("reset", "KILL_SWITCH")  # left for a beat that never comes
+        desk.stop()
+    (folder / "trader.yaml").write_text(f"state_dir: {folder / 'trader'}\nregistry: {folder / 'learn'}\n")
+    return folder
+
+
+def kept(folder) -> list[Entry]:
+    places, journal = learning_places(folder / "trader.yaml", folder / "learn.yaml")
+    return manifest(folder / "none", folder / "none", folder / "none", trader=folder / "trader", learn=places,
+                    lineup=journal)  # fmt: skip
+
+
+def test_what_the_trader_the_lineup_and_training_cannot_make_again_is_on_the_list(lived):
+    names = {entry.name for entry in kept(lived)}
+    (day,) = (lived / "trader" / "days").iterdir()
+    assert {f"trader/{name}.jsonl" for name in STATE} <= names, "the outbox, both books' journals, latches, stages"
+    assert {"trader/outbox.jsonl", "trader/shadow.jsonl", "trader/stages.jsonl", "trader/lineup.jsonl"} <= names
+    assert f"trader/days/{day.name}/decisions.jsonl" in names
+    (model,) = (lived / "learn" / "models").glob("*.json")
+    (report,) = (lived / "learn" / "reports").glob("*.json")
+    assert {f"learn/models/{model.name}", f"learn/reports/{report.name}", "learn/trials.jsonl"} <= names
+    assert "learn/last-run.json" in names
+    champion_or_candidate = lineup.read(lived / "trader" / lineup.FILE).candidates[0]
+    assert (champion_or_candidate.model, champion_or_candidate.report) == (model.stem, report.stem)
+
+
+def test_every_file_those_commands_wrote_is_backed_up_or_left_out_by_a_rule_that_says_why(lived):
+    backed_up = {entry.path for entry in kept(lived)}
+    rules = set()
+    for where in ("trader", "learn"):
+        for path in sorted(p for p in (lived / where).rglob("*") if p.is_file()):
+            rule = left_out(where, path.relative_to(lived / where).as_posix())
+            assert (rule is None) == (path in backed_up), f"{path} is neither backed up nor left out by a rule"
+            rules |= {rule.pattern} if rule else set()
+    assert rules == {"days/*/session-*", "status.json", "trader.lock", "requests/*"}, "what a real run leaves out"
+    assert all(len(rule.why) > 40 for rule in LEFT_OUT), "every rule gives its reason"
+    not_rebuilt = [rule.pattern for rule in LEFT_OUT if not rule.why.startswith("rebuilt: ")]
+    assert not_rebuilt == ["days/*/session-*"], "the tapes alone are left out without being rebuilt, and say so"
+
+
+def test_a_file_nobody_listed_is_backed_up_and_a_half_written_one_is_not(lived, tmp_path):
+    for where in ("trader", "learn"):
+        (tmp_path / where / "deep").mkdir(parents=True)
+        (tmp_path / where / "deep" / "new-kind.jsonl").write_text("{}\n")
+        (tmp_path / where / ".0a.partial").write_text("half")
+    names = [e.name for e in manifest(tmp_path, tmp_path, tmp_path, trader=tmp_path / "trader",
+                                      learn=[("learn", tmp_path / "learn")])]  # fmt: skip
+    assert names == ["trader/deep/new-kind.jsonl", "learn/deep/new-kind.jsonl"]
+
+
+def test_a_backup_of_those_folders_reads_back_whole_and_its_journals_still_verify(lived, tmp_path):
+    folder = to_directory(kept(lived), tmp_path, host.BACKUP_TAG, STAMP)
+    assert verify(folder) == []
+    for name in (*STATE, "lineup"):
+        assert verify_journal(folder / "trader" / f"{name}.jsonl") == verify_journal(lived / "trader" / f"{name}.jsonl")
+    assert lineup.read(folder / "trader" / lineup.FILE) == lineup.read(lived / "trader" / lineup.FILE)
+    assert not list(folder.rglob("session-*")) and not list(folder.rglob("status.json"))
+
+
+def test_the_shipped_settings_put_the_models_in_one_folder_and_the_lineup_in_the_traders(tmp_path):
+    places, journal = learning_places(ROOT / "config" / "trader.yaml", ROOT / "config" / "learn.yaml")
+    assert [(name, str(folder)) for name, folder in places] == [("learn", "var/learn")]
+    assert str(journal) == "var/trader/lineup.jsonl"
+    (tmp_path / "t.yaml").write_text("registry: elsewhere/models\n")
+    apart = tmp_path / "apart" / "lineup.jsonl"
+    (tmp_path / "l.yaml").write_text(f"state_dir: {tmp_path / 'learn'}\nlineup: {apart}\n")
+    places, journal = learning_places(tmp_path / "t.yaml", tmp_path / "l.yaml")
+    assert [name for name, _ in places] == ["learn", "registry"], "two folders: both are taken"
+    lineup.append(journal, lineup.Lineup(), action=lineup.KEEP, at_ns=1)
+    names = [e.name for e in manifest(tmp_path, tmp_path, tmp_path, trader=tmp_path / "trader", lineup=journal)]
+    assert names == ["lineup/lineup.jsonl"], "a lineup journal kept outside the trader's folder is listed by itself"
+    assert learning_places(tmp_path / "none.yaml", tmp_path / "none.yaml") == ([], None)
 
 
 # ---- into a directory ------------------------------------------------------------------------------------------------
@@ -210,6 +323,14 @@ def test_a_failed_hand_over_is_left_for_the_status_check_which_pages_once_and_ta
     assert good.problems == () and good.backup.ok and good.backup.files == 4
     status.page(good, alerts)
     assert pages == [("hft:backup_failed", False), ("hft:backup_failed", True)], "once at the start, once at the end"
+
+
+def test_the_command_takes_the_traders_and_the_learning_folders_from_their_settings(lived, configured, capsys):
+    options = ["--trader-config", str(lived / "trader.yaml"), "--learn-config", str(lived / "learn.yaml")]
+    assert backup.main(["list", *configured, *options]) == 0
+    listed_names = [line.split("\t")[0] for line in capsys.readouterr().out.splitlines()]
+    assert listed_names == [entry.name for entry in kept(lived)]
+    assert "trader/lineup.jsonl" in listed_names and "learn/trials.jsonl" in listed_names
 
 
 def test_the_shipped_settings_name_no_tool_and_a_malformed_one_is_refused(tmp_path):

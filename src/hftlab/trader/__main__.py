@@ -8,6 +8,7 @@ Its runbook is docs/runbooks/trader.md.
     python -m hftlab.trader --reset LATCH --operator NAME           ask the running trader to reset a latch
     python -m hftlab.trader --demote SLEEVE off --operator NAME     ask it to take a sleeve down (off or shadow)
     python -m hftlab.trader --dry-run-seconds 60 --state-dir DIR    the same loop on the fake broker; no gateway
+    python -m hftlab.trader --housekeep                  compress the closed parts of the tapes; say what they use
 
 A place whose settings say `scorer: process` is scored by a child of this process (ADR 0023, section 5). How
 long the child may take is `scorer:` in the learning settings (--learn), which are read for that and nothing
@@ -58,7 +59,7 @@ from hftlab.trader.config import Settings, TraderConfigError, digest, load
 from hftlab.trader.replay import replay_day
 from hftlab.trader.session import Notify, Silent, Trader, TraderRefused
 from hftlab.trader.stages import OFF, SHADOW
-from hftlab.trader.tape import REQUESTS, LiveEdge, TapeError, leave_request
+from hftlab.trader.tape import REQUESTS, LiveEdge, TapeError, housekeep, leave_request, tape_bytes
 from hftlab.venues.port import Venue, VenueError
 from hftlab.venues.sim import CostModel, CostModelError, load_cost_model
 from hftlab.venues.view import MarketDataView, QuoteSource
@@ -70,6 +71,7 @@ COSTS = Path("config/cost_model.yaml")
 LEARN = Path("config/learn.yaml")
 CALENDAR = Path("config/calendar")
 EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
+TAPE_WARN_PERCENT = 90  # ENGINEERING DEFAULT: the owner is paged when the tapes have used this much of their quota
 
 
 def say(text: str) -> None:
@@ -111,6 +113,28 @@ def only_one(state: Path) -> Iterator[None]:
         yield
 
 
+def watch_tapes(settings: Settings, notify: Notify) -> None:
+    """Page once when the tapes are near their quota, and once when they are not any more."""
+    quota = settings.tape_quota_bytes
+    if quota is None:
+        return
+    used = tape_bytes(settings.state_dir / "days")
+    if used * 100 >= quota * TAPE_WARN_PERCENT:
+        text = f"The tapes have used {used * 100 // quota}% of their quota. At 100% the trader stops; see its runbook."
+        notify.fire("tape_near_quota", "Tapes near their quota", text, 4)
+    else:
+        notify.resolve("tape_near_quota", "Tapes under their quota", "There is room again.")
+
+
+def keep_house(settings: Settings) -> int:
+    """Compress the closed parts of the tapes. It takes no lock: the part a running trader writes is left alone."""
+    days = settings.state_dir / "days"
+    done = housekeep(days)
+    quota = "no quota" if settings.tape_quota_bytes is None else f"a quota of {settings.tape_quota_bytes}"
+    say(f"tapes: compressed {done} closed part(s); {tape_bytes(days)} bytes on disk, {quota}")
+    return EXIT_OK
+
+
 def serve(
     edge: LiveEdge,
     settings: Settings,
@@ -126,6 +150,7 @@ def serve(
     """Session after session until told to stop. Each starts as a restart would: from the journals, blind."""
     sessions = 0
     while not should_stop():
+        watch_tapes(settings, notify)
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=notify,
             config_digest=config_digest, scorer_times=times,
@@ -211,7 +236,8 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         edge = LiveEdge(
             source, clock, pairs=settings.pairs, switches=file_switches(switch_dir, names),
             requests=settings.state_dir / REQUESTS, should_stop=should_stop, venue=full, poll_ns=settings.poll_ns,
-            beat_ns=settings.beat_ns,
+            beat_ns=settings.beat_ns, part_bytes=settings.tape_part_bytes, quota_bytes=settings.tape_quota_bytes,
+            fsync=settings.fsync,
         )  # fmt: skip
         try:
             serve(
@@ -277,6 +303,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dry-run-seconds", type=int, help="run this many simulated seconds on the fake broker")
     parser.add_argument("--replay", type=Path, help="a day folder of the trader: replay it and compare")
     parser.add_argument("--stages", action="store_true", help="print each sleeve's stage and exit")
+    parser.add_argument("--housekeep", action="store_true", help="compress the closed parts of the tapes and exit")
     parser.add_argument("--reset", metavar="LATCH", help="ask the running trader to reset this latch")
     parser.add_argument("--demote", nargs=2, metavar=("SLEEVE", "STAGE"), help="ask it to take a sleeve down")
     parser.add_argument("--operator", help="who is asking; it goes into the journal")
@@ -287,6 +314,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings = dataclasses.replace(settings, state_dir=args.journals)
         if args.stages:
             return show_stages(settings, sys.stdout)
+        if args.housekeep:
+            return keep_house(settings)
         if args.reset or args.demote:
             if not args.operator:
                 raise TraderRefused("--operator NAME is needed: the journal says who asked")
@@ -314,6 +343,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_REFUSED
     except VenueError as exc:
         say(f"the venue failed: {exc}")
+        return EXIT_FAILED
+    except OSError as exc:  # raised by the housekeeping: a compressed copy did not read back, or the disk refused
+        say(f"FAILED: {exc}")
         return EXIT_FAILED
 
 

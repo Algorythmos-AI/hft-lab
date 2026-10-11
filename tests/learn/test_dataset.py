@@ -12,9 +12,9 @@ from hftlab.core import Quote, Side
 from hftlab.features import FeatureRow
 from hftlab.journal import canonical
 from hftlab.labels import AT_HORIZON, LATE_EXIT, NO_ENTRY, PENALISED, Labeller, LabelSpec
-from hftlab.learn.dataset import DatasetError, LeakError, build, build_from_days, check_causal, cuts
+from hftlab.learn.dataset import DatasetError, DaySource, LeakError, build, build_from_days, check_causal, cuts
 from hftlab.learn.validate import three_way
-from hftlab.record.store import days
+from hftlab.record.store import day_of, days
 from tests.learn.kit import CONFIG, COST, FEE, HORIZON, IMBALANCE, SIZE, WIN, dataset, features, labels, planted, record
 from tests.venues.kit import MS, SECOND, T0, USDJPY, plain_costs
 
@@ -268,7 +268,11 @@ def test_a_dataset_from_day_folders_is_the_dataset_of_their_events_as_one_stream
     folders = days(record(tmp_path / "rec", stream))
     assert [folder.name for folder in folders] == ["2025-10-09", "2025-10-10"]
     made = build_from_days(folders[::-1], "EUR.USD", CONFIG, LabelSpec(HORIZON), plain_costs(), Calendar())
-    assert made == dataset(stream, days=["2025-10-09", "2025-10-10"]) and made.days == ("2025-10-09", "2025-10-10")
+    cut = sum(day_of(quote.recv_ts_ns) == "2025-10-09" for quote in stream)
+    stated = [DaySource("2025-10-09", "recorded", cut), DaySource("2025-10-10", "recorded", len(stream) - cut)]
+    assert made == dataset(stream, sources=stated) and made.days == ("2025-10-09", "2025-10-10")
+    unstated = dataset(stream, days=["2025-10-09", "2025-10-10"])  # the same stream, and nobody said where it is from
+    assert unstated.rows == made.rows and unstated.content_hash != made.content_hash
     assert any(row.known_ns < start + 4 * SECOND < row.end_ns for row in made.rows), "a label may end in the next day"
     one = build_from_days(folders[:1], "EUR.USD", CONFIG, LabelSpec(HORIZON), plain_costs(), Calendar())
     assert one.days == ("2025-10-09",) and len(one.rows) < len(made.rows)

@@ -111,14 +111,21 @@ python3 -m json.tool var/learn/reports/<report>.json
 | `action`, `reasons` | What was decided, and every reason code |
 | `rule.in_force` | 1 only when every number is written **and** a decision record is named |
 | `gates` | `record`: the named decision record exists with `approved_by: owner`. `limits`: the risk limits are in force. `unfit`: challengers whose own report cannot carry a promotion |
-| `challengers[].evidence` | `trades`, `days`, and the lower bounds of the day-block bootstrap: `advantage_lower_micro` against the champion (or the control sleeve while there is no champion) and `result_lower_micro` of its own result, per trade, in millionths of the pair's quote currency |
+| `fitted_days_by_source` | For each challenger: the days its model was fitted to, by where they came from. `recorded` is the platform's own recordings; `imported:<label>` is history read from files ([history import](history-import.md)) |
+| `challengers[].evidence` | `own_days`: the recorded days the model was fitted to, which must reach the rule's `min_days` (`too_few_own_days` when they do not; an imported day is never counted). `trades`, `days`, and the lower bounds of the day-block bootstrap: `advantage_lower_micro` against the champion (or the control sleeve while there is no champion) and `result_lower_micro` of its own result, per trade, in millionths of the pair's quote currency |
 | `challengers[].reasons` | Empty only for a challenger that passed the rule and every gate |
 | `reconciliation_breaks`, `latched` | The week's breaks, and whose loss latch tripped while serving which model |
 | `lineup_before`, `lineup_after` | The lineup the decision was made on, by the journal's head hash, and the one it wrote |
 
 An **evaluation report** (the one training writes, named beside the model in the lineup) says
 `not_a_result: 1` while the cost model, the feasibility settings or the learning settings are placeholders.
-A model with such a report is never promoted: `report_rests_on_placeholders`.
+A model with such a report is never promoted: `report_rests_on_placeholders`. The same holds for a run that
+read an imported day without sizes (`placeholders.sizes: 1`).
+
+Under `sources` the evaluation report says, for each of its results by name (`three_way`, `interval`,
+`deflated_sharpe`, `hold_out`, `model`), how many of the rows it was computed on, and of the days they are
+from, were `recorded` and how many `imported:<label>`. Training prints the same on one line per candidate.
+Read it before reading the result: a number that rests on imported rows is not a number about this venue.
 
 Two sleeves are compared in the challenger's pair only. Results in two currencies are never added.
 

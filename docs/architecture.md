@@ -78,6 +78,8 @@ trader/       the loop that wires them: stages, two books, the tape of what it s
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets with a look-ahead check, walk-forward validation, the promotion decision        F6
               (foundations only: no training run, no weekly promotion, no process)
+history/      imported history: tick files the owner exported, read from disk into a store of their    F6
+              own in the recording format, with provenance in every day. It downloads nothing (ADR 0028)
 ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
               and the daily and weekly reports and the deploy gate (ADR 0027)
 publish/      the status snapshot: built from the status reading, checked, signed and sent                 F2

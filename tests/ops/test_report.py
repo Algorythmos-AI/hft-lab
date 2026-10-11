@@ -37,7 +37,7 @@ TUESDAY = Span("2025-10-14", utc(13, 21), utc(14, 21))
 WEEK = Span("2025-W42", utc(10, 21), utc(17, 21))
 DAYS = tuple(Span(f"2025-10-{day}", utc(day - 1, 21), utc(day, 21)) for day in (13, 14, 15, 16, 17))
 AFTER_FRIDAY = utc(17, 21, 10)  # ten minutes after the Friday close: when the unit runs
-PRIVATE = ("DU1234567", "gw-host-17", "internal", "sam@laptop", "free text", "refused the login")
+PRIVATE = ("DU1234567", "gw-host-17", "internal", "owner@laptop", "free text", "refused the login")
 
 # ---- the recorder's journals -----------------------------------------------------------------------------------------
 
@@ -98,12 +98,12 @@ def write_tuesday(folder) -> None:
     fills(journal, "broker_fill", "control", 4)
     fills(journal, "shadow_fill", "ml", 2)
     journal.write("latch", latch="DAILY_LOSS_SLEEVE/control/USD", tripped=1)
-    journal.write("stage", sleeve="control", before="min_size", to="stepped_down", cause="LATCH", detail="sam@laptop")
+    journal.write("stage", sleeve="control", before="min_size", to="stepped_down", cause="LATCH", detail="owner@laptop")
     journal.write("latch", latch="free text from a log line", tripped=1)
     journal.write("break", broken=1, blind=0)
     journal.write("break", broken=0, blind=0)
     journal.write("latch", latch="DAILY_LOSS_SLEEVE/control/USD", tripped=0)
-    journal.write("request", what="reset", subject="DAILY_LOSS_SLEEVE/control/USD", value="", operator="sam@laptop")
+    journal.write("request", what="reset", subject="DAILY_LOSS_SLEEVE/control/USD", value="", operator="owner@laptop")
     journal.write("slippage", lines=[
         {"sleeve": "control", "pair": "EUR.USD", "count": 2, "sum_increments": 3, "lowest_increments": 1,
          "highest_increments": 2, "inexact": 0, "broker_only": 0, "shadow_only": 1, "unequal": 0},

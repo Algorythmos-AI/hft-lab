@@ -8,6 +8,7 @@ or there.
 | `record/state.json`, `record/<day>/journal.jsonl` | the store's run counter and each recorded day's journal |
 | `shadow/*.jsonl` | the shadow runner's journals |
 | `alerts/state.json` | which pages are firing |
+| `deploy/deploys.jsonl` | every deploy and every step back: which commit was in service from when |
 | `trader/outbox.jsonl` | the order outbox, which is also the broker book's journal: every order and every fill it booked |
 | `trader/shadow.jsonl` | the shadow book's journal: the result of record |
 | `trader/risk.jsonl`, `trader/reconcile.jsonl` | the latches, and what the reconciler found |

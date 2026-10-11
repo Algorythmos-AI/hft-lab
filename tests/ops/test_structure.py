@@ -21,7 +21,8 @@ NOT_ITS_BUSINESS = (
 def layer() -> list[tuple[str, ast.Module]]:
     found = [(rel, tree) for rel, tree in sources() if rel.startswith(PACKAGES)]
     assert [rel.removeprefix("src/hftlab/") for rel, _ in found] == [
-        "ops/__init__.py", "ops/alerts.py", "ops/backup.py", "ops/host.py", "ops/post.py", "ops/preflight.py",
+        "ops/__init__.py", "ops/alerts.py", "ops/backup.py", "ops/deploy.py", "ops/host.py", "ops/post.py",
+        "ops/preflight.py",
         "ops/report.py", "ops/status.py", "ops/units.py", "publish/__init__.py", "publish/__main__.py",
         "publish/contract.py", "publish/send.py", "publish/snapshot.py",
     ]  # fmt: skip
@@ -54,12 +55,13 @@ def test_nothing_in_it_calls_a_venue_or_reaches_anything_by_name():
                 assert "Venue" not in name and name not in ("QuoteSource", "MarketDataView"), f"{rel}: {name}"
 
 
-def test_only_the_post_module_touches_the_http_client_and_only_the_backup_starts_a_program():
+def test_only_the_post_module_touches_the_http_client_and_only_the_backup_and_the_deploy_start_a_program():
     for rel, tree in layer():
         names = {name for _, name in imports(tree, rel)}
         http = {name for name in names if name.startswith(("urllib.request", "urllib.error"))}
         assert bool(http) == (rel == "src/hftlab/ops/post.py"), f"{rel} imports {sorted(http)}"
-        assert ("subprocess" in names) == (rel == "src/hftlab/ops/backup.py"), rel
+        starts_programs = ("src/hftlab/ops/backup.py", "src/hftlab/ops/deploy.py")  # the tool; git, uv, systemctl, gh
+        assert ("subprocess" in names) == (rel in starts_programs), rel
 
 
 def test_the_pre_flight_gate_imports_the_standard_library_and_the_clock_and_nothing_else_of_ours():

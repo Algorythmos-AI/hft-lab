@@ -6,7 +6,7 @@
 
 What has to outlive this disk is small and cannot be made again: the journals of the recording (every gap and
 its reason, the starts and stops, the instruments), the store's run counter, the shadow journals, the alert
-state, and everything the trader and the learning loop keep:
+state, the record of the deploys, and everything the trader and the learning loop keep:
 
   * the trader's folder: the order outbox (which is also the broker book's journal: every fill it booked), the
     shadow book's journal, the risk gate's latches, the reconciler's journal, the stage journal, the lineup
@@ -142,6 +142,7 @@ def manifest(
     if shadow_dir.is_dir():
         wanted += [(path, f"shadow/{path.name}") for path in sorted(shadow_dir.glob("*.jsonl"))]
     wanted.append((state / "alerts" / "state.json", "alerts/state.json"))
+    wanted.append((state / "deploy" / "deploys.jsonl", "deploy/deploys.jsonl"))  # which code was in service when
     if trader is not None:
         wanted += whole(trader, TRADER, TRADER)
     for name, folder in learn:

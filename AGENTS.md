@@ -39,7 +39,8 @@ between the trading platforms lives in that repository's `docs/trading-platforms
 4. **Never build** anything on [`docs/never-build.md`](docs/never-build.md): no live-money path, no layering,
    quote stuffing or spoofing, no order placed with intent to cancel.
    - An order reaches a venue only through `hftlab.exec.OrderManager`, which asks `hftlab.risk.RiskGate`
-     first. Never add another caller of `place` or `cancel` (`tests/venues/test_guard.py` fails on one), and
+     first. The trader (`hftlab.trader`) hands the broker's venue to the manager and to nothing else; the
+     one venue it places on itself is the shadow venue it builds. Never add another caller of `place` or `cancel` (`tests/venues/test_guard.py` fails on one), and
      never set a limit in `config/risk.yaml` without the decision record that chose it.
 5. **Commits and PRs.**
    - Branch, open a PR, and let the `test` and `leakcheck` checks pass, then squash-merge. Keep the branch up
@@ -71,14 +72,9 @@ The repository is **public**. Assume every byte committed is read by strangers a
 
 ```
 src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
-<<<<<<< HEAD
-               book · strategy · shadow · feasibility · registry · risk · exec · journal
-               (later: features · labels · models · learn · ops)
-=======
-               book · strategy · shadow · feasibility · registry
+               book · strategy · shadow · feasibility · registry · risk · exec · trader · journal
                ops (the host layer) · publish (the status snapshot)
-               (later: features · labels · models · risk · exec · learn)
->>>>>>> origin/main
+               (later: features · labels · models · learn)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
 config/        risk limits, venue capability file, trial registry, cost model, calendar, and the settings of
@@ -102,3 +98,7 @@ make ci            # lint + typecheck + test + leakcheck; the same as the CI che
 
 The switches are files in the platform's state directory on the host. While `KILL` exists the trader makes no
 new entries and keeps managing exits. `FLATTEN` closes every position.
+
+A sleeve's stage (`shadow`, `min_size`, `normal`, `stepped_down`, `off`) goes up only by its rule in
+`config/trader.yaml`, which needs the owner's decision record. Never set a stage, a promotion rule or a latch
+reset by hand, and never start `hft-trader.service`: those are the owner's.

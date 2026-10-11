@@ -21,6 +21,9 @@ backup:
 # The state of each phase of docs/roadmap.md, as the status snapshot reports it: `done` when the phase's exit
 # gate is met, `open` when its code is written and its gate is not met, `not_started` otherwise. It changes in
 # the same pull request as the roadmap, and a test compares the two.
+#
+# F4 is `open`, and stays so until its gate is met: its code is complete against the fake broker, its gate
+# needs five trading days on the real paper account (HFT-EXP-0002, not run), and nothing has traded.
 phases:
   F0: done
   F1: open

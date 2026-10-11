@@ -153,7 +153,7 @@ every limit must be set, the status must be `decided` and a decision record must
 - **Exposure across pairs.** A long in one pair and a long in another that shares a currency are two
   positions to the gate.
 - **Closing a position.** A latch stops entries. It sends nothing. Getting flat is a sleeve's exit or an
-  operator's `FLATTEN`, and the closes `FLATTEN` proposes still have to be passed on by the trader.
+  operator's `FLATTEN`, whose closes the trader passes on once a second.
 - **A loss between two quotes.** A result is only as recent as the last quote.
 - **Memory across a restart** is no longer a gap (addendum 2). What is still lost with the process is the
   last second of a rising high-water mark, as below.
@@ -165,8 +165,8 @@ every limit must be set, the status must be `decided` and a decision record must
   setting; the trader has to build it with fsync on.
 - **Whether the decision record named in the file exists.** The loader checks the id's form; the registry
   lint checks records.
-- **The trader.** Nothing calls the gate with real switches, real quotes and a real clock yet: the process
-  that wires sleeves to the gate and the order manager is the next piece of F4.
+- **The trader** is written since ([ADR 0019](0019-trader-loop-and-staged-rollout.md)). It hands the gate
+  the switches as they were read at its last beat, so that a recorded day replays to the same verdicts.
 
 A daily latch that does not clear with the day is stricter than its name. That is deliberate: the first
 runs on a paper account are where a loss should bring a person, not a calendar.

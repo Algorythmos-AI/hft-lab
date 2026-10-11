@@ -14,6 +14,7 @@ and is exercised once as a drill.
 | [Weekly login](weekly-login.md) | What the gateway needs on the host, and its once-a-week paper login |
 | [Gateway down](gateway-down.md) | The broker's gateway stops or will not connect |
 | [Kill and flatten](kill-and-flatten.md) | The `KILL` and `FLATTEN` switches, and stopping what runs today |
+| [Trader](trader.md) | Starting it in shadow, reading the stages, kill and flatten with a trader running, a reconciliation break, resetting a latch, replaying a day |
 | [Backup](backup.md) | Handing the journals away every night, and checking that a backup can be read back |
 | [Rollback](rollback.md) | A deploy to another commit of `main`, and going back to the one before |
 | [Publish](publish.md) | Sending the status snapshot and the pages, and the two decisions that are still the owner's |
@@ -26,8 +27,6 @@ matters, and each is corrected in the pull request that follows its first use.
 
 | Runbook | For |
 |---|---|
-| Reconciliation break | The broker's positions and ours disagree |
-| Kill and flatten, from paper trading on | What each switch does to working orders and positions. The page exists; this part waits for the risk gate (F4) |
 | Rollback of a model | Going back to the previous champion model (F6) |
 
 Rules for every runbook:

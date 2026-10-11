@@ -163,10 +163,13 @@ explanation and no order of any kind is sent.
 - **Size.** The outbox is replayed whole at every start and is never rotated. Rotation needs a rule for
   carrying open state across files and is not built.
 - **Speed.** One fsync before every order. It has not been measured against the round trip.
-- **Paging.** A fault and a break stop entries and are journalled. Nobody is told yet: alerts are the host
-  layer.
+- **Paging** is the trader's: a fault trips the gate's latch, and the trader pages a tripped latch and a
+  break.
 - **A real gateway.** How it reports a cancelled immediate order, whether its execution list carries
   commissions, how far its positions lag its executions, and what it lists as open after a reconnect are
   assumptions of the fake broker until the paper account has been run for the five days of the F4 gate.
-- **The trader.** The loop that polls, calls `handle`, runs the sleeves, calls `propose`, steps `reconcile`
-  and schedules the reconciler is the next piece of F4.
+- **The trader** is written since ([ADR 0019](0019-trader-loop-and-staged-rollout.md)). For its tape the
+  manager gained two things and no caller: it puts its three questions (open orders, executions, positions)
+  through an object it can be handed, so that their answers can be recorded, and it tells a witness how
+  each send and each cancel went. It still calls `place` and `cancel` itself, on the venue it was built
+  with, and the scan still pins both.

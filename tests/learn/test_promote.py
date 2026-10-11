@@ -1,6 +1,7 @@
 """The promotion decision: promote, keep or roll back, from shadow results and a rule written beforehand."""
 from __future__ import annotations
 
+import ast
 import dataclasses
 
 import pytest
@@ -115,4 +116,10 @@ def test_the_decision_reads_no_file_no_clock_and_no_process():
     reached = {name.split(".")[0] for _, name in imports(tree, "src/hftlab/learn/promote.py")}
     assert reached <= {"__future__", "re", "collections", "dataclasses", "typing", "hftlab"}
     ours = {name for _, name in imports(tree, "src/hftlab/learn/promote.py") if name.startswith("hftlab")}
-    assert {name.rsplit(".", 1)[0] for name in ours} == {"hftlab.learn.validate"}
+    assert {name.rsplit(".", 1)[0] for name in ours} == {"hftlab.learn.validate", "hftlab.lineup.decide"}
+    (last,) = [node for node in tree.body if isinstance(node, ast.If)]
+    assert ast.unparse(last.test) == "__name__ == '__main__'" and tree.body[-1] is last
+    inside = {alias.name for node in ast.walk(last) if isinstance(node, ast.ImportFrom) for alias in node.names}
+    assert inside == {"main"}, "the command (`python -m hftlab.learn.promote`) is the lineup's; only its start is here"
+    above = [node for node in tree.body[:-1] for found in ast.walk(node) if isinstance(found, ast.ImportFrom)]
+    assert all(node.module != "hftlab.lineup.decide" for node in above)

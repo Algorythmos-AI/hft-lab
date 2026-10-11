@@ -10,6 +10,8 @@
   three numbers  every evaluation scores, on the same rows and under the same costs: the oracle (in
                  hindsight the better side wherever one pays, and no trade elsewhere: more than any strategy
                  can have), the model, and a seeded coin. The no-trade baseline is the fourth line, and is zero.
+                 A decision whose entry would not have filled is no trade and is counted as `unfilled`; a trade
+                 whose exit filled late, or never and was priced at the worst case, is a trade and is counted.
   bootstrap      a confidence interval of the mean result per trade after costs, resampling whole trading
                  days: trades of one day stand or fall together, because they are not independent.
   deflated       the Sharpe ratio per period, and the probability that it beats the best of as many
@@ -36,7 +38,7 @@ from typing import Final
 
 from hftlab.core import Side
 from hftlab.features import FeatureRow
-from hftlab.learn.dataset import Dataset, Row
+from hftlab.learn.dataset import LATE_EXIT, NO_ENTRY, PENALISED, Dataset, Row
 from hftlab.models.baseline import number
 from hftlab.registry.ledger import TrialLedger
 
@@ -94,14 +96,25 @@ class Plan:
         return [fold.boundaries(rows) for fold in self.folds]
 
 
-def walk_forward(rows: Sequence[Row], *, embargo_ns: int, min_train_weeks: int = 1, hold_out_weeks: int = 0) -> Plan:
-    """Folds by trading week over the rows, in the order they were decided, with the last weeks held out."""
+def walk_forward(
+    rows: Sequence[Row], *, embargo_ns: int, horizons_ns: Iterable[int], min_train_weeks: int = 1,
+    hold_out_weeks: int = 0,
+) -> Plan:  # fmt: skip
+    """Folds by trading week over the rows, in the order they were decided, with the last weeks held out.
+
+    `horizons_ns` are the label horizons of every dataset the rows came from. An embargo shorter than the
+    longest of them is refused: there is no default, and none can be left out.
+    """
     if min_train_weeks < 1 or hold_out_weeks < 0:
         raise ValidationError("a fold trains on at least one earlier week, and a hold-out is not negative")
     if any(later.known_ns < earlier.known_ns for earlier, later in pairwise(rows)):
         raise ValidationError("the rows are not in the order they were decided")
-    if embargo_ns <= 0:
-        raise ValidationError("the embargo is the longest label window, and that is longer than nothing")
+    longest = max(horizons_ns, default=0)
+    if longest <= 0 or embargo_ns < longest:
+        raise ValidationError(
+            f"an embargo of {embargo_ns} ns is shorter than the longest label horizon given ({longest} ns), "
+            "or no horizon was given: the embargo is the longest label window, and that is longer than nothing"
+        )
     by_week: dict[int, list[int]] = {}
     for position, row in enumerate(rows):
         by_week.setdefault(row.week_ns, []).append(position)
@@ -151,8 +164,16 @@ class Tally:
     won_micro: int = 0
     lost_micro: int = 0
     by_day: dict[int, list[int]] = field(default_factory=dict)
+    unfilled: int = 0  # decisions whose entry would not have filled: no trade, nothing made or lost
+    late: int = 0  # trades whose exit filled only after the horizon
+    penalised: int = 0  # trades whose exit never filled within the wait, priced at the label's worst case
 
-    def add(self, day_ns: int, result: int) -> None:
+    def add(self, day_ns: int, result: int, how: int = 0) -> None:
+        if how == NO_ENTRY:
+            self.unfilled += 1
+            return
+        self.late += how == LATE_EXIT
+        self.penalised += how == PENALISED
         self.trades += 1
         self.total_micro += result
         self.wins += result > 0
@@ -171,6 +192,9 @@ class Tally:
             "won_micro": self.won_micro,
             "lost_micro": self.lost_micro,
             "days": len(self.by_day),
+            "unfilled": self.unfilled,
+            "late_exits": self.late,
+            "penalised": self.penalised,
         }
 
 
@@ -204,12 +228,13 @@ def three_way(rows: Sequence[Row], pair: str, decide: Decide, *, seed: int) -> R
     """The oracle, the model and a seeded coin on the same rows. The model is shown the features and nothing else."""
     oracle, model, coin = Tally(), Tally(), Tally()
     for row in rows:
-        if max(row.buy_micro, row.sell_micro) > 0:
-            oracle.add(row.day_ns, max(row.buy_micro, row.sell_micro))
+        buy, sell = (row.buy_micro, row.buy_how), (row.sell_micro, row.sell_how)
+        if max(row.buy_micro, row.sell_micro) > 0:  # a side that would not have filled is worth nothing, so never this
+            oracle.add(row.day_ns, *max(buy, sell))
         side = decide(FeatureRow(pair, row.n, row.known_ns, row.features))
         if side is not None:
-            model.add(row.day_ns, row.buy_micro if side is Side.BUY else row.sell_micro)
-        coin.add(row.day_ns, row.buy_micro if number(seed, row.n, row.known_ns) & 1 else row.sell_micro)
+            model.add(row.day_ns, *(buy if side is Side.BUY else sell))
+        coin.add(row.day_ns, *(buy if number(seed, row.n, row.known_ns) & 1 else sell))
     return Report(len(rows), seed, oracle, model, coin, Tally())
 
 
@@ -315,6 +340,15 @@ class Deflated:
     trials: int
     benchmark: float  # the Sharpe ratio the best of that many worthless trials is expected to show
     probability: float  # that the true ratio is above the benchmark
+
+    def as_dict(self) -> dict[str, object]:
+        """For a report: each float as the text that reads back to the same float, so the file holds none."""
+        found = self.sharpe
+        return {
+            "ratio": repr(found.ratio), "periods": found.periods, "interval": found.interval, "skew": repr(found.skew),
+            "kurtosis": repr(found.kurtosis), "trials": self.trials, "benchmark": repr(self.benchmark),
+            "probability": repr(self.probability), "annualised": 0,
+        }  # fmt: skip
 
 
 def sharpe(results: Sequence[int], interval: str = "trading day") -> Sharpe:

@@ -85,6 +85,10 @@ git_here() { git -c safe.directory="$here" -C "$here" "$@"; }
 
 allowed=$(cd "$units" && grep -l '^\[Install\]$' hft-*.service hft-*.timer | tr '\n' ' ')
 for unit in $enable; do
+    case "$unit" in
+        hft-train.timer|hft-promote.timer)
+            refuse "$unit is the owner's to enable by hand, once its time is set: docs/runbooks/learning.md" ;;
+    esac
     case " $allowed " in
         *" $unit "*) ;;
         *) refuse "$unit cannot be enabled. The units with an install section are: $allowed" ;;

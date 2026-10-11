@@ -21,6 +21,8 @@ research/
 
 | [HFT-HYP-0002](hypotheses/HFT-HYP-0002-order-path-agrees-with-the-broker.yaml) | The order path agrees with the broker, and the shadow venue fills no better than the paper account | Registered. No evidence yet |
 | [HFT-EXP-0002](experiments/HFT-EXP-0002-control-min-size-paper/protocol.md) | The control sleeve at minimum size on the paper account for five trading days: zero reconciliation breaks expected, and the shadow-versus-broker slippage reported with the direction the cost model is meant to err in | Registered. **Not run**: nothing has connected to a gateway, and the risk limits are not in force |
+| [HFT-HYP-0003](hypotheses/HFT-HYP-0003-first-ridge-challenger-has-no-advantage.yaml) | The first ridge challenger shows no advantage over the control sleeve after costs. Stated as the expected outcome, so that a week that seems to show an edge has something to refute | Registered. No evidence yet |
+| [HFT-EXP-0003](experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md) | The first ridge challenger's week in shadow beside the control sleeve: trained on Saturday, weighed the Sunday after, with the numbers it is measured with fixed and no promotion rule | Registered. **Not run**: nothing has been recorded or trained on real data |
 
 There is no decision record yet, and the trial registry is empty.
 

@@ -25,6 +25,11 @@ What every service has, and why:
     `hft-reconciler` unit.
   * No credential. The gateway keeps the broker login; the publisher's key and the alert address are in the
     owner's secrets file, which only the services that need them load.
+  * The learning loop's two jobs (ADR 0023) start at times that are the owner's: `learning.train_at` and
+    `learning.promote_at` of config/ops.yaml, a Saturday and a Sunday before the week opens, in New York
+    time. Training must not overlap the other desks' weekend jobs, which only the owner knows. Their timers
+    can be enabled, by the owner by hand; the install script refuses to. Training is capped at the plan's
+    2 GB, and inside the slice the slice's own cap binds first.
 
 The memory cap of the slice is the plan's number. The fuses, weights and times marked ENGINEERING DEFAULT are
 first choices, to be replaced by what the first weeks on the host measure.
@@ -32,11 +37,14 @@ first choices, to be replaced by what the first weeks on the host measure.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
+
+import yaml
 
 from hftlab.ops import host
 
@@ -49,6 +57,18 @@ RESTART_FIRST_S: Final = 5  # a failed service is started again after this long 
 RESTART_LAST_S: Final = 300  # ... and the wait grows in steps to this, so a crash loop cannot spin
 RESTART_STEPS: Final = 6
 REFUSED: Final = 2  # the exit code of "refused or misconfigured": a person is needed, a restart is not
+CONFIG: Final = Path("config/ops.yaml")  # where the owner writes when the weekend's two jobs start
+TRAIN_MEMORY_MAX: Final = "2G"  # decided by the plan: training is capped at 2 GB. The slice's 1.2 GB binds first
+TRAIN_TIMEOUT_S: Final = 6 * 3_600  # ENGINEERING DEFAULT: no training run has been measured on the host yet
+BY_HAND: Final = ("hft-train.timer", "hft-promote.timer")  # enabled by the owner's own command, never by the script
+# The market is shut from Friday 17:00 to Sunday 17:15 New York. Training has all of Saturday; the decision is
+# made on Sunday before 17:00, so that a trader starting the week reads the lineup it wrote.
+_SATURDAY: Final = re.compile(r"Sat \*-\*-\* ([01][0-9]|2[0-3]):[0-5][0-9]:00 America/New_York")
+_SUNDAY: Final = re.compile(r"Sun \*-\*-\* (0[0-9]|1[0-6]):[0-5][0-9]:00 America/New_York")
+
+
+class UnitsError(ValueError):
+    """A time the owner set for a weekend job is not one a timer of this platform may have."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +147,46 @@ SERVICES: Final = (
         writes=(host.STATE_DIR, host.BACKUP_DIR), only_if_directory=host.BACKUP_DIR,
     ),
 )  # fmt: skip
+
+
+def weekend_times(config: Path = CONFIG) -> tuple[str, str]:
+    """When training and the weekly decision start: the owner's two values, each checked to fall in the weekend."""
+    try:
+        loaded: Any = yaml.safe_load(config.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise UnitsError(f"cannot read {config}: {exc}") from exc
+    learning = loaded.get("learning") if isinstance(loaded, dict) else None
+    if not isinstance(learning, dict) or set(learning) != {"train_at", "promote_at"}:
+        raise UnitsError(f"{config}: `learning` gives train_at and promote_at, and nothing else")
+    train, promote = learning["train_at"], learning["promote_at"]
+    if not isinstance(train, str) or not _SATURDAY.fullmatch(train):
+        raise UnitsError(f"{config}: train_at is `Sat *-*-* HH:MM:00 America/New_York`, not {train!r}")
+    if not isinstance(promote, str) or not _SUNDAY.fullmatch(promote):
+        raise UnitsError(f"{config}: promote_at is `Sun *-*-* HH:MM:00 America/New_York` before 17:00, not {promote!r}")
+    return train, promote
+
+
+def weekend(train_at: str, promote_at: str) -> tuple[Service, Service]:
+    """The learning loop's two jobs (ADR 0023). Neither holds a venue; neither is enabled by the install script."""
+    return (
+        Service(
+            "train",
+            "the weekend training run: a walk-forward report and a candidate in the registry. It serves nothing",
+            ("-m", "hftlab.learn.train"),
+            reach="none", memory_max=TRAIN_MEMORY_MAX, oom_score=600, timeout_s=TRAIN_TIMEOUT_S,
+            timer=Timer(train_at, "Saturday, with the market shut; the time is the owner's (config/ops.yaml)"),
+        ),
+        Service(
+            "promote",
+            "the weekly decision on the lineup: promote, keep or roll back by the registered rule, and page",
+            ("-m", "hftlab.learn.promote"),
+            reach="out", memory_max="300M", oom_score=500, secrets=True, timeout_s=1_800,
+            first=("-m", "hftlab.learn.drift"),
+            timer=Timer(promote_at, "Sunday, before the week opens; the time is the owner's (config/ops.yaml)"),
+        ),
+    )  # fmt: skip
+
+
 GATEWAY: Final = f"{host.UNIT_PREFIX}gateway.service"
 GATEWAY_CONFIG: Final = f"{host.GATEWAY_DIR}/config.ini"  # the controller's own file: the paper login lives there
 GATEWAY_START: Final = f"{host.GATEWAY_DIR}/start"  # the owner's few lines that start the controller in paper mode
@@ -295,10 +355,11 @@ def gateway() -> str:
     ]) + "\n"  # fmt: skip
 
 
-def render_all() -> dict[str, str]:
-    """Every unit file by name. The same text for the same code: nothing of the machine or the day goes in."""
+def render_all(config: Path = CONFIG) -> dict[str, str]:
+    """Every unit file by name. The same text for the same code and the same two times of config/ops.yaml:
+    nothing of the machine or the day goes in."""
     out = {host.SLICE: slice_unit()}
-    for spec in SERVICES:
+    for spec in (*SERVICES, *weekend(*weekend_times(config))):
         out[spec.unit] = service(spec)
         if spec.timer is not None:
             out[spec.unit.removesuffix(".service") + ".timer"] = timer(spec)
@@ -306,12 +367,13 @@ def render_all() -> dict[str, str]:
     return out
 
 
-def can_be_enabled() -> list[str]:
+def can_be_enabled(config: Path = CONFIG) -> list[str]:
     """The units with an install section: the recorder, the shadow runner and the timers.
 
-    The slice, the gateway and the trader have none.
+    The slice, the gateway and the trader have none. The two timers of the learning loop (`BY_HAND`) have one,
+    and are the owner's to enable by hand: the install script refuses them.
     """
-    return sorted(name for name, text in render_all().items() if "\n[Install]\n" in text)
+    return sorted(name for name, text in render_all(config).items() if "\n[Install]\n" in text)
 
 
 def diff(rendered: dict[str, str], unit_dir: Path) -> list[str]:
@@ -327,6 +389,7 @@ def diff(rendered: dict[str, str], unit_dir: Path) -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m hftlab.ops.units", description="Render the systemd units.")
+    parser.add_argument("--config", type=Path, default=CONFIG, help="where the weekend jobs' times are set")
     commands = parser.add_subparsers(dest="command", required=True)
     render = commands.add_parser("render", help="write every unit file into a directory")
     render.add_argument("--out", type=Path, required=True)
@@ -334,9 +397,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     compare.add_argument("--unit-dir", type=Path, default=Path(host.UNIT_DIR))
     commands.add_parser("list", help="the units the owner may enable, one a line")
     args = parser.parse_args(argv)
-    units = render_all()
+    try:
+        units = render_all(args.config)
+    except UnitsError as exc:
+        print(f"units: {exc}", file=sys.stderr)
+        return REFUSED
     if args.command == "list":
-        print("\n".join(can_be_enabled()))
+        print("\n".join(name for name, text in sorted(units.items()) if "\n[Install]\n" in text))
         return 0
     if args.command == "render":
         args.out.mkdir(parents=True, exist_ok=True)

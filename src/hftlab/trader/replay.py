@@ -24,9 +24,10 @@ from pathlib import Path
 
 from hftlab.calendar import Calendar
 from hftlab.journal import verify
+from hftlab.lineup import FILE as LINEUP
 from hftlab.risk import RiskConfig
 from hftlab.trader.config import Settings
-from hftlab.trader.session import STATE, Silent, Trader
+from hftlab.trader.session import STATE, UNVERIFIED, Silent, Trader
 from hftlab.trader.tape import ReplayEdge, TapeEnded, TapeError, read_tape
 from hftlab.venues.sim import CostModel
 
@@ -52,6 +53,8 @@ def _prefix(source: Path, target: Path, mark: Sequence[object]) -> None:
     assert isinstance(size, int)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(source.read_bytes()[:size] if source.is_file() else b"")
+    if entries == UNVERIFIED:
+        return  # it did not verify when the session read it, and the session served nothing from it
     state = verify(target)
     if (state.entries, state.last_hash) != (entries, last_hash):
         raise TapeError(f"{source.name} is not the journal this session started from: it was changed or replaced")
@@ -86,6 +89,7 @@ def replay_day(
             shutil.rmtree(folder)
         for name in STATE:
             _prefix(state_dir / f"{name}.jsonl", folder / f"{name}.jsonl", marks["journals"][name])
+        _prefix(state_dir / LINEUP, folder / LINEUP, marks["journals"]["lineup"])  # the models it ran with
         copy = folder / "days" / day.name / "decisions.jsonl"
         _prefix(taken, copy, marks["journals"]["decisions"])
         edge = ReplayEdge(rows, paper=risk is not None)

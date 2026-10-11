@@ -39,6 +39,7 @@ class Intent:
     attempt: int = 0
     tif: TimeInForce = TimeInForce.FOK
     limit_price: int | None = None
+    expected_micro: int | None = None  # what a model expected of it after costs; journalled, and routed on by nothing
 
     def __post_init__(self) -> None:
         _checks.pair(self.pair)
@@ -49,6 +50,8 @@ class Intent:
         _checks.member("tif", self.tif, TimeInForce)
         if self.limit_price is not None:
             _checks.positive("limit_price", self.limit_price)
+        if self.expected_micro is not None and type(self.expected_micro) is not int:
+            raise ValueError("what a model expected of an order is a whole number of millionths")
 
 
 @dataclass(frozen=True, slots=True)

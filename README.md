@@ -8,7 +8,7 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 and F6 are written and tested on synthetic streams only: no model has been trained on real data and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
+| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 are written, and F6's weekly learning loop is written with its gate open, both tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
 | **Runs at**     | Nothing runs yet and nothing is installed on any host. Target: a shared Linux host, against an Interactive Brokers **paper** account. The units, the pre-flight gate and the install script are written and tested off the host only |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
@@ -93,11 +93,19 @@ What that does and does not mean:
   ([`HFT-EXP-0002`](research/experiments/HFT-EXP-0002-control-min-size-paper/protocol.md), registered, not
   run).
 
-- **F5 and F6 have not started as phases.** Their foundations are written: features, labels, datasets,
-  validation, a model file format, one exact ridge model, an ML sleeve skeleton and the promotion decision as
-  a function. They have been run on synthetic streams the tests make, some with an effect planted in them
-  on purpose. **No real data exists yet, no model has been trained on real data, and nothing here is evidence
-  of an edge.** Gradient boosting and neural networks need new dependencies and a decision on where training
+- **F5 has not started as a phase.** Its foundations are written: features, labels, datasets, validation, a
+  model file format, one exact ridge model and an ML sleeve skeleton.
+- **F6 is open:** the weekly loop is written. Weekend training registers a candidate, the trader serves a
+  champion and challengers named by hash in a hash-chained lineup journal, and the weekly decision promotes,
+  keeps or rolls back ([ADR 0023](docs/adr/0023-weekly-learning-loop.md),
+  [runbook](docs/runbooks/learning.md)). As shipped it promotes nothing: no promotion rule exists, and the
+  decision says `keep: rule not in force`. Its gate is two full weekly cycles without manual help and one
+  rollback drill on the host; neither has happened. The scorer in its own process is not built.
+- All of it has been run on synthetic streams the tests make, some with an effect planted in them on
+  purpose, and against the fake broker. **No real data exists yet, no model has been trained on real data,
+  and nothing here is evidence of an edge.** The first challenger's week is registered
+  ([`HFT-EXP-0003`](research/experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md), not
+  run), and its expected outcome is no advantage over the control sleeve after costs. Gradient boosting and neural networks need new dependencies and a decision on where training
   runs; neither has been made. The Directional Change sleeve waits for its published method to be read into
   the knowledge base.
 

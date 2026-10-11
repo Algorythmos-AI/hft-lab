@@ -18,16 +18,11 @@ and is exercised once as a drill.
 | [Backup](backup.md) | Handing the journals away every night, and checking that a backup can be read back |
 | [Rollback](rollback.md) | A deploy to another commit of `main`, and going back to the one before |
 | [Publish](publish.md) | Sending the status snapshot and the pages, and the two decisions that are still the owner's |
+| [Learning](learning.md) | The weekly cycle: setting the two times, reading a report, what `keep: rule not in force` means, how a rule comes into force, a rollback and the rollback drill, the drift look, and what to do when training fails |
 | [IBKR capability probe](ibkr-probe.md) | Measuring what the paper account can do: installing the gateway, the paper login, the command, reading the report |
 
 None of the host runbooks has been followed on the host yet: nothing is installed. Each says so where it
 matters, and each is corrected in the pull request that follows its first use.
-
-## To be written
-
-| Runbook | For |
-|---|---|
-| Rollback of a model | Going back to the previous champion model (F6) |
 
 Rules for every runbook:
 

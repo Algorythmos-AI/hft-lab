@@ -3,17 +3,19 @@ from __future__ import annotations
 
 import dataclasses
 import itertools
+from fractions import Fraction
 
 import pytest
 
 from hftlab.calendar import Calendar
-from hftlab.core import Quote
+from hftlab.core import Quote, Side
 from hftlab.features import FeatureRow
 from hftlab.journal import canonical
-from hftlab.labels import Labeller, LabelSpec
+from hftlab.labels import AT_HORIZON, LATE_EXIT, NO_ENTRY, PENALISED, Labeller, LabelSpec
 from hftlab.learn.dataset import DatasetError, LeakError, build, build_from_days, check_causal, cuts
+from hftlab.learn.validate import three_way
 from hftlab.record.store import days
-from tests.learn.kit import CONFIG, COST, HORIZON, IMBALANCE, WIN, dataset, features, labels, planted, record
+from tests.learn.kit import CONFIG, COST, FEE, HORIZON, IMBALANCE, SIZE, WIN, dataset, features, labels, planted, record
 from tests.venues.kit import MS, SECOND, T0, USDJPY, plain_costs
 
 DAY = 24 * 3_600 * SECOND
@@ -44,22 +46,83 @@ def test_a_decision_whose_label_window_has_not_ended_in_the_recording_has_no_row
     made = dataset(stream)
     last = stream[-1].recv_ts_ns
     assert all(row.end_ns < last for row in made.rows)
-    assert made.dropped == {"window_not_ended": 11, "no_fill": 0}, "the decisions of the last second, and one latency"
+    assert made.dropped == {"window_not_ended": 11}, "the decisions of the last second, and one latency"
+    assert made.counted == {"no_entry": 0, "late_exit": 0, "penalised": 0}
     assert len(made.rows) + 11 == len(list(features().rows(stream)))
 
 
-def test_a_decision_the_venue_would_not_have_filled_on_either_side_is_counted_and_left_out():
+def test_a_decision_the_venue_would_not_have_filled_is_kept_and_says_how_it_was_priced():
+    """One quote shows 1,000 at the ask. Nobody can buy on it: not to enter, and not to buy back a sale."""
     stream = planted(1, 4)
     stream[60] = dataclasses.replace(stream[60], ask_size=1_000)
-    made = dataset(stream)
-    assert made.dropped["no_fill"] == 2, "the decision that would enter on it and the one that would leave on it"
+    made, whole = dataset(stream), dataset(planted(1, 4))
+    assert len(made.rows) == len(whole.rows), "no decision is left out for what happened after it"
+    assert made.dropped == whole.dropped and made.counted == {"no_entry": 1, "late_exit": 0, "penalised": 1}
+    entering = next(row for row in made.rows if row.buy_how == NO_ENTRY)
+    assert entering.n == 61 and entering.buy_micro == 0, "it would have bought on that quote: no trade, nothing made"
+    assert (entering.sell_how, entering.sell_micro) == (AT_HORIZON, -COST), "and it could have sold there"
+    leaving = next(row for row in made.rows if row.sell_how == PENALISED)
+    assert leaving.n == 51, "sold a second earlier, it had to buy back on that quote"
+    assert leaving.sell_micro == -2 * FEE, "kit's labels set no wait and no penalty: closed where it was opened"
+    assert leaving.buy_how == AT_HORIZON and leaving.end_ns == leaving.known_ns + HORIZON + 5 * MS
+
+
+ROLLOVER = 1_760_043_600 * SECOND  # 2025-10-09 21:00 UTC: 17:00 in New York
+AROUND = {"no_fill_before_ns": 2 * SECOND, "no_fill_after_ns": 2 * SECOND, "widen_before_ns": 4 * SECOND,
+          "widen_after_ns": 4 * SECOND, "spread_multiplier_x100": 300}  # fmt: skip
+
+
+def over_the_rollover(**spec):
+    """A still book from twelve seconds before the rollover to twelve after, and its dataset under a no-fill window."""
+    stream = planted(7, 8, effect=False, start_ns=ROLLOVER - 12 * SECOND)
+    labeller = Labeller(LabelSpec(HORIZON, **spec), labels().instrument, plain_costs(**AROUND), Calendar())
+    return build(stream, features(), labeller)
+
+
+def test_a_holding_time_with_a_rollover_inside_it_is_priced_by_hand():
+    made = over_the_rollover(exit_wait_ns=10 * SECOND, stuck_increments=40)
+    by_time = {row.known_ns - ROLLOVER: row for row in made.rows}
+    held_in = by_time[-2_500 * MS]  # in at the widened ask 2.495 s before; its exit, a second later, cannot fill
+    assert (held_in.buy_how, held_in.sell_how) == (LATE_EXIT, LATE_EXIT)
+    assert held_in.end_ns == ROLLOVER + 2_005 * MS, "the first order to arrive after the no-fill window"
+    assert held_in.buy_micro == held_in.sell_micro == -(10 + 20) * SIZE * 10 - 2 * FEE == -10_000_000, (
+        "the spread, and each side moved out by 10 at both ends, where a quiet second costs 6,000,000"
+    )
+    shut_out = by_time[-1_000 * MS]
+    assert (shut_out.buy_how, shut_out.buy_micro, shut_out.sell_micro) == (NO_ENTRY, 0, 0), "no entry in the window"
+    assert by_time[-6 * SECOND].buy_micro == -COST and by_time[6 * SECOND].buy_how == AT_HORIZON
+    assert made.counted["late_exit"] == 2 * 10, "the ten decisions of the second before the window, both sides"
+    # an entry arrives in the window for the forty decisions from 2.0 s before the rollover to 1.9 s after
+    assert made.counted["no_entry"] == 2 * 40 and made.counted["penalised"] == 0
+    short = over_the_rollover(exit_wait_ns=2 * SECOND, stuck_increments=40)
+    stuck = {row.known_ns - ROLLOVER: row for row in short.rows}[-2_500 * MS]
+    assert stuck.buy_how == PENALISED and stuck.buy_micro == -40 * 5 * SIZE * 10 - 2 * FEE == -44_000_000
+    assert stuck.end_ns == stuck.known_ns + HORIZON + 2 * SECOND + 5 * MS and short.counted["late_exit"] == 0
+
+
+def test_the_old_rule_would_have_reported_a_better_result_on_a_stream_with_a_rollover_in_the_holding_time():
+    """Leaving out every decision whose exit did not fill removes exactly the trades that were stuck."""
+    made = over_the_rollover(exit_wait_ns=10 * SECOND, stuck_increments=40)
+    old = [row for row in made.rows if (row.buy_how, row.sell_how) == (AT_HORIZON, AT_HORIZON)]  # the rule that was
+    assert len(old) < len(made.rows)
+    before = three_way(old, made.pair, lambda row: Side.BUY, seed=3)
+    after = three_way(made.rows, made.pair, lambda row: Side.BUY, seed=3)
+    for was, now in ((before.model, after.model), (before.random, after.random)):
+        assert now.total_micro < was.total_micro, "the stuck trades are losses the old rule never counted"
+        assert Fraction(now.total_micro, now.trades) < Fraction(was.total_micro, was.trades), "and per trade too"
+        assert now.trades == was.trades + 10 and now.late == 10 and now.unfilled == 40 and was.unfilled == 0
+    assert after.model.total_micro - before.model.total_micro == 10 * -10_000_000
+    no_wait = over_the_rollover(exit_wait_ns=0, stuck_increments=40)
+    worst = three_way(no_wait.rows, made.pair, lambda row: Side.BUY, seed=3)
+    assert worst.model.penalised == 10 and worst.model.total_micro == before.model.total_micro + 10 * -44_000_000
 
 
 def test_a_dataset_says_what_it_was_made_from():
     stream = planted(2, 5)
     made = build(stream, features(), labels(profit_increments=8, loss_increments=6), days=["2025-10-09"])
     assert made.pair == "EUR.USD" and made.features == features().keys and made.days == ("2025-10-09",)
-    assert made.label == {"version": 1, "horizon_ns": HORIZON, "profit_increments": 8, "loss_increments": 6}
+    assert made.label == {"version": 2, "horizon_ns": HORIZON, "profit_increments": 8, "loss_increments": 6,
+                          "exit_wait_ns": 0, "stuck_increments": 0}  # fmt: skip
     assert made.cost_model == plain_costs().as_dict() and made.placeholder is True
     assert (made.size, made.window_ns, made.events, made.horizon_ns) == (20_000, HORIZON + 5 * MS, 150, HORIZON)
     assert all(row.buy_barrier in (-1, 0, 1) and row.sell_barrier in (-1, 0, 1) for row in made.rows)

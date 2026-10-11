@@ -20,6 +20,8 @@ import yaml
 from hftlab.core import InstrumentKind
 from hftlab.core._checks import pair as check_pair
 from hftlab.core.ids import check_sleeve
+from hftlab.lineup.journal import LineupError
+from hftlab.lineup.serve import places
 from hftlab.trader.stages import Rollout, Rule, StageError
 
 MS: Final = 1_000_000
@@ -31,6 +33,7 @@ _TOP: Final = frozenset(
         "close_retry_seconds", "fsync", "sleeves", "rollout", "clean_day_minutes",
     }
 )  # fmt: skip
+_OPTIONAL: Final = frozenset({"registry"})  # where models and reports are kept: needed once a sleeve is of kind `ml`
 _LADDER: Final = frozenset({"start", "promote"})
 _STEPS: Final = frozenset({"min_size", "normal"})
 _RULE: Final = frozenset({"clean_days", "decision"})
@@ -55,6 +58,7 @@ class Settings:
     rollout: Mapping[str, Rollout]
     clean_day_ns: int | None  # how long the trader must have run in a trading day for it to count; null: none counts
     placeholder: bool
+    registry: Path | None = None  # the folder with models/ and reports/, each file named by its hash (ADR 0023)
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -94,7 +98,7 @@ def _rule(value: object, where: str) -> Rule:
 def parse(loaded: object, source: str = "the trader's settings") -> Settings:
     if not isinstance(loaded, dict):
         raise TraderConfigError(f"{source} must be a mapping")
-    unknown, missing = sorted(map(str, set(loaded) - _TOP)), sorted(_TOP - set(loaded))
+    unknown, missing = sorted(map(str, set(loaded) - _TOP - _OPTIONAL)), sorted(_TOP - set(loaded))
     if unknown or missing:
         raise TraderConfigError(f"{source}: not keys of this file: {unknown}; missing: {missing}")
     if loaded["status"] not in ("placeholder", "decided"):
@@ -131,6 +135,15 @@ def parse(loaded: object, source: str = "the trader's settings") -> Settings:
             )
         except StageError as exc:
             raise TraderConfigError(f"{where}: {exc}") from exc
+    registry = loaded.get("registry")
+    if registry is not None and not isinstance(registry, str):
+        raise TraderConfigError(f"{source}: registry must be a folder")
+    if registry is None and any(entry.get("kind") == "ml" for entry in sleeves):
+        raise TraderConfigError(f"{source}: a sleeve of kind ml needs `registry`, the folder its models are kept in")
+    try:
+        places(sleeves)
+    except LineupError as exc:
+        raise TraderConfigError(f"{source}: {exc}") from exc
     minutes = loaded["clean_day_minutes"]
     if minutes is not None and (type(minutes) is not int or minutes < 1):
         raise TraderConfigError(f"{source}: clean_day_minutes must be null or a whole number of at least 1")
@@ -148,6 +161,7 @@ def parse(loaded: object, source: str = "the trader's settings") -> Settings:
         rollout=rollout,
         clean_day_ns=None if minutes is None else minutes * MINUTE,
         placeholder=loaded["status"] != "decided",
+        registry=None if registry is None else Path(registry),
     )
 
 

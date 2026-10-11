@@ -20,6 +20,7 @@ SERVICES = {name: text for name, text in RENDERED.items() if name.endswith(".ser
 TIMERS = {name: text for name, text in RENDERED.items() if name.endswith(".timer")}
 OURS = {name: text for name, text in SERVICES.items() if name != units.GATEWAY}  # the gateway is not our program
 COMMITTED = ROOT / "deploy" / "systemd"
+ALL = (*units.SERVICES, *units.weekend(*units.weekend_times()))
 
 
 def values(text: str, key: str) -> list[str]:
@@ -37,8 +38,9 @@ def section(text: str, name: str) -> list[str]:
 def test_there_are_exactly_these_units():
     assert sorted(RENDERED) == [
         "hft-backup.service", "hft-backup.timer", "hft-gateway.service", "hft-housekeep.service",
-        "hft-housekeep.timer", "hft-publish.service", "hft-publish.timer", "hft-recorder.service",
-        "hft-shadow.service", "hft-trader.service", "hft.slice",
+        "hft-housekeep.timer", "hft-promote.service", "hft-promote.timer", "hft-publish.service",
+        "hft-publish.timer", "hft-recorder.service", "hft-shadow.service", "hft-trader.service", "hft-train.service",
+        "hft-train.timer", "hft.slice",
     ]  # fmt: skip
 
 
@@ -74,7 +76,7 @@ def test_the_services_that_reach_the_gateway_load_no_file_that_could_change_thei
         assert values(SERVICES[name], "IPAddressAllow") == ["localhost"], "the gateway on this machine, nothing else"
 
 
-def test_no_unit_holds_a_credential_and_only_the_publisher_loads_the_owners_secrets_file():
+def test_no_unit_holds_a_credential_and_only_the_two_that_page_load_the_owners_secrets_file():
     for name, text in RENDERED.items():
         assert not re.search(r"(?i)password|passwd|secret=|token|api[_-]?key|login=|username", text), name
         for value in values(text, "Environment"):
@@ -83,8 +85,9 @@ def test_no_unit_holds_a_credential_and_only_the_publisher_loads_the_owners_secr
                 "HFT_BACKUP_DIR", "HFT_GATEWAY_CONFIG",
             }, f"{name}: {value}"  # fmt: skip
     loaders = [name for name, text in RENDERED.items() if values(text, "EnvironmentFile")]
-    assert loaders == ["hft-publish.service"]
-    assert values(SERVICES["hft-publish.service"], "EnvironmentFile") == [f"-{host.SECRETS_FILE}"]
+    assert sorted(loaders) == ["hft-promote.service", "hft-publish.service"], "the alert address, and the key"
+    for name in loaders:
+        assert values(SERVICES[name], "EnvironmentFile") == [f"-{host.SECRETS_FILE}"]
 
 
 def test_the_slice_caps_the_whole_platform_and_gives_it_a_low_share():
@@ -98,6 +101,8 @@ def test_the_slice_caps_the_whole_platform_and_gives_it_a_low_share():
 def test_each_of_our_services_has_its_own_fuse_under_the_cap_and_dies_before_the_other_desks():
     scores = {}
     for name, text in SERVICES.items():
+        if name == "hft-train.service":
+            continue  # the plan's own number, above the slice's: see the test of the weekend's two jobs
         fuse = int(values(text, "MemoryMax")[0].removesuffix("M"))
         assert 0 < fuse < 1200, name
         scores[name] = int(values(text, "OOMScoreAdjust")[0])
@@ -115,11 +120,12 @@ def test_our_services_see_a_read_only_system_their_own_state_and_not_the_other_d
     assert values(text, "CapabilityBoundingSet") == [""] and values(text, "LimitCORE") == ["0"]
 
 
-def test_only_the_publisher_may_reach_the_internet():
-    reach = {spec.unit: spec.reach for spec in units.SERVICES}
+def test_only_the_publisher_and_the_weekly_decision_may_reach_the_internet_and_neither_reaches_the_gateway():
+    reach = {spec.unit: spec.reach for spec in ALL}
     assert reach == {
         "hft-recorder.service": "gateway", "hft-shadow.service": "gateway", "hft-housekeep.service": "none",
         "hft-backup.service": "none", "hft-publish.service": "out", "hft-trader.service": "gateway",
+        "hft-train.service": "none", "hft-promote.service": "out",
     }  # fmt: skip
     for name, how in reach.items():
         private = values(OURS[name], "PrivateNetwork") == ["yes"]
@@ -130,7 +136,7 @@ def test_only_the_publisher_may_reach_the_internet():
 # ---- what runs, and how it restarts ---------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("spec", units.SERVICES, ids=lambda spec: spec.name)
+@pytest.mark.parametrize("spec", ALL, ids=lambda spec: spec.name)
 def test_every_command_is_the_installed_python_running_a_module_that_exists(spec):
     text = OURS[spec.unit]
     for line in values(text, "ExecStart") + [v.removeprefix("-") for v in values(text, "ExecStartPre")]:
@@ -150,6 +156,8 @@ def test_the_commands_are_the_ones_the_brief_names():
         "hft-trader.service": "-m hftlab.trader",
         "hft-publish.service": "-m hftlab.publish --send",
         "hft-backup.service": "-m hftlab.ops.backup run",
+        "hft-train.service": "-m hftlab.learn.train",
+        "hft-promote.service": "-m hftlab.learn.promote",
     }
     before = values(OURS["hft-publish.service"], "ExecStartPre")
     assert before == ["-/home/hft/hft-lab/.venv/bin/python -m hftlab.ops.status --alert --quiet"]
@@ -174,7 +182,9 @@ def test_the_shadow_runner_is_not_restarted_onto_a_journal_that_does_not_verify(
 
 
 def test_every_timer_starts_a_service_that_exists_and_jobs_do_not_restart():
-    assert sorted(TIMERS) == ["hft-backup.timer", "hft-housekeep.timer", "hft-publish.timer"]
+    assert sorted(TIMERS) == [
+        "hft-backup.timer", "hft-housekeep.timer", "hft-promote.timer", "hft-publish.timer", "hft-train.timer",
+    ]  # fmt: skip
     for name, text in TIMERS.items():
         target = values(text, "Unit")[0]
         assert target == name.replace(".timer", ".service") and target in SERVICES
@@ -185,7 +195,7 @@ def test_every_timer_starts_a_service_that_exists_and_jobs_do_not_restart():
 
 
 def test_the_owner_may_enable_the_two_daemons_and_the_timers_and_nothing_else():
-    assert units.can_be_enabled() == [
+    assert [name for name in units.can_be_enabled() if name not in units.BY_HAND] == [
         "hft-backup.timer", "hft-housekeep.timer", "hft-publish.timer", "hft-recorder.service", "hft-shadow.service",
     ]  # fmt: skip
     for name in ("hft-recorder.service", "hft-shadow.service"):
@@ -203,6 +213,52 @@ def test_the_trader_is_in_the_slice_on_paper_and_cannot_be_enabled_by_anyone():
     assert "hft-reconciler" not in "".join(RENDERED), "the reconciler runs inside the trader: it has no unit"
     install = (ROOT / "deploy" / "bin" / "hft-install").read_text()
     assert "systemctl enable" in install and "hft-trader" not in install.split("# ---- 7")[-1], "never by the script"
+
+
+def test_the_weekend_jobs_start_at_the_owners_times_hold_no_venue_and_are_never_enabled_by_the_script():
+    train, promote = SERVICES["hft-train.service"], SERVICES["hft-promote.service"]
+    assert values(train, "ExecStart")[0].endswith("-m hftlab.learn.train")
+    assert values(promote, "ExecStart")[0].endswith("-m hftlab.learn.promote")
+    assert values(promote, "ExecStartPre") == ["-/home/hft/hft-lab/.venv/bin/python -m hftlab.learn.drift"], (
+        "the drift look first; its failure does not stop the decision"
+    )
+    assert values(train, "MemoryMax") == ["2G"] and values(train, "Slice") == ["hft.slice"], (
+        "the plan's 2 GB, inside the slice, whose own cap binds first"
+    )
+    assert values(train, "PrivateNetwork") == ["yes"] and values(train, "EnvironmentFile") == []
+    assert int(values(train, "OOMScoreAdjust")[0]) == max(int(values(t, "OOMScoreAdjust")[0]) for t in OURS.values())
+    for text in (train, promote):
+        assert values(text, "IPAddressAllow") == [] and "hft-gateway" not in text, "neither talks to the gateway"
+        assert values(text, "Type") == ["oneshot"] and "[Install]" not in text
+    times = units.weekend_times(ROOT / "config" / "ops.yaml")
+    assert values(TIMERS["hft-train.timer"], "OnCalendar") == [times[0]] and times[0].startswith("Sat ")
+    assert values(TIMERS["hft-promote.timer"], "OnCalendar") == [times[1]] and times[1].startswith("Sun ")
+    for name in units.BY_HAND:
+        assert values(TIMERS[name], "Persistent") == ["false"], "a missed weekend is not made up for on a Monday"
+        assert name in units.can_be_enabled(), "the owner can enable it"
+    install = (ROOT / "deploy" / "bin" / "hft-install").read_text()
+    assert "hft-train.timer|hft-promote.timer)" in install and "the owner's to enable by hand" in install
+
+
+@pytest.mark.parametrize(
+    "learning",
+    [
+        "{train_at: 'Mon *-*-* 03:00:00 America/New_York', promote_at: 'Sun *-*-* 12:00:00 America/New_York'}",
+        "{train_at: 'Sat *-*-* 03:00:00 America/New_York', promote_at: 'Sun *-*-* 17:00:00 America/New_York'}",
+        "{train_at: 'Sat *-*-* 03:00:00 America/New_York', promote_at: 'Sun *-*-* 12:00:00 UTC'}",
+        "{train_at: 'Sat *-*-* 03:00:00 America/New_York', promote_at: 'Sat *-*-* 12:00:00 America/New_York'}",
+        "{train_at: 'Sat *-*-* 03:00:00 America/New_York\\nExecStart=/bin/sh', promote_at: null}",
+        "{train_at: 'daily', promote_at: 'hourly', more: 1}",
+        "null",
+    ],
+)
+def test_a_time_that_is_not_in_the_weekend_or_is_more_than_a_time_renders_nothing(learning, tmp_path, capsys):
+    config = tmp_path / "ops.yaml"
+    config.write_text(f"learning: {learning}\n")
+    with pytest.raises(units.UnitsError):
+        units.render_all(config)
+    assert units.main(["--config", str(config), "render", "--out", str(tmp_path / "out")]) == 2
+    assert not (tmp_path / "out").exists() and "units:" in capsys.readouterr().err
 
 
 def test_the_backup_job_is_skipped_until_the_owner_has_made_its_directory():

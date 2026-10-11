@@ -116,3 +116,9 @@ def decide(champion: ShadowResult, challenger: ShadowResult, rule: Rule) -> Verd
     if reasons:
         return Verdict(KEEP, tuple(reasons), evidence)
     return Verdict(PROMOTE, ("all_checks_passed",), evidence)
+
+
+if __name__ == "__main__":  # `python -m hftlab.learn.promote`. The command is another module's; this one stays pure
+    from hftlab.lineup.decide import main
+
+    raise SystemExit(main())

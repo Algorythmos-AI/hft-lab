@@ -16,6 +16,8 @@ A stage changes by rule and by nothing else:
   * DOWN at once, to `stepped_down`, when a latch that concerns the sleeve trips or a reconciliation break is
     flagged while the sleeve is placing paper orders.
   * DOWN to `shadow` or `off` when an operator asks, with the operator's name in the journal.
+  * DOWN at once, to `stepped_down`, when the model a sleeve serves is another than the one it served before
+    (ADR 0023): a model judged in shadow never inherits a stage that places orders.
 
 A trading day is the time between two 17:00 New York rollovers in which the market was open at all. It is
 clean when the trader saw its close, ran for at least the configured part of it, was never stopped uncleanly
@@ -44,7 +46,7 @@ DESK: Final = ""  # the scope of something that concerns every sleeve
 _DECISION = re.compile(r"HFT-DEC-[0-9]{4}")
 
 # causes of a change, and of a day that is not clean
-PROMOTED, LATCH, BREAK, OPERATOR = "PROMOTED", "LATCH", "BREAK", "OPERATOR"
+PROMOTED, LATCH, BREAK, OPERATOR, MODEL = "PROMOTED", "LATCH", "BREAK", "OPERATOR", "MODEL"
 UNCLEAN_STOP, NOT_RUNNING, TOO_SHORT, STAGE_CHANGED = "UNCLEAN_STOP", "NOT_RUNNING", "TOO_SHORT", "STAGE_CHANGED"
 LIMITS_NOT_IN_FORCE, STILL_LATCHED, STILL_BROKEN = "LIMITS_NOT_IN_FORCE", "STILL_LATCHED", "STILL_BROKEN"
 
@@ -132,6 +134,7 @@ class Stages:
         self._open: tuple[int, int] | None = None  # (day, since) of a session that has not said it stopped
         self._refused: set[tuple[int, str]] = set()
         self._first: int | None = None  # the day of the first session ever: nothing before it was missed
+        self._served: dict[str, str] = {}  # sleeve -> the model it last served; "" for none
         for entry in read(journal.path)[1]:
             self._restore(entry)
         journal.open()
@@ -214,6 +217,16 @@ class Stages:
             return None
         return self._change(sleeve, STEPPED_DOWN, cause, detail, at_ns)
 
+    def serve(self, sleeve: str, model: str | None, at_ns: int) -> Change | None:
+        """A session starts with this model in the sleeve's place. Another model than before, and the stage is lost."""
+        named = model or ""
+        if sleeve not in self._stage or self._served.get(sleeve) == named:
+            return None
+        self._journal.write("model", sleeve=sleeve, model=named, at_ns=at_ns)
+        self._journal.flush()
+        self._served[sleeve] = named
+        return self.step_down(sleeve, MODEL, named[:12], at_ns)
+
     def demote(self, sleeve: str, to: str, operator: str, at_ns: int) -> Change | None:
         """An operator takes a sleeve down to `shadow` or `off`. Never up: up is earned."""
         if sleeve not in self._stage or to not in (OFF, SHADOW) or self._stage[sleeve] == to:
@@ -290,6 +303,8 @@ class Stages:
             at = entry.get("at_ns")
             if isinstance(at, int) and entry.get("cause") != PROMOTED:
                 self._dirty.setdefault(day_of(at), set()).add((sleeve, STAGE_CHANGED))
+        elif kind == "model" and isinstance(sleeve, str):
+            self._served[sleeve] = str(entry.get("model") or "")
         elif kind == "dirty" and isinstance(day, int) and isinstance(sleeve, str):
             self._dirty.setdefault(day, set()).add((sleeve, str(entry.get("cause"))))
         elif kind == "day" and isinstance(day, int) and isinstance(sleeve, str) and sleeve in self._days:

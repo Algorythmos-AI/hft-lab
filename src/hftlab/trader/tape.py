@@ -238,6 +238,15 @@ _ERRORS: Final[dict[str, type[VenueError]]] = {
 # ---- live: the venue, the clock and the switch files, written down as they are read ------------------------------
 
 
+def leave_request(folder: Path, what: str, subject: str, value: str, operator: str) -> Path:
+    """Leave a request for the running trader: written whole, then given the name it is looked for under."""
+    folder.mkdir(parents=True, exist_ok=True)
+    number = len(list(folder.glob("*.json"))) + 1
+    partial = folder / f"{number:04d}-{what}.partial"
+    partial.write_text(json.dumps({"what": what, "subject": subject, "value": value, "operator": operator}) + "\n")
+    return partial.rename(partial.with_suffix(".json"))
+
+
 def read_requests(folder: Path) -> tuple[Request, ...]:
     """Take every request file out of `folder`, oldest name first. A file that is not a request is left alone."""
     found = []

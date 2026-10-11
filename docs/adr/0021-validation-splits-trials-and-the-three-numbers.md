@@ -115,3 +115,12 @@ no model and sets no stage.
   variance of a ratio with no skill over the same number of periods is offered instead, and says what it is.
 - A float statistic can differ in its last digit between two builds of the mathematics library. That is why
   nothing is decided on one.
+
+## Addendum, 2026-10-11: the embargo is checked against the horizons
+
+`walk_forward` now takes the label horizons of the rows it is given (`horizons_ns`, with no default) and
+refuses an embargo shorter than the longest of them. A split made with too short an embargo was possible
+before by passing the wrong number; it is now an error.
+
+A tally also counts decisions whose entry would not have filled (`unfilled`, not trades), and trades whose
+exit was late or priced at the worst case ([ADR 0020](0020-features-and-labels-timing.md), addendum).

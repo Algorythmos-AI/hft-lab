@@ -12,7 +12,9 @@ from tests.support import called_name, imports, sources
 PACKAGES = {
     "src/hftlab/features/": ["__init__.py", "builder.py", "spec.py"],
     "src/hftlab/labels/": ["__init__.py", "outcome.py"],
-    "src/hftlab/learn/": ["__init__.py", "dataset.py", "promote.py", "train.py", "validate.py"],
+    "src/hftlab/learn/": [
+        "__init__.py", "config.py", "dataset.py", "drift.py", "promote.py", "train.py", "validate.py",
+    ],
     "src/hftlab/models/": ["__init__.py", "baseline.py", "file.py", "ridge.py", "scorer.py"],
 }
 ML_SLEEVE = "src/hftlab/strategy/ml.py"
@@ -24,6 +26,7 @@ NOT_THEIR_BUSINESS = ("hftlab.shadow", "hftlab.exec", "hftlab.trader", "hftlab.r
 FROM_THE_VENUES = {
     "hftlab.venues.port.ConnectionEvent",  # an event of the recorded stream
     "hftlab.venues.sim.cost.CostModel", "hftlab.venues.sim.cost.NO_FILL", "hftlab.venues.sim.cost.WIDENED",
+    "hftlab.venues.sim.cost.CostModelError", "hftlab.venues.sim.cost.load_cost_model",  # the training run's file
 }  # fmt: skip
 STATISTICS = "src/hftlab/learn/validate.py"
 

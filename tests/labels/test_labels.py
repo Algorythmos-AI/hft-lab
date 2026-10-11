@@ -9,7 +9,22 @@ from hypothesis import strategies as st
 
 from hftlab.calendar import Calendar, Closure
 from hftlab.core import Fill, Quote, Side, SimClock, TimeInForce
-from hftlab.labels import HINDSIGHT, LOSS, PROFIT, TIME, Barrier, Label, LabelError, Labeller, LabelSpec, PairTape
+from hftlab.labels import (
+    AT_HORIZON,
+    HINDSIGHT,
+    LATE_EXIT,
+    LOSS,
+    NO_ENTRY,
+    PENALISED,
+    PROFIT,
+    TIME,
+    Barrier,
+    Label,
+    LabelError,
+    Labeller,
+    LabelSpec,
+    PairTape,
+)
 from hftlab.record.format import Heartbeat
 from hftlab.venues.port import CommissionEvent
 from hftlab.venues.sim import SimVenue
@@ -68,18 +83,62 @@ def test_the_latency_is_the_cost_models_largest():
     assert label(stream, 1, costs=costs).buy_micro == (108_700 - 108_610) * SIZE * 10 - 2 * FEE
 
 
-def test_a_side_the_venue_would_not_have_filled_has_no_outcome():
+def test_an_entry_the_venue_would_not_have_filled_is_no_trade():
     thin = [quote(0, sizes=(10**6, 19_000)), quote(2_000)]
-    assert label(thin, 1).buy_micro is None and label(thin, 1).sell_micro is None, "no ask size to buy, or to buy back"
+    found = label(thin, 1)
+    assert found.buy_micro is None and found.buy_how == NO_ENTRY, "no ask size to buy: nothing was traded"
     one_sided = [quote(0, sizes=(19_000, 10**6)), quote(500, sizes=(10**6, 10**6)), quote(2_000)]
-    assert label(one_sided, 1).sell_micro is None and label(one_sided, 1).buy_micro == -6_000_000, "each side by itself"
+    found = label(one_sided, 1)
+    assert (found.sell_micro, found.sell_how) == (None, NO_ENTRY), "each side by itself"
+    assert (found.buy_micro, found.buy_how) == (-6_000_000, AT_HORIZON)
+
+
+def test_an_exit_the_venue_would_not_fill_at_the_horizon_is_priced_at_the_first_later_fill_within_the_wait():
+    """Sold at 108,500 at 5 ms. At 1,005 ms the ask shows 19,000 and the order is for 20,000: no fill there."""
+    thin = [quote(0, sizes=(10**6, 19_000)), quote(2_000)]
+    late = label(thin, 1, exit_wait_ns=2 * SECOND, stuck_increments=50)
+    assert late.sell_how == LATE_EXIT, "sent again on the quote at 2,000 ms, which shows the size"
+    assert late.sell_micro == -(108_510 - 108_500) * SIZE * 10 - 2 * FEE == -6_000_000, "bought back at its ask"
+    assert late.end_ns == T0 + 2_005 * MS, "the window ends when that order arrives"
+
+
+def test_an_exit_that_never_fills_within_the_wait_is_priced_at_the_stated_worst_case():
+    thin = [quote(0, sizes=(10**6, 19_000)), quote(2_000)]
+    stuck = label(thin, 1, exit_wait_ns=500 * MS, stuck_increments=50)
+    assert stuck.sell_how == PENALISED, "nothing confirmed the book between 1,000 and 1,500 ms"
+    assert stuck.sell_micro == -50 * 5 * SIZE * 10 - 2 * FEE == -54_000_000, "50 increments of 5 against it, two fees"
+    assert stuck.end_ns == T0 + 1_505 * MS, "the wait, and the latency of the last order that could have been sent"
+    at_once = label(thin, 1)
+    assert (at_once.sell_how, at_once.sell_micro) == (PENALISED, -2 * FEE), "no wait and no penalty configured"
+    assert at_once.end_ns == T0 + SECOND + 5 * MS
+
+
+def test_a_quote_nobody_confirmed_and_a_shut_market_hold_an_exit_up_the_same_way():
     stale = plain_costs(stale_after_ns=500 * MS)
     gone_quiet = [quote(0), quote(1_800)]
-    assert label(gone_quiet, 1, costs=stale).buy_micro is None, "the exit would meet a quote nobody confirmed"
+    assert label(gone_quiet, 1, costs=stale).buy_how == PENALISED, "the exit would meet a quote nobody confirmed"
+    waited = label(gone_quiet, 1, costs=stale, exit_wait_ns=SECOND, stuck_increments=50)
+    assert (waited.buy_how, waited.buy_micro, waited.end_ns) == (LATE_EXIT, -6_000_000, T0 + 1_805 * MS)
     kept = [quote(0), Heartbeat("EUR.USD", T0 + 600 * MS, T0, 0), quote(1_800)]
-    assert label(kept, 1, costs=stale).buy_micro == -6_000_000, "a heartbeat confirms it"
+    found = label(kept, 1, costs=stale)
+    assert (found.buy_how, found.buy_micro) == (AT_HORIZON, -6_000_000), "a heartbeat confirms it"
     holiday = Calendar((Closure("holiday", T0 + 500 * MS, T0 + 5 * SECOND),))
-    assert label([quote(0)], 1, calendar=holiday).buy_micro is None
+    shut = label([quote(0)], 1, calendar=holiday, stuck_increments=8)
+    assert (shut.buy_how, shut.buy_micro) == (PENALISED, -8 * 5 * SIZE * 10 - 2 * FEE), "entered, then the market shut"
+
+
+def test_a_position_held_into_the_rollover_window_is_closed_late_at_the_widened_price_or_penalised():
+    """Bought 60.5 s before the rollover, widened: 108,520. The exit a second later falls in the no-fill window."""
+    costs = plain_costs(no_fill_before_ns=MINUTE, no_fill_after_ns=MINUTE, widen_before_ns=10 * MINUTE,
+                        widen_after_ns=10 * MINUTE, spread_multiplier_x100=300)  # fmt: skip
+    start = ROLLOVER - MINUTE - 500 * MS
+    stream = [quote(at, start=start) for at in (0, 60_000, 121_000, 200_000)]
+    late = label(stream, 1, costs=costs, exit_wait_ns=3 * MINUTE, stuck_increments=20)
+    assert late.buy_how == LATE_EXIT and late.end_ns == start + 121_005 * MS, "the first order to arrive after it"
+    assert late.buy_micro == (108_490 - 108_520) * SIZE * 10 - 2 * FEE == -10_000_000, "out at the widened bid"
+    stuck = label(stream, 1, costs=costs, exit_wait_ns=30 * SECOND, stuck_increments=20)
+    assert (stuck.buy_how, stuck.buy_micro) == (PENALISED, -20 * 5 * SIZE * 10 - 2 * FEE)
+    assert stuck.end_ns == start + 31_005 * MS
 
 
 def test_near_the_rollover_the_label_widens_and_refuses_exactly_as_the_cost_model_does():
@@ -157,10 +216,15 @@ def test_the_outcome_is_to_the_unit_what_the_shadow_venue_does(steps, data, late
     n = data.draw(st.integers(1, len(stream)))
     horizon = data.draw(st.sampled_from([1, 300, 1_000])) * MS
     found = labeller(horizon, costs).label(PairTape(stream, "EUR.USD"), n)
-    for side, outcome in ((Side.BUY, found.buy_micro), (Side.SELL, found.sell_micro)):
+    sides = ((Side.BUY, found.buy_micro, found.buy_how), (Side.SELL, found.sell_micro, found.sell_how))
+    for side, outcome, how in sides:
         if not isinstance(stream[n - 1], Quote) and PairTape(stream[:n], "EUR.USD").in_force(T0 + 10**15) is None:
             continue  # no book yet: the venue refuses the order outright, and the label has no outcome
-        assert outcome == venue_outcome(stream, n, side, horizon, costs, Calendar()), side
+        # The venue fills both orders as sent exactly when the label says so, and then to the unit. Any other
+        # outcome is the label's own account of an order the venue did not fill, and says which.
+        both = outcome if how == AT_HORIZON else None
+        assert both == venue_outcome(stream, n, side, horizon, costs, Calendar()), side
+        assert (outcome is None) == (how == NO_ENTRY)
 
 
 # ---- the three barriers ----------------------------------------------------------------------------------------------
@@ -202,9 +266,11 @@ def test_a_barrier_label_needs_an_entry_and_no_label_without_barriers_has_one():
 def test_a_label_is_hindsight_and_never_a_price_level():
     assert HINDSIGHT is True
     fields = {field.name for field in dataclasses.fields(Label)}
-    assert fields == {"pair", "n", "decided_ns", "end_ns", "buy_micro", "sell_micro", "buy_barrier", "sell_barrier"}
+    assert fields == {"pair", "n", "decided_ns", "end_ns", "buy_micro", "sell_micro", "buy_barrier", "sell_barrier",
+                      "buy_how", "sell_how"}  # fmt: skip
     assert not {name for name in fields if "price" in name or "level" in name or "mid" in name}
-    plain = {"version": 1, "horizon_ns": SECOND, "profit_increments": 0, "loss_increments": 0}
+    plain = {"version": 2, "horizon_ns": SECOND, "profit_increments": 0, "loss_increments": 0, "exit_wait_ns": 0,
+             "stuck_increments": 0}  # fmt: skip
     assert LabelSpec(SECOND).as_dict() == plain
 
 

@@ -1,0 +1,61 @@
+# The learning loop's settings. Read by `python -m hftlab.learn.train`, `python -m hftlab.learn.promote` and
+# `python -m hftlab.learn.drift` (ADR 0023).
+#
+# AS SHIPPED THIS FILE PROMOTES NOTHING AND STEPS NOTHING DOWN. Every part of the promotion rule and every
+# drift threshold below is null, and a null is not in force: the weekly decision concludes "keep: rule not in
+# force". A rule comes into force only when an accepted decision record (HFT-DEC-NNNN) sets every number and
+# is named here. Changing a number here is an evaluation change: a hypothesis, an experiment and a decision,
+# written before any affected result is viewed (AGENTS.md).
+version: 1
+status: placeholder             # placeholder | decided
+state_dir: var/learn            # git-ignored: models/, reports/, the trial ledger and the last run's file
+lineup: var/trader/lineup.jsonl # the lineup journal the trader reads its models from; in the trader's state_dir
+
+pairs: [EUR.USD]
+horizons_seconds: [60]          # PLACEHOLDER: the holding times a model is trained for; one model per pair and horizon
+
+features:                       # PLACEHOLDER windows. They are part of every feature's key, and so of every model
+  lookbacks_ms: [1000, 10000, 60000]
+  rate_window_ms: 10000
+  range_window_ms: 60000
+  stale_after_ms: 5000          # a book unconfirmed for this long is forgotten (ADR 0020)
+
+label:                          # how a trade that could not be closed at its horizon is priced (ADR 0020, addendum)
+  exit_wait_seconds: 1800       # PLACEHOLDER: how long an exit that did not fill is tried again
+  stuck_increments: 200         # PLACEHOLDER: past that wait, this many price increments against the position
+
+ridge_penalty: "1"              # PLACEHOLDER: a quoted fraction above zero (ADR 0022)
+
+validation:
+  min_train_weeks: 1            # PLACEHOLDER: a fold trains on at least this many earlier weeks
+  hold_out_weeks: 0             # PLACEHOLDER: the last weeks no fold reads; read once per configuration, by the ledger
+  seed: 1                       # seeds the random baseline and the bootstrap
+  bootstrap_draws: 2000         # PLACEHOLDER
+  level_ppm: 950000             # PLACEHOLDER: the confidence level of the interval, in millionths
+  leak_checks: 16               # the places a dataset's stream is cut for the look-ahead check
+  summary_bins: 10              # the bins of the training summary the drift monitor compares against
+
+memory_budget_mb: 1000          # ENGINEERING DEFAULT. A run that peaks above this fails and registers nothing. The
+                                # plan caps training at 2 GB; inside hft.slice the slice's 1.2 GB binds first
+
+promotion:                      # THE WEEKLY RULE. Every value is set by the decision record named in `decision`
+  decision: null                # PLACEHOLDER: HFT-DEC-NNNN. Null: the rule is not in force and nothing is promoted
+  baseline_sleeve: control      # the sleeve a challenger is compared with while there is no ML champion
+  min_trades: null              # PLACEHOLDER
+  min_days: null                # PLACEHOLDER
+  max_drawdown_micro: null      # PLACEHOLDER
+  draws: null                   # PLACEHOLDER
+  level_ppm: null               # PLACEHOLDER
+  seed: null                    # PLACEHOLDER
+
+drift:                          # null: the monitor reports and steps nothing down
+  min_rows: null                # PLACEHOLDER: fewer live rows than this and nothing is judged
+  feature_shift_ppm: null       # PLACEHOLDER: the population stability index of one feature, in millionths
+  calibration_gap_micro: null   # PLACEHOLDER: mean predicted less mean realised outcome per trade
+  spread_ratio_x100: null       # PLACEHOLDER: the live median spread over the training median, in hundredths
+
+scorer:                         # the scorer in its own process (ADR 0023): DECIDED, NOT BUILT. Read and unused:
+                                # every ML place scores in the trader's process, and `scorer: process` is refused
+  timeout_ms: 20                # ENGINEERING DEFAULT: after this long without a reply the sleeve abstains
+  restart_first_ms: 100         # ENGINEERING DEFAULT: the wait before a failed scorer is started again ...
+  restart_last_ms: 30000        # ... which doubles up to this

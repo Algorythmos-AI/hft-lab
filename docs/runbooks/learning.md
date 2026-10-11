@@ -77,8 +77,8 @@ change a decision it abstains, so it trades slightly less often than the network
 
 **Two kinds in one week** (as `HFT-EXP-0004` asks) are two runs on the same Saturday: the timer's, and one
 more by hand with a settings file that differs in `model` alone, `train --config <that file>`. Each
-registers its own candidate, and the trader needs a place for each (`challenger-1`, `challenger-2` in
-`config/trader.yaml`).
+registers its own candidate, and the trader needs a place for each. `config/trader.yaml` ships three:
+`challenger-1`, `challenger-2` and `challenger-3`, as many as `HFT-EXP-0006` names.
 
 ## 1. Set the two times and enable the timers
 

@@ -16,6 +16,7 @@ from tests.trader.kit import raw_settings
 
 SHIPPED = ROOT / "config" / "trader.yaml"
 CONFIG = ROOT / "config"
+PLACES = ("ml", "ml-challenger-1", "ml-challenger-2", "ml-challenger-3")  # the champion's and three challengers'
 FILES = ["--config", str(SHIPPED), "--risk", str(CONFIG / "risk.yaml"), "--cost-model", str(CONFIG / "cost_model.yaml"),
          "--calendar", str(CONFIG / "calendar")]  # fmt: skip
 
@@ -30,17 +31,22 @@ def run(tmp_path, *more: str) -> int:
 def test_the_shipped_settings_keep_every_sleeve_in_shadow_and_hold_no_rule_that_could_be_met():
     settings = load(SHIPPED)
     assert settings.placeholder and settings.venue == "ibkr_paper" and settings.fsync is True
-    assert settings.names == ("idle", "control", "ml", "ml-challenger-1", "directional-change")
+    assert settings.names == ("idle", "control", *PLACES, "directional-change")
     assert settings.clean_day_ns is None
-    assert places(settings.sleeves) == {"ml": ("champion", 0), "ml-challenger-1": ("challenger", 0)}, (
-        "two places and no model: which model stands in a place is the lineup journal's to say"
-    )
+    assert places(settings.sleeves) == {
+        "ml": ("champion", 0), "ml-challenger-1": ("challenger", 0), "ml-challenger-2": ("challenger", 1),
+        "ml-challenger-3": ("challenger", 2),
+    }, "four places and no model: which model stands in a place is the lineup journal's to say"  # fmt: skip
+    for entry in settings.sleeves:
+        if entry["name"] in PLACES:
+            assert (entry["margin_micro"], entry["retry_seconds"], entry["scorer"]) == (0, 10, "in_process")
+    assert SHIPPED.read_text().count("# PLACEHOLDER margin") == 4, "every place's margin is a placeholder"
     assert all("model" not in entry for entry in settings.sleeves) and str(settings.registry) == "var/learn"
     for name in settings.names:
         ladder = settings.rollout[name]
         assert ladder.start == "shadow" and ladder.to_min_size == NEVER and ladder.to_normal == NEVER
     text = SHIPPED.read_text()
-    assert text.count("PLACEHOLDER: never met") == 10 and "AS SHIPPED THIS FILE TRADES NOTHING ON PAPER" in text
+    assert text.count("PLACEHOLDER: never met") == 14 and "AS SHIPPED THIS FILE TRADES NOTHING ON PAPER" in text
     assert yaml.safe_load(text)["status"] == "placeholder"
 
 
@@ -51,10 +57,10 @@ def test_the_shipped_settings_run_in_shadow_only_mode_and_say_so(tmp_path, capsy
     assert "PLACEHOLDER" in said.err
     result = json.loads(said.out.strip().splitlines()[-1])
     assert result["mode"] == "shadow_only" and result["books"]["broker"] is None
-    assert [sleeve["stage"] for sleeve in result["sleeves"]] == ["shadow"] * 5
-    assert read(next((tmp_path / "trader" / "days").iterdir()) / "decisions.jsonl")[1][0]["serving"] == {
-        "ml": None, "ml-challenger-1": None
-    }, "nothing is registered: both places run idle"
+    assert [sleeve["stage"] for sleeve in result["sleeves"]] == ["shadow"] * 7
+    assert read(next((tmp_path / "trader" / "days").iterdir()) / "decisions.jsonl")[1][0]["serving"] == dict.fromkeys(
+        PLACES
+    ), "nothing is registered: every place runs idle"
     assert not (tmp_path / "trader" / "outbox.jsonl").exists() and not (tmp_path / "trader" / "risk.jsonl").exists()
     (day,) = (tmp_path / "trader" / "days").iterdir()
     assert read(day / "decisions.jsonl")[1][0]["mode"] == "shadow_only"
@@ -70,6 +76,8 @@ def test_the_shipped_settings_run_in_shadow_only_mode_and_say_so(tmp_path, capsy
         "idle: shadow; 0 clean trading day(s) in a row in this stage",
         "ml: shadow; 0 clean trading day(s) in a row in this stage",
         "ml-challenger-1: shadow; 0 clean trading day(s) in a row in this stage",
+        "ml-challenger-2: shadow; 0 clean trading day(s) in a row in this stage",
+        "ml-challenger-3: shadow; 0 clean trading day(s) in a row in this stage",
     ]
 
 

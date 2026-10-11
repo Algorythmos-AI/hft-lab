@@ -247,7 +247,7 @@ that pages.
   model, which is all that exists.
 - **The backup does not hold the lineup journal, the models or the reports yet.** A lost disk loses the
   lineup's history; the models are trained again from the recordings.
-- **As shipped the scorer shares the trader's process.** Both ML places say `scorer: in_process`, where a
+- **As shipped the scorer shares the trader's process.** Every ML place says `scorer: in_process`, where a
   scorer that hangs, hangs the trader's turn. The two kinds of model there are score with exact sums, so this
   is a limit for models that are not built yet; `scorer: process` is there for them.
 - **A scorer process costs a timeout when it fails.** The loop waits up to `timeout_ms` once for a child that

@@ -63,6 +63,7 @@ strategy/     the sleeve interface, the idle and the control sleeve, and the ML 
               dl: not built)
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
+review/       reading a run back: round trips against the cost model, a sleeve's day beside its null    F3
 features/     causal, exact features of one pair's quote stream, the same offline and live             F5
 labels/       cost-aware outcomes and triple-barrier outcomes, each with the time its window ends      F5
 models/       the hashed model file, the registry, an exact ridge model, boosted trees as whole        F5

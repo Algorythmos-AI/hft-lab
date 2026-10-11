@@ -56,6 +56,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The sleeve interface, the idle sleeve and the random control sleeve | `src/hftlab/strategy/` |
 | The shadow runner with a hash-chained journal | `src/hftlab/shadow/` |
 | The feasibility map: moves against the modelled cost, by pair and holding time | `src/hftlab/feasibility/` |
+| Reading a run back: round trips against the cost model trip by trip, and a Directional Change sleeve's day beside its random-walk null | `src/hftlab/review/` |
 | Features of the quote stream: causal, exact integers, the same from a recording and live | `src/hftlab/features/` |
 | Labels: cost-aware outcomes priced as the shadow venue prices, and triple-barrier outcomes | `src/hftlab/labels/` |
 | Datasets with a look-ahead check, walk-forward validation with a hold-out read once, the promotion decision as a function | `src/hftlab/learn/` |

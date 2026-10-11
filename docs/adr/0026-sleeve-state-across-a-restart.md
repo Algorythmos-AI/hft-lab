@@ -1,9 +1,10 @@
-# ADR 0026: Sleeve state across a restart: an exact save and restore, believed only when nothing moved since
+# ADR 0026: Sleeve state across a restart, and the two commands the registered experiments name
 
 - **Status:** accepted, 2026-10-11. Built and tested on synthetic streams and against the fake broker only.
   Nothing here has run on the host, and no state has been saved from or restored on a real feed.
-- **Context:** F5 and F6. [ADR 0019](0019-trader-loop-and-staged-rollout.md) left it open: "a sleeve that
-  means to hold across the rollover needs its state kept".
+- **Context:** F3, F5 and F6. [ADR 0019](0019-trader-loop-and-staged-rollout.md) left the first open: "a
+  sleeve that means to hold across the rollover needs its state kept". `HFT-EXP-0001` and `HFT-EXP-0005` each
+  name a command that did not exist.
 
 ## Context
 
@@ -20,7 +21,16 @@ The Directional Change detector could already write its state out and read it ba
 it. Keeping state is easy. The risk is the other way round: a state read back when it should not have been
 is a sleeve that believes something untrue about the market or about what it holds, and decides on it.
 
+Two registered experiments could not be run as written. `HFT-EXP-0001` measures the control sleeve's round
+trips against the cost model's figure for the quotes at their two ends, and said that no tool joins a journal
+with a recording. `HFT-EXP-0005` sets a Directional Change sleeve's day beside walks of the same volatility,
+and said that the command which hands the helper a recording and the shadow runner was not built. A sleeve may
+not import what runs it ([ADR 0014](0014-sleeves-as-pure-functions.md)), so neither could live with the
+sleeves.
+
 ## Decision
+
+### Sleeve state
 
 1. **A sleeve may say how its state is written down** (`hftlab.strategy.Saves`):
 
@@ -89,6 +99,46 @@ is a sleeve that believes something untrue about the market or about what it hol
    journals. A scratch folder has no tapes to look at, so the session writes whether the entry was believed
    into the head of its own tape, and a replay reads it there.
 
+### The two commands
+
+They live in a package of their own, [`hftlab.review`](../../src/hftlab/review/__init__.py): reading a run
+back. It may import the shadow runner and the sleeves; nothing imports it. No import rule was loosened.
+
+10. **Round trips are read out of a journal by one function**
+    ([`trips`](../../src/hftlab/review/trips.py)), for both experiments. A round trip is two fills of one
+    quantity that take a pair from flat and back. A position that came back to flat any other way is counted
+    as irregular, one still open is reported, and neither is measured.
+
+11. **`python -m hftlab.review.trip_costs --journal J --day D...`** (`HFT-EXP-0001`) reads the journal and the
+    recorded days and nothing else. The cost model and the instruments are the ones the journal's first entry
+    keeps.
+    - For each round trip: `result`, `cost` (`CostModel.round_trip_cost_micro` at the two quotes the fills
+      met, each widened as the shadow venue widened it) and `excess = result + cost`, per pair.
+    - The quote a fill met is the last quote of its pair the runner had been shown by the venue's time of
+      the fill. The fill's price is worked out again from it. A fill that was not made at it is `unmatched`:
+      the recording is not the journal's, the trip is not measured, and the command exits 1.
+    - It prints the count, the sums, the mean and the variance of the excess, exactly: integers in doubled
+      millionths, fractions as a numerator and a denominator. The registered verdict of each pair (pass,
+      fail, inconclusive) is decided on squares, so no root is taken.
+    - `not_exact` counts the trips whose excess is not exactly their direction times the move of the mid
+      times their size: the protocol's third check.
+
+12. **`python -m hftlab.review.dc_null --config C --day D`** (`HFT-EXP-0005`) runs each Directional Change
+    sleeve of the configuration alone on the day, and on N walks of it, each run a session of the shadow
+    runner started flat. It prints the sleeve's result on the day, the N null results in the walks' order,
+    and the share at or above the day's, as an exact fraction.
+    - A result is the sum of the completed round trips' results. What is open at the end is reported and is
+      in no result.
+    - Only the path of the pair's mid is replaced. Heartbeats, connection changes and other pairs' quotes
+      stay in their places, so a quiet stretch is as quiet on a walk as it was on the day.
+    - N and the seed are the configuration's (`measure.null_walks`) unless both are given on the command
+      line, and the report says which. The same day, configuration and seed print the same bytes.
+
+13. **The two protocols are not edited.** An experiment on `main` is frozen (research/README.md, rule 4; the
+    registry lint enforces it against the base branch), and each protocol's note that its tool is "not built"
+    is part of what was registered. This record and the roadmap say that the tools exist now. The run of
+    each experiment is recorded as a new experiment that names the old one, as both protocols already say.
+
 ## Consequences
 
 **What holds, each with a test**
@@ -106,6 +156,16 @@ is a sleeve that believes something untrue about the market or about what it hol
   other setting is refused (`tests/strategy/test_saved_state.py`).
 - Every session of those tests replays byte for byte, the ones that restored and the one that found the
   file broken among them.
+- On a book the test wrote itself, two round trips give the sums, the mean and the variance worked out by
+  hand; a still book gives minus the modelled cost exactly and passes; trips that all lose the same move
+  fail; a widened quote is costed as widened; a fill that does not meet the recording is found
+  (`tests/review/test_trip_costs.py`).
+- On a day that never moves every walk is the day and the sleeve stands level with all of them; on a planted
+  zig-zag the trend sleeve earns the figure worked out by hand and no walk of nineteen does as well; each null
+  result is the shadow runner's own on that walk; the registered configuration of `HFT-EXP-0005` is read as
+  it stands (`tests/review/test_dc_null.py`).
+- The package holds no venue, calls none, and only the null command runs a sleeve
+  (`tests/review/test_structure.py`).
 
 **What it costs, and what it does not cover**
 
@@ -129,4 +189,15 @@ is a sleeve that believes something untrue about the market or about what it hol
 - **The file grows by one entry a session** and is not rotated. An entry holds every feature history in
   full.
 - **The backup does not hold it,** like the other journals of the trader. A lost disk is a cold start.
-- **None of it has run on the host.**
+- **The null is slow, and nobody knows how slow.** Each sleeve is run through the shadow runner once for
+  the day and once for each walk, in one process, in exact arithmetic: six sleeves and 99 walks are 600 passes
+  over a day's quotes. The time that takes on a real day has not been measured.
+- **The null keeps the day's spreads, sizes and tick times.** It is a null for the path of the mid alone.
+- **The comparison of round trips trusts the journal for its own cost model.** That is the point: the run is
+  compared with the model it was made under. Whether that model is right is not something it can show.
+- **The mean and the variance are of whatever round trips there were.** The registered thresholds of
+  `HFT-EXP-0001` decide; the command adds no judgement of its own.
+- **What the day-block bootstrap of `HFT-EXP-0005` needs is not here.** The command gives each day's result
+  and null. The interval over five days is `hftlab.learn.validate`'s, and joining the two is left to the
+  report of the run.
+- **None of it has run on the host,** and neither command has read a recording of the real feed.

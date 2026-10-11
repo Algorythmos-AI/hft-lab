@@ -142,3 +142,6 @@ same days. A result inside the distribution has shown nothing.
 The consequence above that a sleeve warms up again at every start no longer holds for a session that ended
 on purpose: the trader saves the sleeve's state then and restores it at the next start when nothing moved
 since ([ADR 0026](0026-sleeve-state-across-a-restart.md)). After a kill it warms up again, as before.
+
+The command that runs the null on a recorded day is built too: `python -m hftlab.review.dc_null`, in the same
+record. It has run on synthetic days only.

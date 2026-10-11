@@ -1,0 +1,78 @@
+# HFT-EXP-0004: the frozen settings of the first gradient-boosted challenger's week in shadow.
+# REGISTERED ON 2026-10-11, NOT RUN.
+#
+# These are the values the run's settings must hold, value for value. They are first choices, written before
+# any recording exists, and none was tuned on anything. A different pair, horizon, window, penalty, tree
+# setting, margin or measuring number is a new experiment with a new id.
+#
+# Two candidates are trained on the same Saturday from the same recordings, by the same command, with two
+# settings files that differ in `model` alone: `learn` below as it stands (ridge), and `learn` with
+# `model: gbm`. Every other value is that of HFT-EXP-0003, so that the ridge challenger here is the one that
+# experiment describes, a week of recordings later.
+#
+# What is NOT fixed here, because it does not exist yet and is not this record's to choose:
+#   - the cost model: config/cost_model.yaml as of the commit the run is made from;
+#   - the feasibility settings: config/feasibility.yaml as of the same commit;
+#   - the risk limits: the run is in shadow and needs none;
+#   - a promotion rule: there is none, and `promotion.decision` below stays null;
+#   - the build of the library: requirements-ml.lock.txt as of the same commit. The model file names it.
+# The evaluation report of each trained model records these, and says `not_a_result: 1` while any of the cost
+# model, the feasibility settings or the learning settings is a placeholder.
+
+learn:                          # config/learn.yaml
+  pairs: [EUR.USD]
+  horizons_seconds: [60]
+  features:
+    lookbacks_ms: [1000, 10000, 60000]
+    rate_window_ms: 10000
+    range_window_ms: 60000
+    stale_after_ms: 5000
+  label:
+    exit_wait_seconds: 1800
+    stuck_increments: 200
+  model: ridge                  # and, for the second candidate, gbm: the one value that differs
+  ridge_penalty: "1"
+  boosting:                     # fixed. No run searches them
+    trees: 50
+    max_depth: 3
+    leaves: 8
+    learning_rate_ppm: 50000
+    min_leaf_rows: 200
+    bins: 63
+    l2_ppm: 1000000
+    leaf_scale: 1000
+    seed: 1
+  validation:
+    min_train_weeks: 1
+    hold_out_weeks: 0           # no hold-out is read by this experiment
+    seed: 1
+    bootstrap_draws: 2000
+    level_ppm: 950000
+    leak_checks: 16
+    summary_bins: 10
+  promotion:                    # the numbers the week is MEASURED with. No decision record is named, so the
+    decision: null              # rule is not in force and nothing can be promoted whatever the week shows
+    baseline_sleeve: control
+    min_trades: 100             # below this, or below `min_days`, for any of the three sleeves: inconclusive
+    min_days: 5
+    max_drawdown_micro: 0       # not judged by this experiment: the drawdown is reported, and its reason code ignored
+    draws: 2000                 # the day-block bootstrap of the three lower bounds
+    level_ppm: 950000
+    seed: 1
+  drift:                        # every threshold null: the monitors report and step nothing down
+    min_rows: null
+    feature_shift_ppm: null
+    calibration_gap_micro: null
+    spread_ratio_x100: null
+
+trader:                         # config/trader.yaml: the three places, beside `idle` and `control`
+  sleeves:
+    - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}
+    - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process}
+    - {name: ml-challenger-2, kind: ml, slot: challenger-2, margin_micro: 0, retry_seconds: 10, scorer: in_process}
+  control:                      # the control sleeve they are compared with: the values of HFT-EXP-0001
+    seed: 1
+    entry_per_million: 2000
+    hold_seconds: 60
+    retry_seconds: 10
+  stage: shadow                 # every sleeve, for the whole week

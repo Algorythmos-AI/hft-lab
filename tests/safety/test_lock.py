@@ -115,7 +115,7 @@ def test_no_managed_accounts_is_a_violation(accounts):
 def test_a_live_account_id_is_refused_with_both_messages():
     assert found(managed_accounts=("U1234567",)) == [
         "managed account 1 of 1 is a live account id",
-        "managed account 1 of 1 is not a paper account id (DU and digits)",
+        "managed account 1 of 1 is not a paper account id (DU, one letter at most, digits)",
     ]
 
 
@@ -123,17 +123,24 @@ def test_one_live_account_among_paper_accounts_refuses_the_connection():
     violations = found(managed_accounts=("DU1234567", "U7654321", "DU99"))
     assert violations == [
         "managed account 2 of 3 is a live account id",
-        "managed account 2 of 3 is not a paper account id (DU and digits)",
+        "managed account 2 of 3 is not a paper account id (DU, one letter at most, digits)",
     ]
 
 
 @pytest.mark.parametrize(
     "account",
-    ["du1234567", "DU", "DUX123", "DU12 ", " DU12", "DU12\n", "DU1.2", "DU-12", f"DU{WIDE_ONE}2", "DU12,DU34",
+    ["du1234567", "DU", "DUX", "DUXY123", "DUx123", "DU1X23", "DUX12Y", "XDU123",
+     "DU12 ", " DU12", "DU12\n", "DU1.2", "DU-12", f"DU{WIDE_ONE}2", "DU12,DU34",
      "DU12,U34", "F1234567", "DF1234567", "I123", "", "PA123", "D U12", "UDU12", 12, None, b"DU12", ("DU12",)],
 )  # fmt: skip
-def test_anything_that_is_not_du_and_digits_is_not_a_paper_account(account):
-    assert "managed account 1 of 1 is not a paper account id (DU and digits)" in found(managed_accounts=(account,))
+def test_anything_that_is_not_a_paper_id_is_not_a_paper_account(account):
+    refusal = "managed account 1 of 1 is not a paper account id (DU, one letter at most, digits)"
+    assert refusal in found(managed_accounts=(account,))
+
+
+@pytest.mark.parametrize("account", ["DU1", "DU1234567", "DUK123456", "DUA1", "DUZ0000001"])
+def test_both_forms_of_paper_id_the_broker_issues_pass(account):
+    assert found(managed_accounts=(account,)) == []
 
 
 @pytest.mark.parametrize("account", ["U1", " U1234567", "U1234567 ", "U1234567\n"])
@@ -154,7 +161,7 @@ def test_a_message_never_echoes_an_account_id():
 @given(st.lists(st.text(max_size=12), min_size=1, max_size=5))
 def test_every_account_must_match_for_the_list_to_pass(accounts):
     passes = found(managed_accounts=tuple(accounts)) == []
-    assert passes == all(re.fullmatch(r"DU[0-9]+", a, re.ASCII) for a in accounts)
+    assert passes == all(re.fullmatch(r"DU[A-Z]?[0-9]+", a, re.ASCII) for a in accounts)
 
 
 @given(st.lists(st.integers(0, 10**9), min_size=1, max_size=5), st.integers(0, 4), st.integers(0, 10**9))

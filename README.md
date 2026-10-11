@@ -8,7 +8,7 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 and a Directional Change baseline sleeve are written, and F6's weekly learning loop is written with its gate open, all tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer, with its deploy gate, its daily and weekly reports, a tape held under a quota and a backup of everything that cannot be rebuilt, is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
+| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 and a Directional Change baseline sleeve are written, and F6's weekly learning loop is written with its gate open, with ridge, gradient-boosted trees and a small sequence network as the kinds of model it can fit, all tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer, with its deploy gate, its daily and weekly reports, a tape held under a quota and a backup of everything that cannot be rebuilt, is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
 | **Runs at**     | Nothing runs yet and nothing is installed on any host. Target: a shared Linux host, against an Interactive Brokers **paper** account. The units, the pre-flight gate and the install script are written and tested off the host only |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
@@ -57,11 +57,11 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The shadow runner with a hash-chained journal | `src/hftlab/shadow/` |
 | The feasibility map: moves against the modelled cost, by pair and holding time | `src/hftlab/feasibility/` |
 | Reading a run back: round trips against the cost model trip by trip, and a Directional Change sleeve's day beside its random-walk null | `src/hftlab/review/` |
-| Features of the quote stream: causal, exact integers, the same from a recording and live | `src/hftlab/features/` |
+| Features of the quote stream: causal, exact integers, the same from a recording and live, as single rows or as windows of the last rows | `src/hftlab/features/` |
 | Labels: cost-aware outcomes priced as the shadow venue prices, and triple-barrier outcomes | `src/hftlab/labels/` |
 | Datasets with a look-ahead check, walk-forward validation with a hold-out read once, the promotion decision as a function | `src/hftlab/learn/` |
 | An import of tick files the owner exported himself, read from disk into a store of its own, with provenance in every day (nothing is downloaded; no file has been imported yet) | `src/hftlab/history/` |
-| The model file and its registry, an exact ridge regression, gradient-boosted trees kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
+| The model file and its registry, an exact ridge regression, gradient-boosted trees and a small sequence network kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
 | An ML sleeve skeleton that asks a scorer and reports that it may not leave shadow on placeholder costs | `src/hftlab/strategy/ml.py` |
 | The scorer in a process of its own: a versioned message format, a child that holds no venue, a timeout, a restart with back-off, and a record a replay abstains by (off as shipped) | `src/hftlab/scoring/` |
 | The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
@@ -141,7 +141,18 @@ What that does and does not mean:
   the default. It has been fitted to synthetic streams only; its first week is registered
   ([`HFT-EXP-0004`](research/experiments/HFT-EXP-0004-first-gbm-challenger-shadow-week/protocol.md), not run)
   and its expected outcome is no advantage over the control sleeve or the ridge challenger after costs.
-  Neural networks are not built: they wait for recorded data and a decision on compute.
+- **A small sequence network is a third kind**
+  ([ADR 0029](docs/adr/0029-sequence-network-windows-and-fixed-point-scoring.md)): one 1-D convolution and one
+  hidden layer over a window of the last rows of a pair, about a thousand weights. Nothing is installed for
+  it: it is fitted on the arrays the base requirements already hold, with its gradients written out and
+  checked. Its weights are kept as whole numbers at a fixed scale and scored by integer sums and shifts, and
+  the scorer abstains wherever that rounding could change a decision. A window never spans a gap, a closed
+  market or a day's rollover. It trades through the same ML sleeve, starts as a challenger in shadow, and is
+  promoted by the same rule or not at all. It has been fitted to synthetic streams only, on one kind of
+  machine; its first week is registered
+  ([`HFT-EXP-0006`](research/experiments/HFT-EXP-0006-first-seq-challenger-shadow-week/protocol.md), not run)
+  and its expected outcome is no advantage after costs over the control sleeve, the ridge challenger or the
+  tree challenger.
 
 The [roadmap](docs/roadmap.md) has the state of each part.
 

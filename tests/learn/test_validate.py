@@ -242,7 +242,8 @@ def test_the_model_is_shown_the_features_of_a_row_and_nothing_of_its_label():
     v.three_way(made.rows, made.pair, lambda shown: seen.append(shown), seed=1)
     assert len(seen) == len(made.rows) and all(type(shown) is FeatureRow for shown in seen)
     assert [(s.n, s.known_ns, s.values) for s in seen] == [(r.n, r.known_ns, r.features) for r in made.rows]
-    assert {f.name for f in dataclasses.fields(FeatureRow)} == {"pair", "n", "known_ns", "values"}
+    shown = {f.name for f in dataclasses.fields(FeatureRow)}
+    assert shown == {"pair", "n", "known_ns", "values", "first_n", "first_ns"}, "and where a window of rows begins"
 
 
 OUTCOMES = st.lists(st.tuples(st.integers(-10**8, 10**8), st.integers(-10**8, 10**8), st.integers(0, 2)), max_size=40)

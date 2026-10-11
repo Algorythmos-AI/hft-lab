@@ -1,16 +1,17 @@
 """Shared pieces for the lineup tests: a registry of models that trade a planted effect, and a desk serving them."""
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from fractions import Fraction
 from pathlib import Path
 
 from hftlab import lineup
 from hftlab.journal import Journal, canonical
-from hftlab.learn.config import Boosting
+from hftlab.learn.config import Boosting, Network
 from hftlab.learn.dataset import build
 from hftlab.learn.drift import EXPECTED_KEY, by_column, summarise
-from hftlab.learn.train import gbm_model, keep_report, ridge_model
+from hftlab.learn.train import gbm_model, keep_report, ridge_model, seq_model
 from hftlab.lineup import Lineup, Named
 from hftlab.models import ModelRegistry
 from hftlab.record.format import describe
@@ -33,25 +34,37 @@ BOOSTING = Boosting(trees=20, max_depth=3, leaves=8, learning_rate_ppm=200_000, 
                     l2_ppm=1_000_000, leaf_scale=1000, seed=1)  # fmt: skip
 
 
+NETWORK = Network(window=4, kernel=2, filters=4, hidden=8, epochs=30, batch_rows=64, learning_rate_ppm=10_000,
+                  l2_ppm=1_000, clip=3, cap=8, seed=1)  # fmt: skip
+WINDOWS = dataclasses.replace(CONFIG, window_rows=NETWORK.window)
+
+
 def register(
     registry: Path, seed: int = 1, *, blocks: int = 40, not_a_result: int = 1, kind: str = "ridge",
     fitted_days: dict[str, int] | None = None,
 ) -> Named:  # fmt: skip
     """Fit a model to a planted stream and keep it, with a report that says how it is served, by their hashes.
 
-    A ridge model unless `kind` is `gbm`, which needs the optional ML set to be fitted. The report says the model
-    was fitted to five days of the platform's own recordings unless `fitted_days` says otherwise, by source.
+    A ridge model unless `kind` is `gbm`, which needs the optional ML set to be fitted, or `seq`, a sequence
+    network on windows of four rows, which needs the array library. The report says the model was fitted to
+    five days of the platform's own recordings unless `fitted_days` says otherwise, by source.
     """
     stream = planted(seed, blocks)
-    made = build(stream, features(), labels())
+    made = build(stream, features(WINDOWS if kind == "seq" else CONFIG), labels())
     everything = range(len(made.rows))
-    model = gbm_model(made, everything, BOOSTING) if kind == "gbm" else ridge_model(made, everything, Fraction(1, 1000))
+    if kind == "seq":
+        model = seq_model(made, everything, NETWORK)
+    elif kind == "gbm":
+        model = gbm_model(made, everything, BOOSTING)
+    else:
+        model = ridge_model(made, everything, Fraction(1, 1000))
     columns = by_column(made.features, [row.features for row in made.rows])
     columns[EXPECTED_KEY] = [WIN, -WIN, WIN // 2, 0, WIN]
     report = {
         "kind": "evaluation-report", "version": 1, "not_a_result": not_a_result, "pair": model.pair,
         "horizon_ns": model.label["horizon_ns"], "model": {"hash": model.content_hash, "kind": model.kind},
-        "serving": {"features": SERVING, "feasibility": the_map(stream)},
+        "serving": {"features": {**SERVING, **({"window_rows": NETWORK.window} if kind == "seq" else {})},
+                    "feasibility": the_map(stream)},
         "summary": summarise(columns, 5, rows=len(made.rows)),
         "sources": {"model": {"days": {"recorded": 5} if fitted_days is None else fitted_days}},
     }  # fmt: skip

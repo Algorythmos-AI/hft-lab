@@ -1,8 +1,9 @@
 """Features, labels, learning and models compute. They hold no venue, so there is nothing they could send.
 
 And three things about what they compute with: the future stays in the label package, floats stay in the module
-that reports statistics and the module that fits with a library, and randomness is a hash of a seed, never a
-generator. And one about the optional ML set: one function of one module imports it (ADR 0025).
+that reports statistics and the two modules that fit in floats, and randomness is a hash of a seed, never a
+generator. And two about what the fits import: one function of one module imports the optional ML set (ADR 0025),
+and the array library is imported by the two fitting modules alone, inside their functions (ADR 0029).
 """
 from __future__ import annotations
 
@@ -11,12 +12,13 @@ import ast
 from tests.support import called_name, imports, sources
 
 PACKAGES = {
-    "src/hftlab/features/": ["__init__.py", "builder.py", "spec.py"],
+    "src/hftlab/features/": ["__init__.py", "builder.py", "spec.py", "window.py"],
     "src/hftlab/labels/": ["__init__.py", "outcome.py"],
     "src/hftlab/learn/": [
-        "__init__.py", "boost.py", "config.py", "dataset.py", "drift.py", "promote.py", "train.py", "validate.py",
+        "__init__.py", "boost.py", "config.py", "dataset.py", "drift.py", "promote.py", "sequence.py", "train.py",
+        "validate.py",
     ],
-    "src/hftlab/models/": ["__init__.py", "baseline.py", "file.py", "ridge.py", "scorer.py", "trees.py"],
+    "src/hftlab/models/": ["__init__.py", "baseline.py", "file.py", "net.py", "ridge.py", "scorer.py", "trees.py"],
 }
 ML_SLEEVE = "src/hftlab/strategy/ml.py"
 WIRES = {"ib_async", "socket", "ssl", "asyncio", "http", "urllib", "subprocess"}
@@ -32,7 +34,12 @@ FROM_THE_VENUES = {
 STATISTICS = "src/hftlab/learn/validate.py"
 BOOST = "src/hftlab/learn/boost.py"  # the one module that fits with a library, in the library's floats
 ML_SET = {"lightgbm", "scipy", "narwhals"}  # what requirements-ml.in adds to an environment
-ARRAYS = "numpy"  # the library's input. It comes with the broker's client library too, and is used nowhere else
+SEQUENCE = "src/hftlab/learn/sequence.py"  # the one module that fits a network, in floats of its own
+FITS = {BOOST, SEQUENCE}
+ARRAYS = "numpy"  # what the two fits compute with. It comes with the broker's client library, and nothing else uses it
+# Everything of the array library the network's fit may touch: arrays, and arithmetic element by element.
+ELEMENTWISE = {"array", "zeros", "zeros_like", "float64", "concatenate", "stack", "minimum", "maximum", "sqrt",
+               "__version__"}  # fmt: skip
 
 
 def learning_sources():
@@ -68,7 +75,7 @@ def test_the_future_is_known_to_the_label_package_and_to_nothing_a_decision_is_m
     """A label is hindsight. What computes features, what scores them and what trades on the score cannot import one."""
     blind = [(rel, tree) for rel, tree in sources()
              if rel.startswith(("src/hftlab/features/", "src/hftlab/models/", "src/hftlab/strategy/"))]  # fmt: skip
-    assert len(blind) == 3 + 6 + 8
+    assert len(blind) == 4 + 7 + 8
     for rel, tree in blind:
         for _, name in imports(tree, rel):
             assert not name.startswith(("hftlab.labels", "hftlab.learn")), f"{rel} imports {name}"
@@ -86,10 +93,10 @@ def uses_a_float(tree: ast.AST) -> list[int]:
     return lines
 
 
-def test_floats_are_confined_to_the_statistics_of_one_module_and_the_library_fit_of_another():
+def test_floats_are_confined_to_the_statistics_of_one_module_and_the_two_modules_that_fit():
     """What scores a row (`models/`), what builds one and what decides a promotion hold no float at all."""
     found = {rel: uses_a_float(tree) for rel, tree in [*learning_sources(), (ML_SLEEVE, dict(sources())[ML_SLEEVE])]}
-    assert {rel for rel, lines in found.items() if lines} == {STATISTICS, BOOST}
+    assert {rel for rel, lines in found.items() if lines} == {STATISTICS, *FITS}
     assert not any(rel.startswith("src/hftlab/models/") for rel, lines in found.items() if lines)
     tree = dict(sources())[STATISTICS]
     floating = {"Sharpe", "Deflated", "sharpe", "_signed_root", "null_variance", "deflated_sharpe"}
@@ -106,29 +113,57 @@ def test_randomness_is_a_hash_of_a_seed_and_never_a_generator():
     for rel, tree in [*learning_sources(), (ML_SLEEVE, dict(sources())[ML_SLEEVE])]:
         tops = {name.split(".")[0] for _, name in imports(tree, rel)}
         assert not tops & {"random", "secrets", "uuid"}, rel
-        assert ARRAYS not in tops or rel == BOOST, f"{rel}: arrays are the library's input and nothing else's"
+        assert ARRAYS not in tops or rel in FITS, f"{rel}: arrays are for the two fits and for nothing else"
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 assert called_name(node) not in ("hash", "urandom", "shuffle", "sample"), f"{rel} line {node.lineno}"
-            if rel == BOOST and isinstance(node, ast.Attribute):
+            if rel in FITS and isinstance(node, ast.Attribute):
                 assert node.attr != "random", f"{rel} line {node.lineno}: the array library's generator"
 
 
 def test_the_optional_ml_set_is_imported_by_one_module_inside_a_function_and_by_nothing_else():
-    """Importing any module of the platform, `hftlab.learn.boost` among them, needs none of the optional set."""
-    users, at_the_top = set(), []
+    """Importing any module of the platform, the two that fit among them, needs neither the set nor the arrays."""
+    users, at_the_top = {}, []
     for rel, tree in sources():
         heavy = {name.split(".")[0] for _, name in imports(tree, rel)} & (ML_SET | {ARRAYS})
         if heavy:
-            users.add(rel)
-            assert rel == BOOST and heavy == {"lightgbm", ARRAYS}, f"{rel} imports {sorted(heavy)}"
-        if rel == BOOST:
-            at_the_top = [name.split(".")[0] for node in tree.body for _, name in imports(node, rel)
-                          if isinstance(node, ast.Import | ast.ImportFrom)]  # fmt: skip
-    assert users == {BOOST} and not {*at_the_top} & (ML_SET | {ARRAYS}), "imported where it is used, not on import"
+            users[rel] = heavy
+        if rel in FITS:
+            at_the_top += [name.split(".")[0] for node in tree.body for _, name in imports(node, rel)
+                           if isinstance(node, ast.Import | ast.ImportFrom)]  # fmt: skip
+    assert users == {BOOST: {"lightgbm", ARRAYS}, SEQUENCE: {ARRAYS}}, "the network's fit adds no library at all"
+    assert not {*at_the_top} & (ML_SET | {ARRAYS}), "imported where it is used, not on import"
     blind = [rel for rel, tree in sources() if rel.startswith("src/hftlab/models/")
              for _, name in imports(tree, rel) if name.startswith("hftlab.learn")]  # fmt: skip
     assert blind == [], "what scores a model cannot reach what fits one"
+
+
+def test_the_networks_fit_is_arithmetic_element_by_element_and_leaves_no_sum_to_a_library():
+    """What makes two fits the same file on any machine (ADR 0029): nothing whose order or rounding a build chooses.
+
+    No matrix product, no library sum or mean, no exponential, logarithm or power of a float: only what
+    `ELEMENTWISE` lists, the four operations, a square root and comparisons.
+    """
+    tree = dict(sources())[SEQUENCE]
+    library = {node.targets[0].id for node in ast.walk(tree) if isinstance(node, ast.Assign)
+               and isinstance(node.value, ast.Call) and called_name(node.value) == "library"}  # fmt: skip
+    assert library == {"numpy"}, "the array library goes by one name in the module"
+    touched = set()
+    for node in ast.walk(tree):
+        assert not isinstance(node, ast.MatMult), f"line {node.lineno}: a matrix product"
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "numpy":
+            touched.add(node.attr)
+        if isinstance(node, ast.Call):
+            assert called_name(node) not in {
+                "dot", "matmul", "einsum", "tensordot", "inner", "sum", "mean", "prod", "cumsum", "exp", "log", "tanh",
+                "power", "pow", "std", "var", "average", "reduce", "accumulate",
+            } or ast.unparse(node.func) == "sum", f"line {node.lineno}: {ast.unparse(node.func)}"  # fmt: skip
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
+            assert ast.unparse(node.left) == "2", f"line {node.lineno}: a power that is not a whole power of two"
+    assert touched <= ELEMENTWISE and {"minimum", "maximum", "sqrt", "array"} <= touched, sorted(touched - ELEMENTWISE)
+    methods = {node.func.attr for node in ast.walk(tree) if isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Attribute)}  # fmt: skip
+    assert not methods & {"sum", "mean", "dot", "std", "var", "prod", "cumsum"}, "nor as a method of an array"
 
 
 def test_nothing_is_iterated_in_an_order_that_depends_on_a_hash():

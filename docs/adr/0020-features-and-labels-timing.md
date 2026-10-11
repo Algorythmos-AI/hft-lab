@@ -134,3 +134,10 @@ The rule now:
 The label spec is version 2 and the dataset format version 2. With no wait and no penalty configured a stuck
 exit costs its two commissions only, which is no worst case: `config/learn.yaml` has no default for either.
 The shadow venue still reproduces, to the unit, exactly the outcomes marked as filled at the horizon.
+
+## Addendum, 2026-10-11: a row may be a window of rows
+
+[ADR 0029](0029-sequence-network-windows-and-fixed-point-scoring.md) adds rows that are the last rows of a
+pair side by side, for a model that reads a sequence. The rule of this record holds for each row of a window:
+the dataset builder checks the window's earliest row as it checks its latest, a window never spans a time the
+builder of this record would not vouch for, and the splitter purges by where a test window begins.

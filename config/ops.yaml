@@ -36,15 +36,16 @@ learning:
 #
 # F5 is `not_started`, and that is the truthful state of the phase, not of the code. Its foundations are
 # written and tested on synthetic streams (features, labels, datasets, validation, the model file, an exact
-# ridge model, gradient-boosted trees, an ML sleeve). Its deliverables are not: no Directional Change sleeve beyond a baseline in shadow, no model trained on
+# ridge model, gradient-boosted trees, a small sequence network, an ML sleeve). Its deliverables are not: no Directional Change sleeve beyond a baseline in shadow, no model trained on
 # real data, no sleeve trading on paper.
 #
 # F6 is `open`: the weekly loop's code is written and tested on synthetic data and against the fake broker
 # (weekend training, the lineup journal, challengers in shadow, the weekly decision with rollback and its
 # drill, the drift look, the two units). Its gate is not met: two full weekly cycles without manual help
 # and one rollback drill, on the host. Nothing has been trained on real data and no promotion rule exists.
-# The scorer in its own process is built, off as shipped, and has never run on a host. A deep challenger is
-# not built.
+# The scorer in its own process is built, off as shipped, and has never run on a host. A small
+# sequence network, the deep challenger, is built as a third kind of model (ADR 0029): fitted to synthetic
+# rows only, with placeholder settings, and never trained or served on a host.
 phases:
   F0: done
   F1: open

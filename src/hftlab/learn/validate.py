@@ -4,7 +4,9 @@
                  kept only if its label's window ended, and an embargo passed, before the first decision of the
                  test week: a label is usable only by a decision made after its window has ended. The purge
                  goes by each row's own window, however long; the embargo is the longest label window the
-                 dataset was built with (`embargo_for`).
+                 dataset was built with (`embargo_for`). A test row that is a window of earlier rows
+                 (ADR 0029) begins where its EARLIEST row was known, and the test week begins at the earliest
+                 of those: no training label may end, with the embargo, inside any row a test window holds.
   hold-out       the last weeks of a dataset are in no fold. `HoldOut.read` hands them over once per frozen
                  configuration and writes that read into the trial ledger first; a second read is refused.
   three numbers  every evaluation scores, on the same rows and under the same costs: the oracle (in
@@ -124,7 +126,7 @@ def walk_forward(
     folds = []
     for index in range(min_train_weeks, len(kept)):
         test = by_week[kept[index]]
-        starts = rows[test[0]].known_ns
+        starts = min(rows[position].earliest_ns for position in test)  # a window begins at its earliest row
         earlier = [position for week in kept[:index] for position in by_week[week]]
         train = tuple(position for position in earlier if rows[position].end_ns + embargo_ns < starts)
         folds.append(Fold(kept[index], train, tuple(test), len(earlier) - len(train)))

@@ -8,7 +8,7 @@ import yaml
 
 from hftlab.calendar import Calendar
 from hftlab.core import Quote
-from hftlab.features import FeatureBuilder, FeatureConfig
+from hftlab.features import FeatureBuilder, FeatureConfig, source
 from hftlab.labels import Labeller, LabelSpec
 from hftlab.learn.dataset import Dataset, build
 from hftlab.record import format as fmt
@@ -50,7 +50,7 @@ def planted(seed: int, blocks: int, *, effect: bool = True, start_ns: int = T0, 
 
 
 def features(config: FeatureConfig = CONFIG, calendar: Calendar | None = None) -> FeatureBuilder:
-    return FeatureBuilder("EUR.USD", config, calendar or Calendar())
+    return source("EUR.USD", config, calendar or Calendar())
 
 
 def labels(horizon_ns: int = HORIZON, costs=None, **barriers) -> Labeller:
@@ -101,6 +101,8 @@ def learn_settings(folder: Path, **changes) -> Path:
         "label": {"exit_wait_seconds": 2, "stuck_increments": 40}, "ridge_penalty": "1", "model": "ridge",
         "boosting": {"trees": 20, "max_depth": 3, "leaves": 8, "learning_rate_ppm": 200_000, "min_leaf_rows": 5,
                      "bins": 63, "l2_ppm": 1_000_000, "leaf_scale": 1000, "seed": 1},
+        "sequence": {"window": 8, "kernel": 3, "filters": 6, "hidden": 12, "epochs": 40, "batch_rows": 128,
+                     "learning_rate_ppm": 5_000, "l2_ppm": 100, "clip": 8, "cap": 8, "seed": 1},
         "validation": {"min_train_weeks": 1, "hold_out_weeks": 0, "seed": 1, "bootstrap_draws": 200,
                        "level_ppm": 950_000, "leak_checks": 4, "summary_bins": 5},
         "memory_budget_mb": 1000,

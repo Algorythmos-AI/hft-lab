@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Final
@@ -26,7 +26,7 @@ MB: Final = 1_000_000
 _TOP: Final = frozenset(
     {
         "version", "status", "state_dir", "lineup", "pairs", "horizons_seconds", "features", "label", "ridge_penalty",
-        "validation", "memory_budget_mb", "promotion", "drift", "scorer", "model", "boosting",
+        "validation", "memory_budget_mb", "promotion", "drift", "scorer", "model", "boosting", "sequence",
     }
 )  # fmt: skip
 _FEATURES: Final = frozenset({"lookbacks_ms", "rate_window_ms", "range_window_ms", "stale_after_ms"})
@@ -40,12 +40,18 @@ _DRIFT: Final = frozenset({"min_rows", "feature_shift_ppm", "calibration_gap_mic
 _SCORER: Final = frozenset({"timeout_ms", "start_ms", "restart_first_ms", "restart_last_ms"})
 RIDGE: Final = "ridge"
 GBM: Final = "gbm"
-MODELS: Final = (RIDGE, GBM)
+SEQ: Final = "seq"
+MODELS: Final = (RIDGE, GBM, SEQ)
 # The most a boosted model may be, whatever the file says: it is fitted on a small shared host and scored in the
 # trader's loop (ADR 0025). The model file's own limits (`hftlab.models.trees`) are no tighter than these.
 MOST_TREES: Final = 500
 MOST_DEPTH: Final = 6
 MOST_BINS: Final = 255
+# The most a sequence network may be (ADR 0029). The model file's own limits (`hftlab.models.net`) are no tighter.
+MOST_WINDOW: Final = 64
+MOST_FILTERS: Final = 32
+MOST_HIDDEN: Final = 64
+MOST_EPOCHS: Final = 500
 _SLEEVE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 NOT_IN_FORCE: Final = Rule(None, 1, 1, 0, 1, 500_000, 0)  # names no decision record, so it can pass nothing
 
@@ -104,6 +110,43 @@ _BOOSTING: Final = frozenset(field.name for field in fields(Boosting))
 
 
 @dataclass(frozen=True, slots=True)
+class Network:
+    """The numbers a sequence network is fitted with (ADR 0029). Fixed in the file: nothing searches them."""
+
+    window: int  # the rows of one pair the model is shown at once, the row in hand last
+    kernel: int  # the rows under one filter of the convolution
+    filters: int
+    hidden: int  # the units of the one hidden layer
+    epochs: int  # passes over the training rows
+    batch_rows: int
+    learning_rate_ppm: int  # Adam's step, in millionths
+    l2_ppm: int  # the penalty on a weight, in millionths
+    clip: int  # an input is cut off at this many standard deviations from its mean
+    cap: int  # an activation is at most this
+    seed: int
+
+    def __post_init__(self) -> None:
+        if not 2 <= self.window <= MOST_WINDOW or not 1 <= self.kernel <= self.window:
+            raise ValueError(f"sequence: a window of 2 to {MOST_WINDOW} rows, and a kernel that fits in it")
+        if not self.filters <= MOST_FILTERS or not self.hidden <= MOST_HIDDEN or not self.epochs <= MOST_EPOCHS:
+            raise ValueError(
+                f"sequence: at most {MOST_FILTERS} filters, {MOST_HIDDEN} hidden units and {MOST_EPOCHS} passes"
+            )
+        if not 0 < self.learning_rate_ppm <= 1_000_000 or not 1 <= self.clip <= 16 or not 1 <= self.cap <= 16:
+            raise ValueError("sequence: a learning rate of 1 to 1,000,000 ppm, and a clip and a cap of 1 to 16")
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "window": self.window, "kernel": self.kernel, "filters": self.filters, "hidden": self.hidden,
+            "epochs": self.epochs, "batch_rows": self.batch_rows, "learning_rate_ppm": self.learning_rate_ppm,
+            "l2_ppm": self.l2_ppm, "clip": self.clip, "cap": self.cap, "seed": self.seed,
+        }  # fmt: skip
+
+
+_SEQUENCE: Final = frozenset(field.name for field in fields(Network))
+
+
+@dataclass(frozen=True, slots=True)
 class Settings:
     state_dir: Path
     lineup: Path
@@ -113,8 +156,9 @@ class Settings:
     exit_wait_ns: int
     stuck_increments: int
     penalty: Fraction
-    model: str  # the kind of model a run fits: `ridge` or `gbm`
+    model: str  # the kind of model a run fits: `ridge`, `gbm` or `seq`
     boosting: Boosting  # read by a run whose model is `gbm`, and by nothing else
+    network: Network  # read by a run whose model is `seq`, and by nothing else
     min_train_weeks: int
     hold_out_weeks: int
     seed: int
@@ -151,8 +195,12 @@ class Settings:
         # What a kind of model is fitted with is part of its trial and of no other kind's: changing a number
         # the run does not read makes no new configuration.
         fitted: dict[str, object] = (
-            {"penalty": str(self.penalty)} if self.model == RIDGE else {"boosting": self.boosting.as_dict()}
-        )
+            {"penalty": str(self.penalty)} if self.model == RIDGE
+            else {"boosting": self.boosting.as_dict()} if self.model == GBM
+            else {"sequence": self.network.as_dict()}
+        )  # fmt: skip
+        # A window is part of what a row is, so of how the model is served. A single row is written as it always was.
+        window = {"window_rows": features.window_rows} if features.window_rows > 1 else {}
         return {
             "kind": self.model,
             "pair": pair,
@@ -163,6 +211,7 @@ class Settings:
                 "rate_window_ns": features.rate_window_ns,
                 "range_window_ns": features.range_window_ns,
                 "stale_after_ns": features.stale_after_ns,
+                **window,
             },
             "exit_wait_ns": self.exit_wait_ns,
             "stuck_increments": self.stuck_increments,
@@ -238,7 +287,7 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
     features, label = _block(loaded, "features", _FEATURES), _block(loaded, "label", _LABEL)
     validation, promotion = _block(loaded, "validation", _VALIDATION), _block(loaded, "promotion", _PROMOTION)
     drift, scorer = _block(loaded, "drift", _DRIFT), _block(loaded, "scorer", _SCORER)
-    boosting = _block(loaded, "boosting", _BOOSTING)
+    boosting, sequence = _block(loaded, "boosting", _BOOSTING), _block(loaded, "sequence", _SEQUENCE)
     if loaded["model"] not in MODELS:
         raise LearnConfigError(f"{source}: model is one of {', '.join(MODELS)}, not {loaded['model']!r}")
     lookbacks = features["lookbacks_ms"]
@@ -259,6 +308,14 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
             _whole(boosting, "learning_rate_ppm"), _whole(boosting, "min_leaf_rows"), _whole(boosting, "bins", least=2),
             _whole(boosting, "l2_ppm", least=0), _whole(boosting, "leaf_scale"), _whole(boosting, "seed", least=0),
         )  # fmt: skip
+        network = Network(
+            _whole(sequence, "window", least=2), _whole(sequence, "kernel"), _whole(sequence, "filters"),
+            _whole(sequence, "hidden"), _whole(sequence, "epochs"), _whole(sequence, "batch_rows"),
+            _whole(sequence, "learning_rate_ppm"), _whole(sequence, "l2_ppm", least=0), _whole(sequence, "clip"),
+            _whole(sequence, "cap"), _whole(sequence, "seed", least=0),
+        )  # fmt: skip
+        if loaded["model"] == SEQ:  # the rows of this kind are windows; every other kind reads one row
+            windows = replace(windows, window_rows=network.window)
     except (ValueError, ZeroDivisionError) as exc:
         raise LearnConfigError(f"{source}: {exc}") from exc
     if penalty is None or penalty <= 0:
@@ -281,6 +338,7 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
         penalty=penalty,
         model=loaded["model"],
         boosting=boosted,
+        network=network,
         min_train_weeks=_whole(validation, "min_train_weeks"),
         hold_out_weeks=_whole(validation, "hold_out_weeks", least=0),
         seed=_whole(validation, "seed", least=0),

@@ -34,14 +34,20 @@ class FeatureConfig:
 
     `stale_after_ns` is how long a book may go unconfirmed, by a quote or a heartbeat, before what was known of
     it is thrown away.
+
+    `window_rows` is how many rows, the one in hand and the ones before it, a model is shown at once. It is 1
+    for a model that reads one row. Above 1 the rows are made by `hftlab.features.window.WindowBuilder`
+    (ADR 0029), and `hftlab.features.source` is what picks between the two.
     """
 
     lookbacks_ns: tuple[int, ...]
     rate_window_ns: int
     range_window_ns: int
     stale_after_ns: int
+    window_rows: int = 1
 
     def __post_init__(self) -> None:
+        _checks.positive("window_rows", self.window_rows)
         _checks.positive("rate_window_ns", self.rate_window_ns)
         _checks.positive("range_window_ns", self.range_window_ns)
         _checks.positive("stale_after_ns", self.stale_after_ns)

@@ -1,0 +1,62 @@
+# HFT-HYP-0006. A hypothesis record (research/README.md). Written before any result it concerns exists.
+id: HFT-HYP-0006
+title: The first sequence-network challenger shows no advantage over the control sleeve, the ridge challenger or the tree challenger after costs
+status: registered            # registered | supported | refuted. Changed only by a decision record
+registered: "2026-10-11"
+phase: F6                     # the learning loop, with a third kind of model
+
+statement: >
+  A small sequence network (ADR 0029), fitted to windows of the last eight rows of the same top-of-book
+  features of the same pair as the ridge and the gradient-boosted models, trained at the weekend on the
+  recordings and served for one trading week as a challenger in shadow, has no advantage after costs:
+  (a) the lower bound of the day-block bootstrap interval of its mean result per round trip, in the shadow
+  book and after the modelled costs, is not above zero;
+  (b) the lower bound of the same interval for its mean result per round trip less the control sleeve's, in
+  the same pair over the same trading days, is not above zero;
+  (c) the lower bound of the same interval for its mean result per round trip less the ridge challenger's,
+  in the same pair over the same trading days of the same week, is not above zero;
+  (d) the lower bound of the same interval for its mean result per round trip less the gradient-boosted
+  challenger's, in the same pair over the same trading days of the same week, is not above zero.
+  This is the outcome we expect. It is stated as the hypothesis so that a week that seems to show an edge has
+  to refute something written down beforehand.
+
+why: >
+  The rows are the ones HFT-HYP-0003 describes: a handful of exact numbers of the best bid and ask, and
+  three clock features (ADR 0020). What this model adds is their order over the last eight rows. The tests
+  show that it finds an order where one was planted, on a synthetic stream on which no model of one row can
+  find anything. Nothing says the real feed holds such an order that survives a spread, two commissions and
+  the latency of a fill-or-kill market order at a holding time of a minute; several of the features already
+  look back over a window of their own, so much of what eight rows could say is in one row. What a network
+  does more readily than a straight line or small trees is fit noise, and it has more to fit it with: about a
+  thousand weights against a few tens of thousands of windows a week that overlap one another. Three of its
+  inputs are clocks, and a week whose clocks sit where no training week's did is outside anything it saw.
+  The settings are placeholders chosen small and tuned on nothing, its fit depends on its seed, and one week
+  of one pair is little evidence. So the likeliest reading of a real week is a challenger that trades and
+  earns no more than the others. The control sleeve has no edge and loses its costs, so losing less than it
+  is not an edge either: that is why (a) is asked beside (b). And a third kind of model is a third look at
+  the same data: that is why (c) and (d) are asked, and why its trial is counted.
+
+what_would_show_it_is_wrong:
+  - All four lower bounds above zero, with at least the trades and the trading days HFT-EXP-0006 asks for of
+    each of the four sleeves, on reports that do not rest on placeholders. That refutes the hypothesis for
+    that week and that pair. It promotes nothing (see below).
+  - (a) and (b) above zero and (c) or (d) not is no refutation. It says the week was a good one for a model
+    of these features and says nothing for a sequence over a single row.
+  - A week that does not replay to the decisions it took (ADR 0005), or a challenger's place that served
+    more than one model in the week. Then the week measured nothing, and says nothing either way.
+
+what_it_does_not_say: >
+  Nothing about another window, another width, another seed, another pair or another holding time, and
+  nothing about a larger network or another architecture. Nothing about a live account: every result is the
+  shadow book's. And it is not a promotion rule. No rule is in force, no decision record exists, and
+  HFT-EXP-0006 chooses none: a refuted hypothesis here is a reason to register a rule and a longer
+  experiment, never a reason to promote the model that refuted it.
+
+tested_by:
+  - HFT-EXP-0006              # registered, NOT RUN
+
+evidence: >
+  None. Nothing has been recorded from the real feed, no model of any kind has been trained on real data and
+  none has served. HFT-EXP-0006 has not been run, and neither have HFT-EXP-0003 and HFT-EXP-0004. The code
+  runs on synthetic streams in tests/learn/, tests/models/ and tests/lineup/. Those tests check the code;
+  they are not this experiment and are not evidence for this hypothesis.

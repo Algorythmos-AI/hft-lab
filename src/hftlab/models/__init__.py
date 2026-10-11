@@ -1,13 +1,15 @@
-"""Models: a hashed file format, a directory that never overwrites, an exact ridge regression, boosted trees kept as
-whole numbers, two baselines, a scorer."""
+"""Models: a hashed file format, a directory that never overwrites, an exact ridge regression, boosted trees and a
+small sequence network kept as whole numbers, two baselines, a scorer."""
 from hftlab.models.baseline import number
 from hftlab.models.file import Model, ModelError, ModelMismatch, ModelRegistry, parse
+from hftlab.models.net import Net, NetError
 from hftlab.models.ridge import Ridge, RidgeError, fit
 from hftlab.models.scorer import (
     BUY,
     SELL,
     Decision,
     FlatScorer,
+    NetScorer,
     RandomScorer,
     RidgeScorer,
     ScoreError,
@@ -29,6 +31,9 @@ __all__ = [
     "ModelError",
     "ModelMismatch",
     "ModelRegistry",
+    "Net",
+    "NetError",
+    "NetScorer",
     "RandomScorer",
     "Ridge",
     "RidgeError",

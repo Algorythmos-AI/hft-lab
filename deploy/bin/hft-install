@@ -17,6 +17,8 @@
 #                        rebuilt only when that file has changed, and never under a running service.
 #                        With --with-ml, requirements-ml.lock.txt is added to it the same way: the
 #                        gradient-boosting library, which only training a gbm model needs (ADR 0025).
+#                        A sequence network (ADR 0029) needs nothing added: it is fitted on what
+#                        requirements.lock.txt already holds, and scored with the standard library.
 #   5. the directories   var/ and what is under it, and /etc/hft
 #   6. the units         the files of deploy/systemd into /etc/systemd/system, hft-status into /usr/local/bin
 #   7. enabling          ONLY the units named with --enable, and started only with --start

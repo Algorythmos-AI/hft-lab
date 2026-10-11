@@ -30,10 +30,18 @@ A dataset is made per pair and horizon from day folders of the recorder's store.
 from: the feature keys, the label spec, the cost model's parameters with its placeholder flag, the source days
 and a hash of all of it and every row. Everything in it is an integer or text. Nothing here is committed: a
 dataset is derived data and stays on the host.
+
+It also records where each of those days came from (ADR 0028): this platform's own recording, or history
+imported from files under a label. That is in the hash, so two datasets from different mixes of sources are
+two datasets, and `split` says of any of its rows how many came from which. A day whose origin nobody stated
+is counted as `unstated`, never as recorded: only a day folder that says it is the platform's own is. A day
+whose sizes are an importer's placeholder makes the whole dataset `placeholder_sizes`, and nothing fitted to
+it a result.
 """
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_left
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -50,12 +58,14 @@ from hftlab.labels import NO_ENTRY as NO_ENTRY
 from hftlab.labels import PENALISED as PENALISED
 from hftlab.labels import Labeller, LabelSpec, PairTape
 from hftlab.record.format import RecordedEvent
+from hftlab.record.origin import origin_of
 from hftlab.replay.reader import events as day_events
 from hftlab.replay.reader import instruments as day_instruments
 from hftlab.venues.port import ConnectionEvent
 from hftlab.venues.sim.cost import CostModel
 
-VERSION: Final = 2
+VERSION: Final = 3
+UNSTATED: Final = "unstated"  # the source of events no day folder vouched for
 HOW: Final = {AT_HORIZON: "at_horizon", NO_ENTRY: "no_entry", LATE_EXIT: "late_exit", PENALISED: "penalised"}  # by code
 CHECKS: Final = 16
 DISTURB_NS: Final = 3_600 * 1_000_000_000 + 7
@@ -79,6 +89,25 @@ class FeatureSource(Protocol):
     def keys(self) -> tuple[str, ...]: ...
 
     def rows(self, events: Iterable[RecordedEvent]) -> Iterable[FeatureRow]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DaySource:
+    """One day of the stream a dataset is made from: where its events came from, and how many it gave."""
+
+    day: str
+    source: str  # `recorded`, `imported:<label>` (hftlab.record.origin) or UNSTATED
+    events: int
+    placeholder_sizes: bool = False  # its sizes are an importer's placeholder, not anything a venue displayed
+
+    def plain(self) -> list[object]:
+        return [self.day, self.source, self.events, int(self.placeholder_sizes)]
+
+
+def day_source(folder: Path, events: int) -> DaySource:
+    """A day folder of a store as a source: what it says it is (`hftlab.record.origin`), and its events."""
+    origin = origin_of(folder)
+    return DaySource(folder.name, origin.key, events, origin.placeholder_sizes)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,11 +145,35 @@ class Dataset:
     counted: Mapping[str, int]  # outcomes that were not a fill at both ends as sent, by how they were priced
     rows: tuple[Row, ...]
     content_hash: str
+    sources: tuple[DaySource, ...] = ()  # the stream, day by day and in order: every event is in exactly one
 
     @property
     def placeholder(self) -> bool:
         """Were the outcomes priced on placeholder costs? Then nothing fitted to them is a result."""
         return self.cost_model.get("placeholder") is not False
+
+    @property
+    def placeholder_sizes(self) -> bool:
+        """Does any of its days carry an importer's placeholder for a size? Then nothing fitted to it is a result."""
+        return any(source.placeholder_sizes for source in self.sources)
+
+    def split(self, positions: Iterable[int] | None = None) -> dict[str, dict[str, int]]:
+        """Of the rows at `positions` (all of them by default): how many rows, and days, came from each source.
+
+        A row belongs to the day its decision's event came from, and a day is counted when it gave a row.
+        """
+        ends, total = [], 0
+        for source in self.sources:
+            total += source.events
+            ends.append(total)
+        rows: dict[str, int] = {}
+        days: dict[str, set[int]] = {}
+        for position in range(len(self.rows)) if positions is None else positions:
+            number = bisect_left(ends, self.rows[position].n)
+            key = self.sources[number].source
+            rows[key] = rows.get(key, 0) + 1
+            days.setdefault(key, set()).add(number)
+        return {"rows": dict(sorted(rows.items())), "days": {key: len(days[key]) for key in sorted(days)}}
 
     @property
     def horizon_ns(self) -> int:
@@ -139,6 +192,11 @@ class Dataset:
             "size": self.size,
             "window_ns": self.window_ns,
             "days": list(self.days),
+            "sources": {
+                "days": [source.plain() for source in self.sources],
+                "placeholder_sizes": int(self.placeholder_sizes),
+                "split": self.split(),
+            },
             "events": self.events,
             "dropped": dict(self.dropped),
             "counted": dict(self.counted),
@@ -203,11 +261,22 @@ def build(
     labeller: Labeller,
     *,
     days: Sequence[str] = (),
+    sources: Sequence[DaySource] = (),
     checks: int = CHECKS,
 ) -> Dataset:
-    """The dataset of one stream: every feature row that has a whole label, after the look-ahead check."""
+    """The dataset of one stream: every feature row that has a whole label, after the look-ahead check.
+
+    `sources` says, day by day and in the stream's order, where the events came from. Without it the whole
+    stream is `unstated`: a caller that does not say where its events are from does not get them counted as
+    the platform's own.
+    """
     if source.pair != labeller.instrument.pair:
         raise DatasetError(f"features of {source.pair} cannot be joined to labels of {labeller.instrument.pair}")
+    if sources:
+        if sum(one.events for one in sources) != len(events) or (days and list(days) != [one.day for one in sources]):
+            raise DatasetError("the stated sources do not account for every event of the stream, day by day")
+        days = [one.day for one in sources]
+    spans = tuple(sources) or (DaySource("", UNSTATED, len(events)),)
     found = list(source.rows(events))
     check_causal(source, events, found, checks)
     tape = PairTape(events, source.pair)
@@ -242,6 +311,7 @@ def build(
         "size": labeller.size,
         "window_ns": labeller.window_ns,
         "days": list(days),
+        "sources": [one.plain() for one in spans],
         "events": len(events),
         "dropped": dropped,
         "counted": counted,
@@ -261,18 +331,20 @@ def build(
         counted=MappingProxyType(counted),
         rows=tuple(rows),
         content_hash=digest,
+        sources=spans,
     )
 
 
 def build_for(
     events: Sequence[RecordedEvent], instrument: Instrument, config: FeatureConfig, model: CostModel,
     calendar: Calendar, *, horizon_ns: int, exit_wait_ns: int, stuck_increments: int, days: Sequence[str] = (),
-    checks: int = CHECKS,
+    sources: Sequence[DaySource] = (), checks: int = CHECKS,
 ) -> Dataset:  # fmt: skip
     """The dataset of one pair and horizon from a stream already read, with the wait and the worst case written out."""
     spec = LabelSpec(horizon_ns, exit_wait_ns=exit_wait_ns, stuck_increments=stuck_increments)
     source = FeatureBuilder(instrument.pair, config, calendar)
-    return build(events, source, Labeller(spec, instrument, model, calendar), days=days, checks=checks)
+    labeller = Labeller(spec, instrument, model, calendar)
+    return build(events, source, labeller, days=days, sources=sources, checks=checks)
 
 
 def build_from_days(
@@ -298,7 +370,12 @@ def build_from_days(
             raise DatasetError(f"{folder.name} describes {pair} differently from the days before it")
         instrument = described
     assert instrument is not None
-    stream = [event for folder in ordered for event in day_events(folder)]
+    stream: list[RecordedEvent] = []
+    sources = []
+    for folder in ordered:
+        before = len(stream)
+        stream += day_events(folder)
+        sources.append(day_source(folder, len(stream) - before))
     source = FeatureBuilder(pair, config, calendar)
     labeller = Labeller(spec, instrument, model, calendar)
-    return build(stream, source, labeller, days=[folder.name for folder in ordered], checks=checks)
+    return build(stream, source, labeller, sources=sources, checks=checks)

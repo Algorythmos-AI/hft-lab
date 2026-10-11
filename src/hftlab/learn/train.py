@@ -3,6 +3,7 @@
     python -m hftlab.learn.train                 build, evaluate, fit, register; the market must be closed
     python -m hftlab.learn.train --dry-run       the same evaluation at any time; registers nothing
     python -m hftlab.learn.train --hold-out      also score the candidate on the held-out weeks, once
+    python -m hftlab.learn.train --imports var/history   read imported days as well (ADR 0028)
 
 For every configured pair and horizon, from the day folders of the recorder's store:
 
@@ -27,6 +28,14 @@ to make one fold; a hold-out this configuration has already read; a `gbm` run wi
 The held-out weeks are in no fold, in no fit and in no summary, and are read only through `HoldOut.read`, which
 writes the read into the ledger first.
 It fails (exit 1) when the process peaked above its memory budget, and then registers nothing.
+
+Every result of a report has, under `sources` and its own name, how many of the rows it was computed on, and
+of the days they are from, came from the platform's own recordings (`recorded`) and how many from imported
+history (`imported:<label>`), and the command says the same on its own line for every candidate. With
+`--imports`, the days of an import store are read beside the recordings, in date order; a date that is in both
+is taken from the recording, and the imported day of that date is left out and named. A run that read a day
+whose sizes are an importer's placeholder says `not_a_result`. No imported day counts towards a promotion:
+the weekly decision reads `sources.model.days.recorded` and nothing else of it (`hftlab.learn.promote`).
 
 Nothing here reaches a venue, and nothing here changes what the trader runs: a candidate serves nowhere until
 the weekly decision (`python -m hftlab.learn.promote`) makes it a challenger.
@@ -56,7 +65,7 @@ from hftlab.journal import JournalError, canonical
 from hftlab.learn.boost import BoostError, LibraryMissing, TooFewRows, library
 from hftlab.learn.boost import fit as boost
 from hftlab.learn.config import GBM, Boosting, LearnConfigError, Settings, config_hash, load
-from hftlab.learn.dataset import Dataset, DatasetError, LeakError, build_for
+from hftlab.learn.dataset import Dataset, DatasetError, DaySource, LeakError, build_for, day_source
 from hftlab.learn.drift import EXPECTED_KEY, by_column, summarise
 from hftlab.learn.validate import (
     HoldOut,
@@ -226,8 +235,15 @@ def train_one(
         columns[EXPECTED_KEY] = expected  # what the fold models expected of the trades they took
     summary = summarise(columns, settings.summary_bins, rows=len(development))
     held: dict[str, object] = {"weeks": len(plan.held_out), "read": 0}
+    evaluated = dataset.split(tested)
+    sources: dict[str, object] = {
+        "three_way": evaluated, "interval": evaluated, "deflated_sharpe": evaluated,
+        "hold_out": {"rows": {}, "days": {}}, "model": dataset.split(development),
+    }  # fmt: skip
     if hold_out and plan.held_out:
         rows = HoldOut(dataset, plan, ledger).read(config)  # written into the ledger before it is handed over
+        numbers = {row.n for row in rows}
+        sources["hold_out"] = dataset.split(p for p, row in enumerate(dataset.rows) if row.n in numbers)
         scorer = scorer_for(candidate)
 
         def final(row: FeatureRow) -> Side | None:
@@ -238,7 +254,7 @@ def train_one(
         held = {"weeks": len(plan.held_out), "read": 1, **found.as_dict()}
     placeholders = {
         "cost_model": int(dataset.placeholder), "feasibility": int(feasibility_placeholder),
-        "learn": int(settings.placeholder),
+        "learn": int(settings.placeholder), "sizes": int(dataset.placeholder_sizes),
     }  # fmt: skip
     report: dict[str, object] = {
         "kind": "evaluation-report",
@@ -261,6 +277,7 @@ def train_one(
         "trials": trials,
         "hold_out": held,
         "model": {"hash": candidate.content_hash, "kind": candidate.kind, "fitted_rows": len(development)},
+        "sources": sources,
         "serving": {"features": frozen["features"], "feasibility": feasibility},
         "summary": summary,
     }
@@ -270,9 +287,19 @@ def train_one(
 # ---- the store -----------------------------------------------------------------------------------------------------
 
 
-def read_store(root: Path, pairs: Sequence[str]) -> tuple[list[RecordedEvent], dict[str, Instrument], list[str]]:
-    """Every event of every day folder as one stream, what the days say the pairs are, and the days' names."""
+def read_store(
+    root: Path, pairs: Sequence[str], imports: Path | None = None
+) -> tuple[list[RecordedEvent], dict[str, Instrument], list[DaySource], list[str]]:
+    """Every event of every day folder as one stream, what the days say the pairs are, and each day's source.
+
+    With `imports`, the days of that store are read as well, all in date order. A date both stores hold is
+    read from `root`; the other one is left out and named, last of what is returned.
+    """
     folders = store_days(root)
+    taken = {folder.name for folder in folders}
+    more = store_days(imports) if imports is not None else []
+    skipped = sorted(folder.name for folder in more if folder.name in taken)
+    folders = sorted([*folders, *(folder for folder in more if folder.name not in taken)], key=lambda f: f.name)
     if not folders:
         raise TrainRefused(f"{root} holds no recorded day")
     described: dict[str, Instrument] = {}
@@ -283,13 +310,18 @@ def read_store(root: Path, pairs: Sequence[str]) -> tuple[list[RecordedEvent], d
                 raise TrainRefused(f"{folder.name} does not describe {pair}; its prices cannot be read")
             if described.setdefault(pair, found[pair]) != found[pair]:
                 raise TrainRefused(f"{folder.name} describes {pair} differently from the days before it")
-    stream = [event for folder in folders for event in day_events(folder)]
-    return stream, described, [folder.name for folder in folders]
+    stream: list[RecordedEvent] = []
+    sources = []
+    for folder in folders:
+        before = len(stream)
+        stream += day_events(folder)
+        sources.append(day_source(folder, len(stream) - before))
+    return stream, described, sources, skipped
 
 
 def train_all(
-    stream: Sequence[RecordedEvent], instruments: dict[str, Instrument], days: Sequence[str], settings: Settings, *,
-    costs: CostModel, calendar: Calendar, feasibility: FeasibilitySettings, ledger: TrialLedger,
+    stream: Sequence[RecordedEvent], instruments: dict[str, Instrument], days: Sequence[DaySource],
+    settings: Settings, *, costs: CostModel, calendar: Calendar, feasibility: FeasibilitySettings, ledger: TrialLedger,
     registry: Path | None = None, hold_out: bool = False,
 ) -> list[Trained]:  # fmt: skip
     """Every configured pair and horizon, in the order they are written. The stream is held once."""
@@ -301,7 +333,7 @@ def train_all(
             made.append(
                 build_for(
                     stream, instruments[pair], settings.features, costs, calendar, horizon_ns=horizon,
-                    exit_wait_ns=settings.exit_wait_ns, stuck_increments=settings.stuck_increments, days=days,
+                    exit_wait_ns=settings.exit_wait_ns, stuck_increments=settings.stuck_increments, sources=days,
                     checks=settings.leak_checks,
                 )
             )  # fmt: skip
@@ -320,6 +352,26 @@ def train_all(
     return out
 
 
+
+
+def by_source(sources: Sequence[DaySource]) -> dict[str, dict[str, int]]:
+    """The days and the events a run read, by where they came from."""
+    days: dict[str, int] = {}
+    events: dict[str, int] = {}
+    for one in sources:
+        days[one.source] = days.get(one.source, 0) + 1
+        events[one.source] = events.get(one.source, 0) + one.events
+    return {"days": dict(sorted(days.items())), "events": dict(sorted(events.items()))}
+
+
+def said_by_source(sources: dict[str, dict[str, dict[str, int]]]) -> str:
+    """A report's split as one line: each result with its rows and days from each source."""
+    parts = []
+    for name in ("three_way", "hold_out", "model"):
+        rows, days = sources[name]["rows"], sources[name]["days"]
+        counts = ", ".join(f"{key} {rows[key]} row(s) of {days[key]} day(s)" for key in rows) or "no rows"
+        parts.append(f"{'evaluated' if name == 'three_way' else 'fitted' if name == 'model' else 'held out'}: {counts}")
+    return "; ".join(parts)
 
 
 # ---- what is kept --------------------------------------------------------------------------------------------------
@@ -375,10 +427,11 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
         root = Path(loaded["root"]) if isinstance(loaded, dict) and isinstance(loaded.get("root"), str) else None
     if root is None:
         raise TrainRefused(f"{args.recorder_config} does not say where the recordings are")
-    stream, instruments, days = read_store(root, settings.pairs)
+    stream, instruments, sources, skipped = read_store(root, settings.pairs, args.imports)
+    days = [source.day for source in sources]
     ledger = TrialLedger(settings.ledger)
     trained = train_all(
-        stream, instruments, days, settings, costs=costs, calendar=calendar,
+        stream, instruments, sources, settings, costs=costs, calendar=calendar,
         feasibility=load_settings(args.feasibility), ledger=ledger, registry=args.trial_registry,
         hold_out=args.hold_out,
     )  # fmt: skip
@@ -387,6 +440,7 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
     said: dict[str, object] = {
         "at_ns": now, "ok": within, "dry_run": bool(args.dry_run), "days": days, "events": len(stream),
         "model": settings.model,
+        "sources": by_source(sources), "imported_days_left_out": skipped,
         "rows": sum(json.loads(one.report)["dataset"]["rows"] for one in trained),
         "memory": {"peak_bytes": peak, "budget_bytes": settings.memory_budget_bytes, "within": within},
         "candidates": [
@@ -394,6 +448,10 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
             for one in trained
         ],
     }  # fmt: skip
+    for one in trained:
+        say(f"{one.pair} at {one.horizon_ns} ns, by source: {said_by_source(json.loads(one.report)['sources'])}")
+    if skipped:
+        say(f"{len(skipped)} imported day(s) left out, their dates are recorded too: {', '.join(skipped)}")
     if args.dry_run:
         for one in trained:
             sys.stdout.write(one.report.decode("ascii"))
@@ -415,7 +473,10 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
     _write_run(settings.state_dir, said)
     print(json.dumps(said, sort_keys=True), flush=True)
     if any(json.loads(one.report)["not_a_result"] for one in trained):
-        say("NOT A RESULT: the cost model, the feasibility settings or the learning settings are placeholders")
+        say(
+            "NOT A RESULT: the cost model, the feasibility settings, the learning settings or an imported day's "
+            "sizes are placeholders"
+        )
     return EXIT_OK
 
 
@@ -429,6 +490,7 @@ def main(
     parser.add_argument("--feasibility", type=Path, default=FEASIBILITY)
     parser.add_argument("--recorder-config", type=Path, default=RECORDER, help="says where the recordings are")
     parser.add_argument("--store", type=Path, help="the recordings (default: the recorder's `root`)")
+    parser.add_argument("--imports", type=Path, help="a store of imported history to read as well (ADR 0028)")
     parser.add_argument("--trial-registry", type=Path, help="the signed trial count (default: the repository's)")
     parser.add_argument("--dry-run", action="store_true", help="evaluate and print; register nothing")
     parser.add_argument("--hold-out", action="store_true", help="score the candidate on the held-out weeks, once")

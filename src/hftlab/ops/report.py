@@ -440,6 +440,7 @@ class Training:
     fitted_rows: int
     trials: int
     not_a_result: bool
+    not_recorded_rows: int = 0  # of the fitted rows: those from imported history, or from nobody knows where
 
 
 @dataclass(frozen=True, slots=True)
@@ -459,9 +460,13 @@ def training(report: Line) -> Training | None:
     model = report.get("model")
     if report.get("kind") != "evaluation-report" or not isinstance(model, dict):
         return None
+    sources = report.get("sources")
+    fitted = sources.get("model") if isinstance(sources, dict) else None
+    rows = fitted.get("rows") if isinstance(fitted, dict) else None
+    elsewhere = sum(_whole(count) for key, count in rows.items() if key != "recorded") if isinstance(rows, dict) else 0
     return Training(
         name(report.get("pair")), _whole(report.get("horizon_ns")), name(model.get("kind")),
-        _whole(model.get("fitted_rows")), _whole(report.get("trials")), report.get("not_a_result") != 0,
+        _whole(model.get("fitted_rows")), _whole(report.get("trials")), report.get("not_a_result") != 0, elsewhere,
     )  # fmt: skip
 
 
@@ -847,9 +852,12 @@ def render_weekly(report: Weekly) -> str:
         rests = ""
         if change.training is not None:
             found = change.training
+            away = found.not_recorded_rows
             rests = (
                 f"; report {change.report}: {found.pair}, {found.horizon_ns // SECOND} s, {found.kind}, "
-                f"{found.fitted_rows:,} row(s), {found.trials} trial(s)"
+                f"{found.fitted_rows:,} row(s)"
+                + (f" ({away:,} NOT from this platform's recordings)" if away else "")
+                + f", {found.trials} trial(s)"
                 + ("; NOT A RESULT: placeholders" if found.not_a_result else "")
             )
         elif change.report is not None:

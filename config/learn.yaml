@@ -57,7 +57,9 @@ promotion:                      # THE WEEKLY RULE. Every value is set by the dec
   decision: null                # PLACEHOLDER: HFT-DEC-NNNN. Null: the rule is not in force and nothing is promoted
   baseline_sleeve: control      # the sleeve a challenger is compared with while there is no ML champion
   min_trades: null              # PLACEHOLDER
-  min_days: null                # PLACEHOLDER
+  min_days: null                # PLACEHOLDER. Asked twice: of the shadow week's days, and of the days of this
+                                # platform's own recordings the model was fitted to. An imported day is in
+                                # neither count (ADR 0028)
   max_drawdown_micro: null      # PLACEHOLDER
   draws: null                   # PLACEHOLDER
   level_ppm: null               # PLACEHOLDER

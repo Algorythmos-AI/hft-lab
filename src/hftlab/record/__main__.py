@@ -23,7 +23,7 @@ from hftlab.calendar import CalendarError, load_calendar
 from hftlab.core import Clock, Instrument, InstrumentKind, SimClock, WallClock
 from hftlab.core._checks import pair as check_pair
 from hftlab.record.recorder import MS, Recorder, RecorderSettings
-from hftlab.record.store import DirectoryOffload, Housekeeper, Offload, Store, StoreSettings
+from hftlab.record.store import DirectoryOffload, Housekeeper, Offload, Store, StoreSettings, WrongStore
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.safety.venues import UnknownVenueError, venue
 from hftlab.venues.port import VenueError
@@ -162,6 +162,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_recorder(args, config)
     except (ConfigError, CalendarError) as exc:
         print(f"record: {exc}", file=sys.stderr)
+        return 2
+    except WrongStore as exc:
+        print(f"record: refused: {exc}", file=sys.stderr)
         return 2
     except PaperOnlyError as exc:
         print(f"record: refused by the paper-only lock: {exc}", file=sys.stderr)

@@ -127,12 +127,16 @@ def test_a_break_a_placeholder_report_a_week_not_served_whole_or_too_little_evid
     _, evidence = read_week(tmp_path / "trader", SUNDAY)
     held, rule, baseline = world.desk.held, world.learn.rule, "control"
     clean = Evidence(evidence.by_day, evidence.served, {}, 0, evidence.sessions)
-    passing = Gates(True, True, True)
+    recorded = {world.b.model: {"recorded": 5}}
+    passing = Gates(True, True, True, {}, recorded)
     assert weigh(before, clean, held, rule, passing, baseline).action == "promote", "the week itself was good"
     for gates, said in (
-        (Gates(True, True, True, {world.b.model: "report_rests_on_placeholders"}), "report_rests_on_placeholders"),
-        (Gates(True, True, True, {world.b.model: "model_cannot_be_loaded"}), "model_cannot_be_loaded"),
-        (Gates(False, True, True), "rule_not_in_force"),
+        (Gates(True, True, True, {world.b.model: "report_rests_on_placeholders"}, recorded),
+         "report_rests_on_placeholders"),
+        (Gates(True, True, True, {world.b.model: "model_cannot_be_loaded"}, recorded), "model_cannot_be_loaded"),
+        (Gates(False, True, True, {}, recorded), "rule_not_in_force"),
+        (Gates(True, True, True), "too_few_own_days"),  # a report that does not say where its days came from
+        (Gates(True, True, True, {}, {world.b.model: {"imported:vendor-a": 400, "recorded": 4}}), "too_few_own_days"),
     ):
         assert weigh(before, clean, held, rule, gates, baseline).reasons == (said,)
     other = Evidence(clean.by_day, {**clean.served, CHALLENGER: {world.b.model, ""}}, {}, 0, 5)

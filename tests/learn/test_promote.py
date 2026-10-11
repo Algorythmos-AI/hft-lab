@@ -15,7 +15,7 @@ from tests.support import imports, sources
 RULE = Rule("HFT-DEC-0007", min_trades=20, min_days=5, max_drawdown_micro=60, draws=400, level_ppm=900_000, seed=7)
 DAYS = (1, 2, 3, 4, 5)
 CONTROL = ShadowResult({day: [-6, -6, -6, -6, -6] for day in DAYS})  # a champion that pays the cost and no more
-GOOD = ShadowResult({day: [14, 9, -6, 12, 14, 8] for day in DAYS})
+GOOD = ShadowResult({day: [14, 9, -6, 12, 14, 8] for day in DAYS}, own_days=5)  # fitted to five recorded days
 
 
 def but(result: ShadowResult, **changes) -> ShadowResult:
@@ -25,8 +25,8 @@ def but(result: ShadowResult, **changes) -> ShadowResult:
 def test_a_challenger_that_passes_every_check_of_the_rule_is_promoted():
     verdict = decide(CONTROL, GOOD, RULE)
     assert (verdict.action, verdict.reasons) == (PROMOTE, ("all_checks_passed",))
-    assert verdict.evidence == {"trades": 30, "days": 5, "advantage_lower_micro": 14, "result_lower_micro": 8,
-                                "drawdown_micro": 6}  # fmt: skip
+    assert verdict.evidence == {"trades": 30, "days": 5, "own_days": 5, "advantage_lower_micro": 14,
+                                "result_lower_micro": 8, "drawdown_micro": 6}  # fmt: skip
     assert decide(CONTROL, GOOD, RULE) == verdict, "the same evidence under the same rule is the same verdict"
     assert decide(but(CONTROL, by_day=dict(reversed(CONTROL.by_day.items()))), GOOD, RULE) == verdict
 
@@ -35,7 +35,9 @@ def test_a_challenger_that_passes_every_check_of_the_rule_is_promoted():
     ("challenger", "rule", "reasons"),
     [
         (but(GOOD, by_day={d: GOOD.by_day[d][:3] for d in DAYS}), RULE, ("too_few_trades",)),
-        (GOOD, dataclasses.replace(RULE, min_days=6), ("too_few_days",)),
+        (GOOD, dataclasses.replace(RULE, min_days=6), ("too_few_days", "too_few_own_days")),
+        (but(GOOD, own_days=4), RULE, ("too_few_own_days",)),
+        (but(GOOD, own_days=0), RULE, ("too_few_own_days",)),
         (but(GOOD, by_day={**{d: GOOD.by_day[d] for d in DAYS[:4]}, 9: GOOD.by_day[5]}), RULE,
          ("days_differ", "advantage_not_above_zero", "result_not_above_zero")),
         (but(GOOD, by_day=CONTROL.by_day), RULE,
@@ -46,7 +48,7 @@ def test_a_challenger_that_passes_every_check_of_the_rule_is_promoted():
         (but(GOOD, reconciliation_breaks=1), RULE, ("reconciliation_breaks",)),
         (but(GOOD, latch_breached=True), RULE, ("challenger_latch_breached",)),
         (GOOD, dataclasses.replace(RULE, decision=None), ("rule_not_registered",)),
-        (ShadowResult({d: [] for d in DAYS}), RULE,
+        (ShadowResult({d: [] for d in DAYS}, own_days=5), RULE,
          ("too_few_trades", "advantage_not_above_zero", "result_not_above_zero")),
         (but(GOOD, by_day={d: [-90] * 6 for d in DAYS}, reconciliation_breaks=2, latch_breached=True), RULE,
          ("advantage_not_above_zero", "result_not_above_zero", "drawdown_beyond_bound", "reconciliation_breaks",
@@ -75,6 +77,21 @@ def test_a_champion_that_breached_its_latch_is_rolled_back_whatever_the_challeng
     assert decide(CONTROL, GOOD, RULE).action == PROMOTE, "and without the breach the same evidence promotes"
 
 
+def test_a_model_fitted_to_imported_history_alone_cannot_be_promoted_under_any_rule():
+    """Imported days are not counted, and a rule asks for at least one day: the data requirement has no way round."""
+    imports_only = but(GOOD, own_days=0)  # however many imported days it was fitted to, and however it did in shadow
+    for min_days in (1, 2, 5):
+        results = {day: GOOD.by_day[5] for day in range(1, min_days + 1)}
+        champion = ShadowResult({day: CONTROL.by_day[5] for day in results})
+        rule = dataclasses.replace(RULE, min_days=min_days, min_trades=1)
+        verdict = decide(champion, but(imports_only, by_day=results), rule)
+        assert (verdict.action, verdict.reasons) == (KEEP, ("too_few_own_days",)) and verdict.evidence["own_days"] == 0
+        assert decide(champion, but(GOOD, by_day=results, own_days=min_days), rule).action == PROMOTE
+    with pytest.raises(ValueError):
+        dataclasses.replace(RULE, min_days=0)  # there is no rule that asks for no recorded day
+    assert ShadowResult({}).own_days == 0, "a model nobody vouched for has none"
+
+
 RESULTS = st.dictionaries(st.integers(1, 6), st.lists(st.integers(-50, 50), max_size=6), max_size=6)
 RULES = st.builds(
     Rule, st.sampled_from(["HFT-DEC-0001", None]), st.integers(1, 12), st.integers(1, 4), st.integers(0, 120),
@@ -82,16 +99,16 @@ RULES = st.builds(
 )  # fmt: skip
 
 
-@given(RESULTS, RESULTS, st.integers(0, 1), st.booleans(), st.booleans(), RULES)
-def test_a_promotion_means_every_check_passed_and_a_breach_means_rollback(a, b, breaks, c_latch, latch, rule):
-    champion, challenger = ShadowResult(a, 0, latch), ShadowResult(b, breaks, c_latch)
+@given(RESULTS, RESULTS, st.integers(0, 1), st.booleans(), st.booleans(), RULES, st.integers(0, 6))
+def test_a_promotion_means_every_check_passed_and_a_breach_means_rollback(a, b, breaks, c_latch, latch, rule, own):
+    champion, challenger = ShadowResult(a, 0, latch), ShadowResult(b, breaks, c_latch, own)
     verdict = decide(champion, challenger, rule)
     assert verdict.action in (PROMOTE, KEEP, ROLL_BACK) and verdict.reasons
     assert (verdict.action == ROLL_BACK) == latch
     if verdict.action == PROMOTE:
         how = {"seed": rule.seed, "draws": rule.draws, "level_ppm": rule.level_ppm}
         assert rule.decision is not None and breaks == 0 and not c_latch and set(a) == set(b)
-        assert challenger.trades >= rule.min_trades and len(b) >= rule.min_days
+        assert challenger.trades >= rule.min_trades and len(b) >= rule.min_days and own >= rule.min_days
         assert validate.drawdown(b) <= rule.max_drawdown_micro
         assert validate.advantage(b, a, **how).lower > 0 and validate.mean_per_trade(b, **how).lower > 0
     if verdict.action == KEEP:

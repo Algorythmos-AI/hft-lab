@@ -6,7 +6,7 @@
   <root>/<YYYY-MM-DD>/journal.jsonl gaps, starts and stops; a `carry` line where the tracker's state is needed;
                                     the instruments (price scale, increments), repeated every hour
 
-Four promises:
+Five promises:
 
   * Restarting never duplicates or reorders. On opening, the last segment is cut back to its last whole block
     and the index continues from the last record that is really on disk.
@@ -18,6 +18,9 @@ Four promises:
   * Nothing is deleted until it is somewhere else. A closed segment older than the retention window is handed
     to the offload, and removed here only after the offload has confirmed its size and SHA-256. With no
     offload configured, nothing is ever deleted.
+  * It holds what this platform's recorder received and nothing else. A folder of imported history (ADR 0028)
+    is another store with the same format: it is read like this one, and `WrongStore` is raised before
+    anything is written when the recorder or its housekeeping is pointed at one.
 
 Compressing and handing over are `Housekeeper`'s work and run as their own command, not inside the recorder:
 compressing an hour of data takes long enough to delay the receive time of every quote that arrives meanwhile.
@@ -48,6 +51,8 @@ from hftlab.record.segment import SegmentWriter, inspect, read_segment
 SECOND: Final = 1_000_000_000
 HOUR: Final = 3_600 * SECOND
 JOURNAL: Final = "journal.jsonl"
+IMPORT_MARKER: Final = "import-store.json"  # at the root of a store of imported history, and of no other
+PROVENANCE: Final = "provenance"  # the journal line every imported day opens with
 _TAIL: Final = 1 << 16  # far longer than any journal line: where the end of the last whole line is looked for
 _SEGMENT = re.compile(r"(?P<hour>[0-9]{2})(?:\.(?P<part>[0-9]+))?\.seg(?P<gz>\.gz)?")
 _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
@@ -55,6 +60,10 @@ _DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 class QuotaExceeded(Exception):
     """The next block would take the store past its quota. Nothing was written."""
+
+
+class WrongStore(Exception):
+    """The folder holds imported history. The recorder and its housekeeping write only what the recorder received."""
 
 
 class StoreIOError(Exception):
@@ -158,6 +167,29 @@ def read_journal(day: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in text[: text.rfind("\n") + 1].splitlines() if line.strip()]
 
 
+def journal_head(day: Path) -> dict[str, object]:
+    """The first whole line of a day's journal, or nothing. It is where an imported day says what it is."""
+    try:
+        with (day / JOURNAL).open("rb") as stream:
+            line = stream.readline(_TAIL)
+        found = json.loads(line) if line.endswith(b"\n") else None
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def holds_imports(root: Path) -> bool:
+    """Is this a store of imported history? Its marker says so, and so does any day that opens with its provenance."""
+    return (root / IMPORT_MARKER).exists() or any(journal_head(day).get("type") == PROVENANCE for day in days(root))
+
+
+def refuse_imports(root: Path, who: str) -> None:
+    if holds_imports(root):
+        raise WrongStore(
+            f"{root} holds imported history, not this platform's recording: {who} does not write there (ADR 0028)"
+        )
+
+
 def append_line(path: Path, line: bytes) -> None:
     """Append one journal line, whole or not at all.
 
@@ -258,6 +290,7 @@ class Store:
     @_refusable
     def open(self) -> None:
         """Find where the recording really ends and continue from there, under a new run number."""
+        refuse_imports(self.root, "the recorder")
         self.root.mkdir(parents=True, exist_ok=True)
         state = self.root / "state.json"
         self.run = (json.loads(state.read_text())["run"] if state.exists() else 0) + 1
@@ -436,6 +469,7 @@ class Housekeeper:
 
     def run(self, now_ns: int, *, keep: Path | None = None) -> HousekeepingReport:
         """One pass. A segment is closed when its hour is over; `keep` names one that is still being written."""
+        refuse_imports(self.root, "the recorder's housekeeping")
         report = HousekeepingReport()
         for day in days(self.root):
             for path in segments(day):

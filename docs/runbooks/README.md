@@ -21,6 +21,7 @@ and is exercised once as a drill.
 | [Rollback](rollback.md) | Going back to the code that was in service before the last deploy, by the same command and the same gate |
 | [Publish](publish.md) | Sending the status snapshot and the pages, and the two decisions that are still the owner's |
 | [Learning](learning.md) | The weekly cycle: setting the two times, reading a report, what `keep: rule not in force` means, how a rule comes into force, a rollback and the rollback drill, the drift look, and what to do when training fails |
+| [History import](history-import.md) | Reading tick files you exported yourself into the store of imported history: the description file, the dry run, the report, and what each refusal means |
 | [IBKR capability probe](ibkr-probe.md) | Measuring what the paper account can do: installing the gateway, the paper login, the command, reading the report |
 
 None of the host runbooks has been followed on the host yet: nothing is installed. The deploy gate, the

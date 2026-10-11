@@ -13,8 +13,10 @@ challenger. What it may then write:
   promote     `decide` says so, AND the rule is in force, AND the decision record it names exists in
               research/decisions/ with the owner's approval, AND the risk limits are in force, AND the week
               had no reconciliation break, AND the challenger's report does not rest on placeholders, AND
-              the challenger's place served that model in every session of the week. Every one of these is
-              checked here as well as in the rule; none is assumed from another.
+              the challenger's place served that model in every session of the week, AND its model was
+              fitted to at least the rule's `min_days` days of this platform's own recordings: its report
+              says how many days came from where, and an imported day counts for nothing (ADR 0028). Every
+              one of these is checked here as well as in the rule; none is assumed from another.
   keep        anything else. The week's challengers leave and the registered candidates take their places.
 
 Every change is one line of the lineup journal, with the hash of the decision report it rests on, and one
@@ -52,6 +54,7 @@ from hftlab.lineup.serve import load as load_model
 from hftlab.ops import host
 from hftlab.ops.alerts import Alerts, sender_from
 from hftlab.record.format import CorruptSegment, instrument_of
+from hftlab.record.origin import RECORDED
 from hftlab.risk import RiskConfigError, RiskNotInForce, load_risk_config
 from hftlab.trader.config import Settings as TraderSettings
 from hftlab.trader.config import TraderConfigError
@@ -109,9 +112,10 @@ class Evidence:
     # sleeve -> (the model that expected it, what it expected, what the trip made), for the drift monitor
     expected: dict[str, list[tuple[str, int, int]]] = field(default_factory=dict)
 
-    def result(self, sleeve: str | None, pair: str | None, *, latch: bool = False) -> ShadowResult:
+    def result(self, sleeve: str | None, pair: str | None, *, latch: bool = False, own_days: int = 0) -> ShadowResult:
         """What a sleeve made in one pair. Results of two pairs are in two currencies, and are never added."""
-        return ShadowResult(dict(self.by_day.get(sleeve or "", {}).get(pair or "", {})), self.breaks, latch)
+        by_day = dict(self.by_day.get(sleeve or "", {}).get(pair or "", {}))
+        return ShadowResult(by_day, self.breaks, latch, own_days)
 
     def pairs(self, sleeve: str | None) -> list[str]:
         return sorted(self.by_day.get(sleeve or "", {}))
@@ -245,6 +249,12 @@ class Gates:
     record: bool  # the decision record the rule names exists, with the owner's approval
     limits: bool  # the risk limits are in force
     unfit: Mapping[str, str] = field(default_factory=dict)  # a challenger's model -> why its report cannot carry it
+    # a challenger's model -> the days it was fitted to, by source, as its report says (`recorded`, `imported:...`)
+    fitted: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+
+    def own_days(self, model: str) -> int:
+        """The days of this platform's own recordings a model was fitted to. Imported days are not among them."""
+        return self.fitted.get(model, {}).get(RECORDED, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,7 +311,9 @@ def weigh(
         latched = challenger.model in evidence.latched.get(sleeve or "", ())
         traded = evidence.pairs(sleeve)
         pair = traded[0] if len(traded) == 1 else None  # the two are compared in that pair, and so in one currency
-        verdict = decide(evidence.result(standard_sleeve, pair), evidence.result(sleeve, pair, latch=latched), rule)
+        own = gates.own_days(challenger.model)
+        theirs = evidence.result(sleeve, pair, latch=latched, own_days=own)
+        verdict = decide(evidence.result(standard_sleeve, pair), theirs, rule)
         more = [SEVERAL_PAIRS] if len(traded) > 1 else []
         if not gates.rule_in_force or rule.decision is None:
             more.append(RULE_NOT_IN_FORCE)
@@ -345,7 +357,22 @@ def approved(records: Path, decision: str | None) -> bool:
 
 def unfit(lineup: Lineup, registry: Path) -> dict[str, str]:
     """For each challenger that cannot carry a promotion: why. Its files are read by hash, like the trader's."""
-    out = {}
+    return read_reports(lineup, registry)[0]
+
+
+def fitted_days(report: Mapping[str, object]) -> dict[str, int]:
+    """The days a report says its model was fitted to, by source. A report that does not say has none."""
+    sources = report.get("sources")
+    model = sources.get("model") if isinstance(sources, dict) else None
+    days = model.get("days") if isinstance(model, dict) else None
+    if not isinstance(days, dict):
+        return {}
+    return {str(key): count for key, count in sorted(days.items()) if type(count) is int and count >= 0}
+
+
+def read_reports(lineup: Lineup, registry: Path) -> tuple[dict[str, str], dict[str, dict[str, int]]]:
+    """Each challenger's report, read once: why it cannot carry a promotion, and the days it was fitted to."""
+    out, fitted = {}, {}
     for challenger in lineup.challengers:
         try:
             report = load_model(challenger, registry)[1]
@@ -354,7 +381,8 @@ def unfit(lineup: Lineup, registry: Path) -> dict[str, str]:
             continue
         if report.get("not_a_result") != 0:
             out[challenger.model] = PLACEHOLDER
-    return out
+        fitted[challenger.model] = fitted_days(report)
+    return out, fitted
 
 
 # ---- the command ----------------------------------------------------------------------------------------------------
@@ -398,6 +426,7 @@ def _report(desk: Desk, week: Week, lineup: Lineup, evidence: Evidence, gates: G
             "level_ppm": rule.level_ppm, "seed": rule.seed,
         },
         "gates": {"record": int(gates.record), "limits": int(gates.limits), "unfit": dict(sorted(gates.unfit.items()))},
+        "fitted_days_by_source": {model: dict(days) for model, days in sorted(gates.fitted.items())},
         "baseline_sleeve": desk.learn.baseline_sleeve,
         "reconciliation_breaks": evidence.breaks,
         "latched": {sleeve: sorted(models) for sleeve, models in sorted(evidence.latched.items())},
@@ -416,7 +445,7 @@ def _report(desk: Desk, week: Week, lineup: Lineup, evidence: Evidence, gates: G
 def gates_of(desk: Desk, lineup: Lineup) -> Gates:
     in_force = desk.learn.rule_in_force and desk.learn.rule.decision is not None
     record = approved(desk.records, desk.learn.rule.decision)
-    return Gates(in_force, record, desk.limits, unfit(lineup, desk.registry))
+    return Gates(in_force, record, desk.limits, *read_reports(lineup, desk.registry))
 
 
 def run(desk: Desk, now_ns: int, *, dry_run: bool = False) -> tuple[int, Outcome]:

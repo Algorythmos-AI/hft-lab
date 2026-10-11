@@ -37,19 +37,30 @@ def requirements(name: str) -> tuple[int, int, int]:
     return verified, len(listed), len(listed) - verified
 
 
+def measured() -> int:
+    """The experiments that are the record of a run or a measurement: the folders that hold a report."""
+    return len(list((ROOT / "research" / "experiments").glob("HFT-EXP-*/report.md")))
+
+
 def test_the_research_records_are_counted_the_same_wherever_a_document_counts_them():
     hypotheses, experiments, decisions = research()
-    assert hypotheses >= 6 and experiments >= 6, "the folders are read: records are added, never removed"
+    assert hypotheses >= 6 and experiments >= 7, "the folders are read: records are added, never removed"
+    ran = measured()
+    waiting = experiments - ran
+    assert ran >= 1 and waiting >= 6, "a registered experiment has a protocol; a run or a measurement has a report"
     roadmap = "docs/roadmap.md"
-    assert numbers(roadmap, r"registry holds (\d+) hypotheses and (\d+) experiments, all registered and none run, "
-                            r"and (\d+) decision records") == (hypotheses, experiments, decisions)  # fmt: skip
+    assert numbers(roadmap, r"registry holds (\d+) hypotheses and (\d+) experiments, and (\d+) decision records: "
+                            r"(\d+) of the experiments are registered and not run, and (\d+) is the record"
+                   ) == (hypotheses, experiments, decisions, waiting, ran)  # fmt: skip
     assert numbers(roadmap, r"It holds (\d+) records: (\d+) hypotheses, (\d+) experiments and (\d+) decisions") == (
         hypotheses + experiments + decisions, hypotheses, experiments, decisions,
     )  # fmt: skip
-    assert numbers("README.md", r"(\d+) hypotheses and (\d+) experiments, registered and not run, and (\d+) decision "
-                                r"records") == (hypotheses, experiments, decisions)  # fmt: skip
+    assert numbers("README.md", r"(\d+) hypotheses, (\d+) experiments registered and not run, (\d+) record of a "
+                                r"measurement \(.*?\), and (\d+) decision records"
+                   ) == (hypotheses, waiting, ran, decisions)  # fmt: skip
     index = "research/README.md"
-    assert numbers(index, r"(\d+) hypotheses and (\d+) experiments are registered") == (hypotheses, experiments)
+    assert numbers(index, r"(\d+) hypotheses and (\d+) experiments are recorded: (\d+) experiments are registered "
+                          r"and not run, and (\d+) is the record") == (hypotheses, experiments, waiting, ran)
     listed = re.findall(r"\| \[(HFT-(?:HYP|EXP|DEC)-\d{4})\]\(", (ROOT / index).read_text(encoding="utf-8"))
     assert len(listed) == len(set(listed)) == hypotheses + experiments + decisions, "and its table has a row for each"
     assert ("There is no decision record yet" in said(index)) == (decisions == 0)

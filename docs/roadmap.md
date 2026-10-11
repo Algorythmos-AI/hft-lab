@@ -41,8 +41,9 @@ themselves. That is all it has been run against:
   ([ADR 0028](adr/0028-imported-history.md)) and has read hand-written rows in tests only. Imported days are
   for fitting a model before enough recordings exist: they are never this venue's results, and they count
   towards no promotion.
-- No experiment has been run on real data. The research registry holds 6 hypotheses and 6 experiments, all
-  registered and none run, and 0 decision records.
+- No experiment on a strategy has been run on real data. The research registry holds 6 hypotheses and 7
+  experiments, and 0 decision records: 6 of the experiments are registered and not run, and 1 is the record
+  of the capability probe's one measured run (`HFT-EXP-0007`), which tests nothing and counts as no trial.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
 - **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
   streams and against the fake broker only (see "Where F5 and F6 stand"). Its gate is not met and code
@@ -55,7 +56,7 @@ themselves. That is all it has been run against:
 
 | Gate | State | What closes it |
 |---|---|---|
-| F1 | Open | The owner runs the capability probe against the real paper account ([runbook](runbooks/ibkr-probe.md)); the probe report and the two decision records follow |
+| F1 | Open | The capability probe has run once against the real paper account, read-only, at the weekly open ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)). That is not enough for either decision record, and neither is written. Still needed, all by the owner ([runbook](runbooks/ibkr-probe.md)): (1) a second read-only run in liquid hours, London or New York morning, for the update rate and spreads of normal hours; (2) a run with `--orders`, Read-Only API off, for the order round trip and for which form the account may trade at all; (3) each recorded as a new experiment; (4) the decision record on the access route and (5) the decision record on the instrument form, resting on those; (6) the capability file filled in from the liquid-hours run. Commissions and the weekly login are not part of this gate: a fill shows the first (F4) and a week of watching the second |
 | F2 | Open | Five recorded trading days with every gap accounted for. Code cannot close it: the days have to pass |
 | F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
 | F4 | Open | The capability probe of F1, risk limits put in force by a decision record, the owner's decision to let the control sleeve place minimum-size paper orders, then the registered run `HFT-EXP-0002`: five trading days on the real paper account with zero reconciliation breaks and the slippage report. Code cannot close it: the days have to pass |
@@ -190,7 +191,7 @@ not check offline is listed at the end of the runbook.
 | Leak mechanism | Done: `tools/leakcheck.py`, hooks, attestation ([ADR 0006](adr/0006-public-repo-and-leak-mechanism.md)) |
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
-| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 12 records: 6 hypotheses, 6 experiments and 0 decisions |
+| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 13 records: 6 hypotheses, 7 experiments and 0 decisions. The seventh experiment is not a registration: it is the record of the capability probe's first measured run |
 | ADRs | Done: 0001 to 0008, and 29 records now. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, the weekly loop 0023, the Directional Change sleeve 0024, gradient boosting 0025, sleeve state 0026, the deploy gate 0027, imported history 0028 and the sequence network 0029 |
 | Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). 23 of the first file's 31 requirements are verified by tests they name and the other 8 are open. 12 of the second file's 80 requirements are verified, all of them by tests on synthetic streams; the other 68 are open. Its last 12, on directional change, come from a second release of the knowledge base |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

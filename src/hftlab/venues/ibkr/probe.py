@@ -82,6 +82,9 @@ SECOND = 1_000_000_000
 SLEEVE = "probe"
 KINDS = (InstrumentKind.CASH, InstrumentKind.CFD)
 CONFIG_PATH = Path("config/venues/ibkr.yaml")
+# What the capability file's `status` may say. The probe proposes `partly_measured` and nothing more: it never
+# sees a commission, and it cannot know that it sampled liquid hours. `probed` is set by hand, with a decision.
+CONFIG_STATUSES = ("placeholder", "partly_measured", "probed")
 EXIT_ATTENTION = 1
 EXIT_REFUSED = 2
 EXIT_UPSTREAM_DOWN = 3
@@ -464,7 +467,11 @@ class Probe:
 
 
 def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
-    """The content the probe proposes for config/venues/ibkr.yaml. Decisions stay null: they are the owner's."""
+    """The content the probe proposes for config/venues/ibkr.yaml. Decisions stay null: they are the owner's.
+
+    `resolves` lists the forms the gateway describes, which is not the forms the account may trade. The update
+    interval is whatever this run's window saw: it belongs in the file only from a run in liquid hours.
+    """
     pairs = []
     for pair, found in report["pairs"].items():
         forms = [name for name, form in found["forms"].items() if form["resolves"]]
@@ -477,18 +484,20 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
         pairs.append(
             {
                 "pair": pair,
-                "forms": forms,
+                "resolves": forms,
                 "price_scale": chosen["price_scale"],
+                "price_increment": {name: found["forms"][name]["price_increment"] for name in forms},
                 "update_interval_ms": None if gaps is None else gaps["median"] // 1_000,
                 "depth_levels": (found["depth"] or {}).get("levels") or None,
                 "min_order_size": chosen["min_order_size"],
+                "size_increment": chosen["size_increment"],
                 "commission": {"rate_bps": None, "minimum": None, "currency": None},
                 "order_round_trip_ms": {"median": None if ack_us is None else ack_us // 1_000, "p99": None},
             }
         )
     return {
         "venue": "ibkr_paper",
-        "status": "probed",
+        "status": "partly_measured",
         "probed_at": date,
         "probe_record": None,
         "access_route": None,
@@ -550,8 +559,10 @@ def write_config(path: Path, proposed: dict[str, Any], report_name: str) -> None
     header = (
         "# Capability file for the Interactive Brokers paper account.\n"
         f"# Written by `python -m hftlab.venues.ibkr.probe --write-config` from {report_name}.\n"
-        "# Measured values only. `access_route`, `instrument_form`, `probe_record` and the commission stay null\n"
-        "# until the owner records the decisions and a fill has shown the commission.\n"
+        "# Measured values only, and only partly measured: `resolves` is what the gateway describes, not what the\n"
+        "# account may trade, and `update_interval_ms` is this run's window, good only from liquid hours.\n"
+        "# `access_route`, `instrument_form`, `probe_record` and the commission stay null until the owner records\n"
+        "# the decisions and a fill has shown the commission. `status` is one of: " + ", ".join(CONFIG_STATUSES) + ".\n"
     )
     path.write_text(header + yaml.safe_dump(proposed, sort_keys=False), encoding="utf-8")
 

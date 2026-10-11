@@ -453,10 +453,16 @@ def test_the_capability_file_is_written_only_when_asked_and_never_the_real_one_f
     assert probe.main([*base("third"), "--write-config", "--config-path", str(target)]) == 0
     capsys.readouterr()
     proposed = yaml.safe_load(target.read_text())
-    assert (proposed["venue"], proposed["status"], proposed["probed_at"]) == ("ibkr_paper", "probed", "2025-10-09")
+    assert (proposed["venue"], proposed["probed_at"]) == ("ibkr_paper", "2025-10-09")
+    assert proposed["status"] == "partly_measured", "a probe never sees a commission: it cannot say `probed`"
     assert proposed["access_route"] is None and proposed["instrument_form"] is None, "decisions stay the owner's"
     assert [p["pair"] for p in proposed["pairs"]] == ["EUR.USD", "USD.JPY"]
-    assert proposed["pairs"][0]["forms"] == ["cash", "cfd"] and proposed["pairs"][1]["forms"] == ["cash"]
+    assert proposed["pairs"][0]["resolves"] == ["cash", "cfd"] and proposed["pairs"][1]["resolves"] == ["cash"]
+    assert proposed["pairs"][0]["price_increment"] == {"cash": "0.00005", "cfd": "0.00005"}
+    assert all("forms" not in pair and pair["size_increment"] == 1_000 for pair in proposed["pairs"])
+    assert set(proposed["pairs"][0]) == set(yaml.safe_load(probe.CONFIG_PATH.read_text())["pairs"][0]), (
+        "the file the probe would write has the shape of the file in the repository"
+    )
     assert target.read_text().startswith("# Capability file")
 
 

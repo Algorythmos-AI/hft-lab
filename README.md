@@ -69,7 +69,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
 | Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
-| The research registry: its lint, the trial count, 6 hypotheses and 6 experiments, registered and not run, and 0 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 1 record of a measurement (the capability probe's first real run), and 0 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
 | The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate with its pruning of old checkouts (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |

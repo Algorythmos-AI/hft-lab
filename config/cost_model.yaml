@@ -4,6 +4,8 @@
 # commission schedule. They are round figures that make the arithmetic run, chosen to be on the costly side;
 # no result computed with them is a result. A change to this file is an evaluation change: it needs a decision
 # record, and `effective_from` says from which UTC date the new values apply.
+# HFT-EXP-0007 (the probe's first real run) changes nothing here: it sampled the minutes after the weekly open,
+# when spreads are at their widest, placed no order, and so measured no cost and no timing.
 version: 1
 status: placeholder
 effective_from: "2026-10-11"

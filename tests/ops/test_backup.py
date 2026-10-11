@@ -25,6 +25,7 @@ from hftlab.ops.backup import (
     tool_command,
     verify,
 )
+from hftlab.trader import resume
 from hftlab.trader.__main__ import only_one
 from hftlab.trader.session import STATE
 from tests.learn import kit as learning
@@ -109,6 +110,8 @@ def test_what_the_trader_the_lineup_and_training_cannot_make_again_is_on_the_lis
     assert {f"trader/{name}.jsonl" for name in STATE} <= names, "the outbox, both books' journals, latches, stages"
     assert {"trader/outbox.jsonl", "trader/shadow.jsonl", "trader/stages.jsonl", "trader/lineup.jsonl"} <= names
     assert f"trader/days/{day.name}/decisions.jsonl" in names
+    assert (lived / "trader" / resume.FILE).is_file(), "the trader that was stopped saved its sleeves' states"
+    assert f"trader/{resume.FILE}" in names, "and that file is on the list, by name and not by luck"
     (model,) = (lived / "learn" / "models").glob("*.json")
     (report,) = (lived / "learn" / "reports").glob("*.json")
     assert {f"learn/models/{model.name}", f"learn/reports/{report.name}", "learn/trials.jsonl"} <= names

@@ -37,6 +37,9 @@ themselves. That is all it has been run against:
 - No experiment has been run on real data. The research registry holds two hypotheses and two experiments,
   all registered and none run.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
+- **F5 and F6 have not started as phases.** Their foundations are written and tested on synthetic streams
+  only (see "Where F5 and F6 stand"). No model has been trained on real data, and nothing in this repository
+  is evidence of an edge.
 
 | Gate | State | What closes it |
 |---|---|---|
@@ -44,6 +47,28 @@ themselves. That is all it has been run against:
 | F2 | Open | Five recorded trading days with every gap accounted for. Code cannot close it: the days have to pass |
 | F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
 | F4 | Open | The capability probe of F1, risk limits put in force by a decision record, the owner's decision to let the control sleeve place minimum-size paper orders, then the registered run `HFT-EXP-0002`: five trading days on the real paper account with zero reconciliation breaks and the slippage report. Code cannot close it: the days have to pass |
+
+## Where F5 and F6 stand
+
+**Foundations only.** What follows needs no new dependency and no strategy idea, and that is all that has been
+built. It has run on synthetic streams the tests make themselves, some with an effect planted in them on
+purpose so that the answer is known. **There is no real data, no model has been trained on real data, and
+nothing here is evidence of an edge.** Neither phase has a gate that code could open: both stay
+`not_started` in `config/ops.yaml`.
+
+| Part | State |
+|---|---|
+| Features | Written: `src/hftlab/features/` ([ADR 0020](adr/0020-features-and-labels-timing.md)). One step serves a recording and a live stream; every value is an integer; a crossed, unconfirmed or shut book gives no row. Slow for long windows on a fast feed, by a known limit of the implementation. **Never computed on a recorded day** |
+| Labels | Written: `src/hftlab/labels/`. The outcome of each side priced with the cost model as the shadow venue prices, and triple-barrier outcomes, each with the time its window ends. They assume the cost model's largest latency. **Every one is priced on placeholder costs** until the cost model is measured |
+| Datasets | Written: `src/hftlab/learn/dataset.py`. Built per pair and horizon from day folders of the store; the builder refuses a feature that reads ahead, by a check that looks at up to sixteen places of the stream and is a test, not a proof. **No dataset of real data exists**, and none is ever committed |
+| Validation | Written: `src/hftlab/learn/validate.py` ([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)). Walk-forward by week with purge and embargo, a hold-out read once per frozen configuration, a trial ledger beside the signed registry, a day-block bootstrap, the deflated Sharpe ratio, and oracle, model and random on the same rows. **Nothing has been validated**: `config/trial_registry.yaml` is still empty |
+| Models | Written: `src/hftlab/models/` ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)). A model file named by its hash and never overwritten, ridge regression on standardised features solved exactly, the flat and the seeded random baseline, and a scorer that runs in the caller's process. **No model ships and none has been fitted to real data.** Gradient boosting and neural networks are **not built**: each needs a new dependency and a decision on where training runs, and neither decision has been made |
+| ML sleeve | A skeleton: `src/hftlab/strategy/ml.py`. It trades a cell the feasibility map marks viable when the model expects more than its margin, leaves at the label's horizon, and reports that it may not leave shadow while its model or its map rests on placeholder costs. In the shadow runner, on a synthetic stream with a planted effect, it earns what the effect is worth and replays byte for byte; without the effect it pays the control sleeve's cost. **That checks the plumbing and says nothing about any market.** It is in no configuration and no process runs it |
+| Directional Change sleeve | **Not started.** It waits for its published method to be read into the knowledge base, so that it is built from the source |
+| Promotion | The decision only: `src/hftlab/learn/promote.py`, a pure function that answers promote, keep or roll back with reason codes, with a forced-rollback case among its tests. **No process calls it**: no weekend training, no challenger week, no weekly promotion, no automatic rollback, no drift watch |
+| Scorer in its own process, DL challenger | **Not started** |
+| Pre-registration | **Nothing registered.** No hypothesis, experiment or decision exists for any model or for the promotion rule; a rule that names no decision record passes nothing |
+| Exit gates of F5 and F6 | Not started. F5 needs sleeves trading on paper under a pre-registered rollout; F6 needs two weekly cycles without manual help and a rollback drill. Both need recorded data first, so both wait behind F2 |
 
 ## Where F4 stands
 
@@ -137,6 +162,6 @@ not check offline is listed at the end of the runbook.
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
 | Registry | Done: lint and trial count. The first two records came with F3, the next two with F4 |
-| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, and the host layer 0017 and 0018 |
-| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Seventeen of the first file's 25 are verified by tests they name; the other 8 and all 68 of the second are open |
+| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, and the foundations of F5 and F6 0020 to 0022 |
+| Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Twenty-three of the first file's 31 are verified by tests they name and the other 8 are open. Six of the second file's 68 are verified, all of them by tests on synthetic streams; the other 62 are open |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

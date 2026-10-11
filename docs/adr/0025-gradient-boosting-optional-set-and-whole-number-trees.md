@@ -180,7 +180,10 @@ change: declared in configuration beforehand, small, and every member counted.
   make it impossible instead of untested-for, at the cost of a second copy of everything.
 - **An environment that is rebuilt loses the set** unless `--with-ml` is given again. The next gbm run is
   then refused, loudly, and registers nothing.
-- **The tests that fit ran on macOS arm64.** The `ml` job's first run is the first on Linux x86-64.
+- **The tests that fit ran on macOS arm64.** The `ml` job's first run is the first on Linux x86-64. One of
+  them now compares a tiny fit's model file with the hash it has on macOS arm64
+  (`tests/learn/test_portable.py`; [ADR 0029](0029-sequence-network-windows-and-fixed-point-scoring.md),
+  last addendum). Section 4 does not promise that they agree, and no Linux result is recorded here.
 - **The same hash across machines is not promised** (section 4). Two hosts that train on the same recordings
   may register two models. This platform has one host.
 - **The agreement check at fit time is a sample** of at most 512 training rows. The test of the boundary is

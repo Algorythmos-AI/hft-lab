@@ -1,0 +1,24 @@
+{
+  "kinds": {
+    "gbm": {
+      "dataset": "537fe1bf2e95dd347acd00bb8ae5bbf4dc7abe614c48465b8393496192166693",
+      "model": "c8c0f46453a5f039a47a2fb0db597b5027dbb684eb64373c5c290a6cbccf6133",
+      "params": "4916ef7b6af4381f8884c750eeb9a4ad0a4a6a4eeb7e2d770238b7cf193a53c5",
+      "rows": 1169
+    },
+    "ridge": {
+      "dataset": "537fe1bf2e95dd347acd00bb8ae5bbf4dc7abe614c48465b8393496192166693",
+      "model": "1c824ecf80c12ff18cb6784fc9ce6479dd458762ce7c7c0676c911069873a5b4",
+      "params": "248ded4ba4b9a2b45025bb9782ad461a3c4f9fb846b07e6b0c4f038ea2168156",
+      "rows": 1169
+    },
+    "seq": {
+      "dataset": "fbeb0f7660de330d3c5bb6398df284085bf474cfa6b2847f3917f9b07a978994",
+      "model": "5d8ff76291b868c1813324501c52e2a10b180e84548322a86febb1f92c10d12e",
+      "params": "4783d7b03ee33e4fc7e5b0764d16be36af98b416a4a2da3fabcea87486e91ab8",
+      "rows": 1166
+    }
+  },
+  "produced_on": "Darwin, arm64, python 3.12.13, numpy 2.5.3, lightgbm 4.7.0",
+  "what": "tests/learn/test_portable.py: one tiny synthetic fit of each kind, as it came out on one machine"
+}

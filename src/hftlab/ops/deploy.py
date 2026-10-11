@@ -5,6 +5,8 @@
     python -m hftlab.ops.deploy back                           put the checkout before this one in service again
     python -m hftlab.ops.deploy smoke                          the checks a staged checkout must pass, by itself
     python -m hftlab.ops.deploy adopt                          once: turn the install script's folder into the layout
+    python -m hftlab.ops.deploy prune --dry-run                say which old checkouts and environments would go
+    python -m hftlab.ops.deploy prune                          remove them
 
 The layout. The install root is a symbolic link, and a deploy changes what it points to in one rename:
 
@@ -53,6 +55,23 @@ It runs as root, because restarting a unit needs that, and every program that to
 smoke run) is started as the platform's own user. This module opens no connection: `gh` and `git` are
 programs it starts.
 
+`prune` removes old checkouts and the environments nothing uses any more. Neither `run` nor `back` removes
+anything, so without it `releases/` and `envs/` grow by one folder a deploy. It keeps:
+
+  * the checkout in service, which the root links to;
+  * the one to go back to, and the one that was gone back from: both commits of `last.json`;
+  * every checkout a running process has its working directory in. A unit that was not restarted, the trader
+    above all, goes on running the checkout it was started in, however old. Where a running unit runs is
+    looked up; when that cannot be looked up, nothing is removed at all;
+  * the newest of the rest, as many as `deploy.keep_more_releases` of config/ops.yaml says, by the order of
+    the deploy journal. A journal that does not verify is no order: nothing is removed.
+
+It says what it keeps and why, and what it would remove, before it removes anything, and then says each
+removal before doing it. A folder is first moved out of `releases/` (or `envs/`) in one rename and removed
+after that, so a checkout is whole or gone, never half of one, whenever the command is killed; what a kill
+left on the way out is removed by the next run. An environment is removed only when no checkout that is kept
+links to it.
+
 Exit codes: 0 deployed (or nothing to do), 1 deployed and rolled back, 2 refused.
 """
 from __future__ import annotations
@@ -94,6 +113,8 @@ ROLLOVER_AFTER_NS: Final = 30 * MINUTE  # ENGINEERING DEFAULT: until this long a
 SETTLE_S: Final = 60  # ENGINEERING DEFAULT: how long a restarted unit is given before the status check gives up
 LOCK_FILE, ML_LOCK_FILE, ML_MARK = "requirements.lock.txt", "requirements-ml.lock.txt", ".hft-lock-ml"
 COMPLETE: Final = ".complete"
+REMOVING: Final = "removing"  # in the layout's home: where a folder is moved, in one rename, before it is removed
+KEEP_MORE_KEY: Final = "keep_more_releases"  # under `deploy:` in config/ops.yaml
 ENDED: Final = frozenset({"FILLED", "CANCELLED", "REJECTED", "EXPIRED"})  # the stages of an order that is over
 EXIT_OK, EXIT_ROLLED_BACK, EXIT_REFUSED = 0, 1, 2
 _COMMIT: Final = re.compile(r"[0-9a-f]{7,40}")
@@ -102,6 +123,8 @@ _SLUG: Final = re.compile(r".*github\.com[:/](?P<slug>[A-Za-z0-9_.-]+/[A-Za-z0-9
 Say = Callable[[str], None]
 Git = Callable[[Sequence[str]], tuple[int, str]]  # git with these words, in the mirror: (exit code, what it printed)
 Checks = Callable[[str], Mapping[str, str] | None]  # a commit's checks by name; None: they could not be looked up
+# Who runs where: a running unit, or another process, and its working directory. None: it could not be looked up
+InUse = Callable[[], Mapping[str, Path] | None]
 
 
 class DeployRefused(Exception):
@@ -578,6 +601,109 @@ class Deploy:
             raise DeployRefused(f"main could not be fetched as a fast-forward: {said.strip()[-300:]}")
 
 
+# ---- removing old checkouts ------------------------------------------------------------------------------------------
+
+
+def deployed_order(layout: Layout) -> dict[str, int]:
+    """Each commit the deploy journal names, with the number of the last line that put it in service or took it out.
+
+    Raises `DeployRefused` when the journal does not verify: then which checkout is newer is not known.
+    """
+    try:
+        entries = read_journal(layout.state / "deploy" / "deploys.jsonl")[1]
+    except (JournalError, OSError) as exc:
+        raise DeployRefused(f"the deploy journal cannot be read or does not verify: {exc}. Nothing is removed") from exc
+    order: dict[str, int] = {}
+    for number, entry in enumerate(entries):
+        for key in ("was", "to"):
+            if isinstance(entry.get(key), str):
+                order[str(entry[key])] = number
+    return order
+
+
+def _env_of(release: Path) -> str | None:
+    """The environment a checkout links to, by name; None when its `.venv` is not a link into `envs/`."""
+    try:
+        target = Path(os.readlink(release / ".venv"))
+    except OSError:
+        return None
+    return target.name if target.parent.name == "envs" else None
+
+
+def _remove(folder: Path, removing: Path) -> None:
+    """Move the folder out in one rename, then remove it: it is whole in its place or it is not there."""
+    removing.mkdir(exist_ok=True)
+    away = removing / folder.name
+    shutil.rmtree(away, ignore_errors=True)
+    os.rename(folder, away)
+    shutil.rmtree(away)
+
+
+def prune(layout: Layout, *, keep_more: int, in_use: InUse, git: Git, say: Say, dry_run: bool = False) -> int:
+    """Remove old checkouts and the environments no kept checkout links to. What it keeps is in the module's text."""
+    steps = Steps(say, dry_run)
+    current = layout.current()
+    if current is None:
+        raise DeployRefused(f"{layout.root} is not a link into {layout.releases}: there is nothing to prune here")
+    if type(keep_more) is not int or keep_more < 0:
+        raise DeployRefused(f"deploy.{KEEP_MORE_KEY} is a whole number, zero or more, not {keep_more!r}")
+    why: dict[str, list[str]] = {current: ["in service"]}
+    try:
+        last = json.loads(layout.last.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        last = {}  # no deploy has been made here: there is nothing on record to go back to
+    ends = (("from", "the one before the last swap: what `back` goes to"), ("to", "the last swap's other end"))
+    for key, reason in ends:
+        commit = last.get(key) if isinstance(last, dict) else None
+        if isinstance(commit, str) and commit != current:
+            why.setdefault(commit, []).append(reason)
+    running = in_use()
+    if running is None:
+        raise DeployRefused(
+            "where the running units have their working directories could not be looked up, so no checkout is "
+            "known to be unused. Nothing is removed"
+        )
+    held = layout.releases.resolve()
+    for who, folder in sorted(running.items()):
+        inside = folder.resolve()
+        if held in inside.parents:
+            why.setdefault(inside.relative_to(held).parts[0], []).append(f"{who} runs in it")
+    order = deployed_order(layout)
+    present = sorted(path.name for path in layout.releases.iterdir() if path.is_dir() and not path.is_symlink())
+    rest = sorted((name for name in present if name not in why), key=lambda name: (-order.get(name, -1), name))
+    for name in rest[:keep_more]:
+        why[name] = [f"one of the {keep_more} newest of the rest"]
+    going = rest[keep_more:][::-1]  # the oldest first: whenever it is stopped, what is left is the newer part
+    for name in present:
+        say(f"keep {name[:12]}: {'; '.join(why[name])}" if name in why else f"REMOVE {name[:12]}")
+    linked = {_env_of(layout.release(name)) for name in present if name in why}
+    built = sorted(path.name for path in layout.envs.iterdir()) if layout.envs.is_dir() else []
+    unused = [name for name in built if name not in linked]
+    for name in built:
+        said = f"keep environment {name[:12]}" if name in linked else f"REMOVE environment {name[:12]}"
+        say(f"{said}: {'a kept checkout links to it' if name in linked else 'no kept checkout links to it'}")
+    removing = layout.home / REMOVING
+
+    def gone(folder: Path) -> Callable[[], None]:
+        return lambda: _remove(folder, removing)
+    left = sorted(path.name for path in removing.iterdir()) if removing.is_dir() else []
+    if left:
+        steps.do(
+            f"finish removing what an earlier run left in {removing}: {', '.join(name[:12] for name in left)}",
+            lambda: shutil.rmtree(removing),
+        )
+    for name in going:
+        steps.do(f"remove the checkout {layout.release(name)}", gone(layout.release(name)))
+    if going:
+        steps.do("tell the mirror that those checkouts are gone", lambda: git(["worktree", "prune"]))
+    for name in unused:
+        steps.do(f"remove the environment {layout.envs / name}", gone(layout.envs / name))
+    kept = len(present) - len(going)
+    done = "would be removed" if dry_run else "removed"
+    say(f"{len(going)} checkout(s) and {len(unused)} environment(s) {done}; {kept} checkout(s) kept")
+    return EXIT_OK
+
+
 # ---- adopting the install script's folder ----------------------------------------------------------------------------
 
 
@@ -814,6 +940,66 @@ class StatusHealth:
         return wrong
 
 
+def _main_pid(unit: str) -> int | None:
+    """The main process of a unit, 0 when it is not running. None: the service manager could not be asked."""
+    try:
+        done = subprocess.run(
+            ["systemctl", "show", "--property=MainPID", "--value", unit], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return None
+    said = done.stdout.strip()
+    return int(said) if done.returncode == 0 and said.isdecimal() else None
+
+
+def working_directories(
+    proc: Path = Path("/proc"), main_pid: Callable[[str], int | None] = _main_pid
+) -> dict[str, Path] | None:
+    """Where each running unit of ours has its working directory, and every other process that can be seen.
+
+    None when it cannot be known for a unit: the service manager did not answer, or its process's folder could
+    not be read. A process that is not a unit's (a command started by hand, a child) is listed when its folder
+    can be read, and passed over when it cannot.
+    """
+    found: dict[str, Path] = {}
+    seen: set[int] = set()
+    for name in sorted(units.render_all()):
+        if not name.endswith(".service"):
+            continue
+        pid = main_pid(name)
+        if pid is None:
+            return None
+        if pid:
+            try:
+                found[name] = Path(os.readlink(proc / str(pid) / "cwd"))
+            except OSError:
+                return None
+            seen.add(pid)
+    try:
+        others = sorted(int(entry.name) for entry in proc.iterdir() if entry.name.isdecimal())
+    except OSError:
+        return None
+    for pid in others:
+        if pid not in seen:
+            with contextlib.suppress(OSError):
+                found[f"process {pid}"] = Path(os.readlink(proc / str(pid) / "cwd"))
+    return found
+
+
+def keep_more(layout: Layout) -> int:
+    """How many old checkouts `prune` keeps beside the ones it must: `deploy.keep_more_releases` of config/ops.yaml."""
+    path = layout.root / "config" / "ops.yaml"
+    try:
+        loaded: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise DeployRefused(f"config/ops.yaml of the checkout in service cannot be read: {exc}") from exc
+    block = loaded.get("deploy") if isinstance(loaded, dict) else None
+    number = block.get(KEEP_MORE_KEY) if isinstance(block, dict) else None
+    if type(number) is not int or number < 0:
+        raise DeployRefused(f"config/ops.yaml: deploy.{KEEP_MORE_KEY} must be a whole number, zero or more")
+    return number
+
+
 def _our_units_running() -> list[str]:
     names = [name for name in units.render_all() if name != host.SLICE]
     manager = Systemctl()
@@ -843,6 +1029,8 @@ def main(argv: Sequence[str] | None = None, clock: Clock | None = None) -> int:
     commands.add_parser("smoke", help="run the smoke tests in this checkout")
     adopting = commands.add_parser("adopt", help="once: turn the install script's folder into the layout")
     adopting.add_argument("--dry-run", action="store_true")
+    pruning = commands.add_parser("prune", help="remove old checkouts and the environments nothing uses")
+    pruning.add_argument("--dry-run", action="store_true", help="say what would be kept and removed; remove nothing")
     args = parser.parse_args(argv)
 
     def say(text: str) -> None:
@@ -856,6 +1044,14 @@ def main(argv: Sequence[str] | None = None, clock: Clock | None = None) -> int:
         if args.command == "adopt":
             return adopt(args.root, _our_units_running, say, dry_run=args.dry_run)
         layout, manager = Layout(args.root), Systemctl()
+        if args.command == "prune":
+            with contextlib.ExitStack() as stack:
+                if not args.dry_run:
+                    stack.enter_context(one_at_a_time(layout))
+                return prune(
+                    layout, keep_more=keep_more(layout), in_use=working_directories, git=git_in(layout), say=say,
+                    dry_run=args.dry_run,
+                )  # fmt: skip
         tools = Tools(git_in(layout), gh_checks(layout), uv_build, run_smoke, manager, StatusHealth(layout, manager))
         sender = sender_from(host.settings(), lambda line: print(line, file=sys.stderr, flush=True))
         deploy = Deploy(layout, tools, clock or WallClock(), say, sender)

@@ -137,7 +137,8 @@ test now names the deploy beside the backup as a module that may start a program
   run.** Their parsing and their commands are tested; `gh`, `uv` and `systemctl` are not called in a test.
 - **The reports are not on the dashboard.** They are a page and a file. The status snapshot's contract is
   unchanged.
-- **Old releases and old environments are never removed.** Thinning them is the owner's, by hand.
+- **Old releases and old environments are never removed.** Thinning them is the owner's, by hand. (No longer:
+  see the addendum on pruning.)
 - **The status screen does not show the tape quota.** The trader pages at 90% and the daily summary shows
   the figure. (It does since the addendum.)
 
@@ -301,3 +302,29 @@ orders a minute.
   a hundred bytes each, come out of the reserve. If that uses it up, it is case 3.
 - **The reserve is a bound on bytes, not on time or money.** That the closing can finish inside the time
   limit is checked against the limits; that the market lets it is not something a limit can promise.
+
+## Addendum, 2026-10-11: old checkouts are pruned by a command
+
+"What is not here" said that old releases and environments are never removed. `python -m hftlab.ops.deploy
+prune` removes them now; `run` and `back` still remove nothing.
+
+**What it keeps.** The checkout the install root links to. Both commits of the last swap's record, so that
+`back` always has its target, before a step back and after one. Every checkout that a running process has its
+working directory in: section 4 leaves the trader running the checkout it was started in, however many
+deploys ago, and removing that checkout would take the code from under a process that may hold a position.
+And of the rest the newest, as many as `deploy.keep_more_releases` in `config/ops.yaml`, in the order of the
+deploy journal. An environment goes only when no kept checkout links to it.
+
+**What it refuses on.** Not knowing. Where the running units run is looked up from the service manager and
+the process table; when a running unit's folder cannot be read, or the service manager cannot be asked,
+nothing is removed. A deploy journal that does not verify gives no order, and nothing is removed. A root
+that is not a link into the layout: nothing is removed. A deploy that is running holds the lock.
+
+**How it removes.** Everything it will keep and remove is printed first, then each removal before it is
+done, and `--dry-run` does none. A folder is moved out of `releases/` in one rename and removed after that,
+oldest first. So a checkout is whole or gone, whenever the command is killed, and what is left is always the
+newer part; the next run finishes what a kill left.
+
+**What it does not cover.** Where the units run is read on Linux, from `/proc`; the test hands in a made-up
+one, and the real look-up has not run on a host. A process that reads a checkout without having its working
+directory in it is not seen. The mirror keeps every commit, so a removed checkout can be deployed again.

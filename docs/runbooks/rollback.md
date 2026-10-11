@@ -56,8 +56,9 @@ Use this when a deploy passed its check and you want the old code back all the s
    hftdeploy run --commit <older hash>
    ```
 
-   Its checkout is still on the host, under `/home/hft/hft-lab.d/releases/`, and its environment under
-   `envs/`, so nothing is built.
+   Its environment is still on the host under `/home/hft/hft-lab.d/envs/`, so nothing is built, unless
+   `prune` has removed it since ([deploy](deploy.md), "Removing old checkouts"); then it is built again,
+   which takes minutes.
 
 ## The trader
 

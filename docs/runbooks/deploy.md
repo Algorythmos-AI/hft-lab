@@ -134,7 +134,46 @@ A new timer is not enabled by any of this. Enabling one is a step of its own, in
 
 | Where | What |
 |---|---|
-| `/home/hft/hft-lab.d/releases/` | One folder per commit ever deployed. Never changed, never removed by the command. Thin them by hand, never the one in service or the one before it |
-| `/home/hft/hft-lab.d/envs/` | One environment per set of locked requirements |
+| `/home/hft/hft-lab.d/releases/` | One folder per commit ever deployed. Never changed. `run` and `back` remove none; `prune` removes the old ones (below). Never remove one by hand |
+| `/home/hft/hft-lab.d/envs/` | One environment per set of locked requirements. `prune` removes one when no checkout that is kept links to it |
+| `/home/hft/hft-lab.d/removing/` | Empty, except while `prune` works or after it was killed: a folder is moved here in one rename before it is removed, and the next `prune` finishes the job |
 | `/home/hft/hft-lab.d/last.json` | The commit before and the commit after the last swap: what `back` reads |
 | `/home/hft/hft-lab/var/deploy/deploys.jsonl` | Every deploy and every step back, in a hash-chained journal. It is in the backup |
+
+## Removing old checkouts
+
+Every deploy leaves a whole checkout behind, and a change of the locked requirements leaves an environment.
+Neither is removed by a deploy. `prune` removes the old ones. Look first:
+
+```
+hftdeploy prune --dry-run
+```
+
+**You should see** one line for every checkout, `keep <commit>: <why>` or `REMOVE <commit>`, the same for
+every environment, then each step ending `(dry run: not done)`, and a count. Then, when the list is what you
+expect:
+
+```
+hftdeploy prune
+```
+
+| It always keeps | Why |
+|---|---|
+| The checkout in service | The install root links to it |
+| The checkout before the last swap, and the one after it | `back` goes to the first. After a `back`, the second is the one you came from |
+| Every checkout a running process has its working directory in | A unit that was not restarted runs the checkout it was started in. The trader is never restarted by a deploy, so it can be running a checkout several deploys old |
+| The newest of the rest: as many as `deploy.keep_more_releases` in `config/ops.yaml` (2 as shipped, an engineering default) | Something to compare with, and to deploy again without a build |
+| Every environment a kept checkout links to | |
+
+| It says | It means |
+|---|---|
+| `REFUSED ... where the running units have their working directories could not be looked up` | It could not ask the service manager, or could not read a running unit's folder. It removes nothing rather than guess. Run it as you run a deploy, as root |
+| `REFUSED ... the deploy journal cannot be read or does not verify` | Which checkout is newer is not known. Nothing was removed. Report it: that journal is never repaired by hand |
+| `REFUSED ... another deploy is running` | Wait for it |
+| `finish removing what an earlier run left in ...` | An earlier `prune` was killed. Nothing was half removed where checkouts are: this run clears what it left |
+
+The setting is read from the checkout in service. A checkout that was removed can be deployed again: the
+mirror still holds its commit, and `run` checks it out afresh.
+
+**Nothing on this page has been followed on the host,** this section included. `prune` has run on temporary
+folders, with a stand-in for where the units run.

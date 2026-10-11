@@ -32,10 +32,11 @@ written `promote ...` from here on, and `train ...` and `drift ...` in the same 
 
 ## 0. Which kind of model is trained
 
-`model:` in `config/learn.yaml` says which kind a training run fits: `ridge` (the shipped value) or `gbm`
-([ADR 0025](../adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)). One run fits one kind.
-Changing it, or any number under `boosting:`, is a change of configuration: it goes through a pull request,
-and the run that follows is counted as another trial.
+`model:` in `config/learn.yaml` says which kind a training run fits: `ridge` (the shipped value), `gbm`
+([ADR 0025](../adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)) or `seq`
+([ADR 0029](../adr/0029-sequence-network-windows-and-fixed-point-scoring.md)). One run fits one kind.
+Changing it, or any number under `boosting:` or `sequence:`, the seed among them, is a change of
+configuration: it goes through a pull request, and the run that follows is counted as another trial.
 
 **A `gbm` run needs the optional ML set on the host. Nothing else does:** not the recorder, not the trader,
 not the weekly decision, and not the scoring of a gbm model that is already trained. Install it once
@@ -54,6 +55,25 @@ sudo sh deploy/bin/hft-install --with-ml
 To see what a `gbm` run would register without registering it: `train --dry-run`. It prints the report, and
 says the memory the process peaked at. A real run writes that peak to
 `var/learn/last-run.json` under `memory`, with the kind under `model`.
+
+**A `seq` run needs nothing installed** beyond what `hft-install` always installs: it is fitted on the array
+library of the base requirements. It reads windows of the last `sequence.window` rows of a pair, so its
+dataset is that many times as wide as a ridge run's, and its report counts under `rows.dropped` the rows that
+ended no window (`window_gap`, `window_connection`, `window_session`).
+
+| You see | Cause | What to do |
+|---|---|---|
+| `train: refused: ... a fit of N windows is estimated at ... over its budget` | By its own estimate the largest fit would not stay under `memory_budget_mb`. Nothing was counted and nothing registered | Do not raise the budget past the slice. Fewer weeks, a shorter window or a narrower network is a change of configuration, through a pull request |
+| `train: refused: a seq model is trained with numpy, which the base requirements hold and this environment does not` | The environment was not built from the locked requirements | Run `hft-install` again; it rebuilds an environment that does not match its lock |
+| `train: FAILED: the whole-number network and the fitted one part ways on training row N` | The exported integers are further from the fitted network than the bound allows. Nothing was registered | Do not retry. It is a defect: keep the message and the commit, and open an issue |
+| `train: FAILED: the fit did not end in numbers` | A weight overflowed during the fit. Nothing was registered | Do not retry with the same settings: a smaller `learning_rate_ppm` is a change of configuration |
+
+`var/learn/last-run.json` says, for every kind, the memory the run peaked at under `memory` and how long it
+took under `took`: `wall_ns` by the clock and `processor_ms` of processor time.
+
+**A `seq` model that is already trained is scored without the array library,** in the trader or in the
+scorer's own process: integer arithmetic of the standard library. Where the rounding of its weights could
+change a decision it abstains, so it trades slightly less often than the network it was fitted as would.
 
 **Two kinds in one week** (as `HFT-EXP-0004` asks) are two runs on the same Saturday: the timer's, and one
 more by hand with a settings file that differs in `model` alone, `train --config <that file>`. Each

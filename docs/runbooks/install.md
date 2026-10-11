@@ -133,6 +133,8 @@ commit whose checks are not green.
    `du -sh /home/hft/hft-lab/.venv` before and after. No service has to be stopped for it.
    It needs the system's OpenMP runtime: `dpkg -s libgomp1` should say `install ok installed`; if not,
    `sudo apt install libgomp1`.
+   A sequence network (`model: seq`) needs no flag and no install of its own: it is fitted on the array
+   library that step 4 always installs with the base requirements, and scored without it.
    **Give `--with-ml` on every later run of the script too.** An environment that is rebuilt because the
    locked requirements changed comes back without the set, and the next gbm training run is then refused
    with a message that says so.

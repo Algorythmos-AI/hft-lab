@@ -43,10 +43,11 @@ first (8.1 GB free of the 4 GB the owner asked for), and then nothing was downlo
 index's listing. **Installed size added: zero.**
 
 **Measured on macOS arm64**, one process, the test settings of 8 filters and 16 hidden units on windows of 8
-rows of 10 values: a training run of three synthetic weeks (11,232 windows; two walk-forward fits and the
-candidate's, 30 passes each, and every test window scored by the whole-number scorer) took 18 s by the clock
-and peaked at 153 MB, the array library and the dataset included. A recorded week has not been fitted: none
-exists.
+rows of 10 values. A whole training run of three synthetic weeks (6,372 windows: the dataset with its checks,
+two walk-forward fits and the candidate's at 20 passes each, and every test window scored by the whole-number
+scorer) took 3.2 s by the clock and peaked at 103 MB, the array library and the dataset included. A larger
+one (11,232 windows, 30 passes) took 18 s on a machine busy with other work, and peaked at 153 MB. A recorded
+week has not been fitted: none exists.
 
 - **One module fits a network:** `hftlab.learn.sequence`. It imports the array library inside its functions,
   as `hftlab.learn.boost` does, so importing any module of the platform needs neither. A scan holds that no

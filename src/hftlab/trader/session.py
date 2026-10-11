@@ -193,7 +193,7 @@ class Trader:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
         try:
-            tape_limits = room.limits(settings, risk)  # refused before anything is written or connected to
+            tape_limits = room.limits(settings, risk)  # refused before anything of this session is written
         except TraderConfigError as exc:
             raise TraderRefused(str(exc)) from exc
         self._clock = SimClock(opened.at_ns)
@@ -324,7 +324,7 @@ class Trader:
         self._hard_since: int | None = None  # when the hard limit was reached: the closing is timed from here
         self._overdue = False  # the closing took longer than its time limit, and the owner has been paged
         self._flat = False  # at the hard limit the broker book is flat: the session ends
-        self._dark = False
+        self._dark: bool | None = None  # whether the tape has stopped for want of reserve; None: not looked at yet
         self._connection = opened.state  # the connection as the last turn saw it, for the session's last status
         self._status_path = self._folder / "status.json" if status else None
 
@@ -550,13 +550,14 @@ class Trader:
         before, self._room = self._room, level
         if self._gate is not None:
             self._gate.observe(TapeRoom(level))
-        self._write("tape", room=room.NAMES[level], before=room.NAMES[before], code=_TAPE_CODES[level])
+        if level != before:  # a session's first turn says the room whatever it is: room from the start is no news
+            self._write("tape", room=room.NAMES[level], before=room.NAMES[before], code=_TAPE_CODES[level])
         self._hard_since = now if level == HARD else None
         if level != HARD:
+            # Also what a session before this one left firing: a page is taken back by whoever sees it is over.
+            self._overdue = False
             self._notify.resolve(TAPE_HARD, "Tapes under their hard limit", "Nothing is being closed for the tapes.")
-            if self._overdue:
-                self._overdue = False
-                self._notify.resolve(TAPE_OVERDUE, "The tapes have room again", "The closing is no longer forced.")
+            self._notify.resolve(TAPE_OVERDUE, "The tapes have room again", "The closing is no longer forced.")
         if level == ROOM:
             self._notify.resolve(TAPE_SOFT, "Tapes under their soft limit", "There is room again: entries are allowed.")
         elif level == SOFT:
@@ -610,13 +611,17 @@ class Trader:
         Not journalled: a session that has gone dark is past what its tape can replay.
         """
         found = self._edge.room()
-        if found is not None and found["dark"] and not self._dark:
-            self._dark = True
+        if found is None or bool(found["dark"]) == self._dark:
+            return
+        self._dark = bool(found["dark"])
+        if self._dark:
             text = (
                 "The tapes' reserve is used up. The session goes on, on exits only, and is no longer recorded: its "
                 "replay ends here. Make room now; see the trader runbook, section 8."
             )
             self._notify.fire(TAPE_DARK, "The tape has stopped; the trader has not", text, 5)
+        else:
+            self._notify.resolve(TAPE_DARK, "The tape is being written again", "This session is recorded.")
 
     # ---- the connection, the latches and the break ----------------------------------------------------------------
 

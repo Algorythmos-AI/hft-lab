@@ -6,7 +6,8 @@ are recorded here, one JSON line each, at the edge where they enter:
     ["open", at, venue, [instrument, ...]]        the connection, and what the venue says its instruments are
     ["marks", {...}]                              where each journal stood when the session began
     ["step", at, state, [event, ...], beat]       one turn of the loop: the venue's events, and at most one beat;
-                                                  with a sixth value, the room on the tapes, on the turn it changes
+                                                  with a sixth value, the room on the tapes, on a session's first
+                                                  turn and on the turn it changes, where the tapes have a quota
     ["ask", question, state, answer, error]       a question to the venue, and what it said or how it failed
     ["sent", verb, client order id, how, state]   how a send or a cancel went, as the order manager saw it
     ["stop", at]                                  the session ended on purpose
@@ -163,7 +164,7 @@ class Step:
     state: ConnectionState
     events: tuple[VenueEvent, ...]
     beat: Beat | None
-    room: int | None = None  # the room on the tapes (hftlab.risk.room), on the turn it changes; None: as it was
+    room: int | None = None  # the room on the tapes (hftlab.risk.room), when the turn's line says it; None: as it was
 
 
 @dataclass(frozen=True, slots=True)
@@ -540,7 +541,8 @@ class LiveEdge:
         self._number, self._day, self._size, self._used = 0, "", 0, 0
         self._soft, self._hard = soft_bytes, hard
         self._days: Path | None = None  # the folder of day folders: what is counted against the quota
-        self._told = ROOM  # the room the session in hand was last told of, on a turn's line
+        # The room the session in hand was last told of, on a turn's line. None: not yet, so its first turn says.
+        self._told: int | None = ROOM
         self._pending: list[VenueEvent] = []  # at the hard limit: what came in since the last turn, thinned
         self.dark = False  # the reserve is used up: this session's tape has its last line, and the session goes on
         self._head: list[Row] = []
@@ -621,7 +623,7 @@ class LiveEdge:
         self.measure(path.parent.parent)
         self._stream = path.open("xb")  # a tape is written once; a name that is taken is a mistake, not a retry
         self._file, self._number, self._day, self._size = path, 0, "", 0
-        self.dark, self._told, self._pending = False, ROOM, []
+        self.dark, self._told, self._pending = False, ROOM if self._hard is None else None, []
         for row in (*self._head, ["marks", dict(marks)]):
             self._put(row, _line(row))
         self._shut_part()  # the head is on the disk, and is never written again; the turns go into parts
@@ -688,6 +690,10 @@ class LiveEdge:
             now = max(self._last + 1, self._clock.now_ns())  # a turn has a time of its own, later than the last
             state = self._source.state
             due = now - self._beat_at >= self._beat_ns
+            if self.dark and due and self._days is not None and self.measure(self._days) != HARD:
+                # Room was made: this session ends here, and the next one is recorded again. Looked at before
+                # the beat is read, so that what an operator asked for is left for the session that follows.
+                return None
             if self._told == HARD:
                 # The reserve has to last: a turn on a beat only, and of each pair's quotes only the newest.
                 self._hold(events)
@@ -706,8 +712,6 @@ class LiveEdge:
                 level = self._level_at(self._used + len(_line(row)))
                 if level != self._told:  # the line says so, and is that much longer for it
                     level = self._level_at(self._used + len(_line([*row, level])))
-            if self.dark and level != HARD:
-                return None  # room was made: this session ends here, and the next one is recorded again
             self._last, self._state = now, state
             if beat is not None:
                 self._beat_at = now
@@ -730,7 +734,7 @@ class LiveEdge:
             self._pending.append(event)
 
     def _beat(self, state: ConnectionState) -> Beat:
-        if self._days is not None and (self.dark or self.level != ROOM):
+        if self._days is not None and not self.dark and self.level != ROOM:
             self._used = tape_bytes(self._days)  # the housekeeping job may have made room since the last beat
         switched: frozenset[str] | None
         try:

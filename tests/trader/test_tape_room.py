@@ -275,6 +275,8 @@ def test_when_the_reserve_itself_is_used_up_the_tape_stops_and_the_session_does_
     found = desk.replay(tmp_path / "scratch")
     assert [(one.as_dict()["ended"], one.identical) for one in found] == [("dark", True)]
     assert 0 < found[0].replayed_bytes < found[0].live_bytes, "replayed as far as the tape goes, and the same so far"
+    desk.start()  # it ended on purpose and saved its sleeves' states, tied to the tape as it stands
+    assert desk.of("sleeve_state")[-1] | {"restored": ["control"], "cold": {}} == desk.of("sleeve_state")[-1]
 
 
 def test_a_start_with_no_room_at_all_is_not_refused_it_writes_its_head_and_runs_unrecorded(tmp_path):
@@ -303,6 +305,34 @@ def test_a_start_with_no_room_at_all_is_not_refused_it_writes_its_head_and_runs_
     desk.stop()
     found = desk.replay(tmp_path / "scratch")
     assert [(one.as_dict()["ended"], one.identical) for one in found] == [("dark", True), ("dark", True)]
+
+
+def test_a_session_that_went_unrecorded_ends_once_room_is_made_and_the_next_one_is_recorded_again(tmp_path):
+    desk = a_desk(tmp_path / "live", edge=TIGHT, changes=COLLARS)
+    days = tmp_path / "live" / "days"
+    until(desk, SOFT)
+    wide = blown_out(desk)
+    until(desk, HARD, feed=wide)
+    for _ in range(40):
+        if desk.edge.dark:
+            break
+        wide(1)
+    assert desk.edge.dark and desk.held()[2] == 20_000
+    turns = desk.trader.summary()["turns"]
+    assert housekeep(days) > 0, "the part that ends with `dark` is closed, and is compressed with the others"
+    assert tape_bytes(days) < TIGHT["soft_bytes"]
+    wide(3)
+    assert desk.trader.summary()["turns"] == turns, "it took no further turn: the edge ended the session"
+    desk.stop()
+    desk.session()  # what the command's loop does next, on the same connection
+    wide(3)
+    assert not desk.edge.dark and desk.held()[2] == 20_000, "the position is still there, and is watched and recorded"
+    second = read_tape(desk.day() / "session-002.tape.jsonl")
+    assert [row[0] for row in second[:3]] == ["open", "marks", "step"] and second[2][5] in (ROOM, SOFT)
+    assert TAPE_DARK in desk.pages.resolved
+    desk.stop()
+    found = desk.replay(tmp_path / "scratch")
+    assert [(one.as_dict()["ended"], one.identical) for one in found] == [("dark", True), ("stopped", True)]
 
 
 # ---- the next start, and the way back --------------------------------------------------------------------------------
@@ -367,6 +397,9 @@ def test_flat_at_the_hard_limit_the_process_waits_with_no_session_and_starts_one
     assert first[-1][0] == "stop" and second[0][1] >= waited_from[0] + 30 * SECOND, "nothing began while it waited"
     started = [e for e in desk.decisions() if e["type"] == "start"]
     assert [e["session"] for e in started] == [1, 2]
+    assert desk.pages.fired[:2] == [TAPE_SOFT, TAPE_HARD] and {TAPE_SOFT, TAPE_HARD} <= set(desk.pages.resolved), (
+        "the session that began with room took back the pages of the one that ended without"
+    )
     assert any(e["type"] == "verdict" and e["code"] == "ALLOW" and e["sent"] for e in after(desk, "start", session=2))
     found = desk.replay(tmp_path / "scratch")
     assert [one.identical for one in found] == [True, True]

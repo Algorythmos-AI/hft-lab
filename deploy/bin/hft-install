@@ -119,7 +119,7 @@ if [ -x "$dest/.venv/bin/python" ] && [ "$(cat "$dest/.venv/.hft-lock" 2>/dev/nu
 fi
 running=""
 if [ "$rebuild" -eq 1 ] && [ -d "$dest/.venv" ] && command -v systemctl >/dev/null 2>&1; then
-    for unit in hft-recorder.service hft-shadow.service; do
+    for unit in hft-recorder.service hft-shadow.service hft-trader.service; do
         if systemctl is-active --quiet "$unit" 2>/dev/null; then
             running="$running $unit"
         fi

@@ -38,7 +38,7 @@ def test_there_are_exactly_these_units():
     assert sorted(RENDERED) == [
         "hft-backup.service", "hft-backup.timer", "hft-gateway.service", "hft-housekeep.service",
         "hft-housekeep.timer", "hft-publish.service", "hft-publish.timer", "hft-recorder.service",
-        "hft-shadow.service", "hft.slice",
+        "hft-shadow.service", "hft-trader.service", "hft.slice",
     ]  # fmt: skip
 
 
@@ -67,8 +67,8 @@ def test_no_unit_sets_a_flag_for_live_trading_or_any_other_mode(name):
     assert not re.search(r"MODE=(?!paper$)", text, re.MULTILINE), "the one mode a unit ever gives is paper"
 
 
-def test_the_two_services_that_reach_the_gateway_load_no_file_that_could_change_their_mode():
-    for name in ("hft-recorder.service", "hft-shadow.service"):
+def test_the_services_that_reach_the_gateway_load_no_file_that_could_change_their_mode():
+    for name in ("hft-recorder.service", "hft-shadow.service", "hft-trader.service"):
         assert values(SERVICES[name], "EnvironmentFile") == [], name
         assert values(SERVICES[name], "IPAddressDeny") == ["any"], name
         assert values(SERVICES[name], "IPAddressAllow") == ["localhost"], "the gateway on this machine, nothing else"
@@ -119,7 +119,7 @@ def test_only_the_publisher_may_reach_the_internet():
     reach = {spec.unit: spec.reach for spec in units.SERVICES}
     assert reach == {
         "hft-recorder.service": "gateway", "hft-shadow.service": "gateway", "hft-housekeep.service": "none",
-        "hft-backup.service": "none", "hft-publish.service": "out",
+        "hft-backup.service": "none", "hft-publish.service": "out", "hft-trader.service": "gateway",
     }  # fmt: skip
     for name, how in reach.items():
         private = values(OURS[name], "PrivateNetwork") == ["yes"]
@@ -147,6 +147,7 @@ def test_the_commands_are_the_ones_the_brief_names():
         "hft-recorder.service": "-m hftlab.record",
         "hft-housekeep.service": "-m hftlab.record --housekeep",
         "hft-shadow.service": "-m hftlab.shadow --venue ibkr_paper",
+        "hft-trader.service": "-m hftlab.trader",
         "hft-publish.service": "-m hftlab.publish --send",
         "hft-backup.service": "-m hftlab.ops.backup run",
     }
@@ -189,6 +190,19 @@ def test_the_owner_may_enable_the_two_daemons_and_the_timers_and_nothing_else():
     ]  # fmt: skip
     for name in ("hft-recorder.service", "hft-shadow.service"):
         assert section(SERVICES[name], "Install") == ["WantedBy=multi-user.target"], "it comes back after a reboot"
+
+
+def test_the_trader_is_in_the_slice_on_paper_and_cannot_be_enabled_by_anyone():
+    text = SERVICES["hft-trader.service"]
+    assert values(text, "Slice") == ["hft.slice"] and "MODE=paper" in values(text, "Environment")
+    assert "[Install]" not in text and "hft-trader.service" not in units.can_be_enabled()
+    assert values(text, "Restart") == ["on-failure"] and values(text, "KillSignal") == ["SIGTERM"]
+    assert values(text, "RestartPreventExitStatus") == ["2"], "refused needs a person; a lost gateway is retried"
+    assert values(text, "EnvironmentFile") == [], "no file on disk can change the mode it is given"
+    assert "After=hft-gateway.service" in text and "Shadow-only while the risk limits are not in force" in text
+    assert "hft-reconciler" not in "".join(RENDERED), "the reconciler runs inside the trader: it has no unit"
+    install = (ROOT / "deploy" / "bin" / "hft-install").read_text()
+    assert "systemctl enable" in install and "hft-trader" not in install.split("# ---- 7")[-1], "never by the script"
 
 
 def test_the_backup_job_is_skipped_until_the_owner_has_made_its_directory():

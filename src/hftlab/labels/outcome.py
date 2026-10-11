@@ -23,7 +23,20 @@ every order, and a label cannot know the draw. With the two equal, as in the tes
 what the venue does. The exit is sent at exactly `t + H`; a sleeve sends its exit on the first event at or
 after that, so on a quiet book the two can differ by the wait for that event.
 
-A side that the venue would not have filled at either end has no outcome: None, never a guess.
+Whether an order fills is itself part of the outcome, and an exit that does not fill is the expensive kind. So
+no decision is left out for it, and every outcome says how it was priced:
+
+  AT_HORIZON   both orders filled as sent. This is the label the shadow venue reproduces to the unit.
+  NO_ENTRY     the entry would not have filled. There was no trade: the outcome is None, and a dataset counts
+               it as nothing made and nothing lost.
+  LATE_EXIT    the exit sent at the horizon would not have filled. It is sent again on each later confirmation
+               of the pair's book, a quote or a heartbeat, as a sleeve would, and priced at the first one the
+               venue would have filled, up to `exit_wait_ns` after the horizon.
+  PENALISED    no exit filled within that wait. The position is priced as closed `stuck_increments` price
+               increments against it, with both commissions: a stated worst case, not a price that was seen.
+
+`end_ns` is then when the later of the two sides was settled: a late exit ends when it arrives, a penalised
+one when the wait has run out and the last order sent in it would have arrived.
 """
 from __future__ import annotations
 
@@ -40,6 +53,7 @@ from hftlab.venues.sim.cost import NO_FILL, WIDENED, CostModel
 
 HINDSIGHT: Final = True  # every value in this package is computed from the future of a decision
 PROFIT, LOSS, TIME = 1, -1, 0
+AT_HORIZON, NO_ENTRY, LATE_EXIT, PENALISED = 0, 1, 2, 3  # how an outcome was priced
 
 
 class LabelError(ValueError):
@@ -48,18 +62,28 @@ class LabelError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class LabelSpec:
-    """A horizon, and optionally the two barriers, in price increments. Both barriers, or neither."""
+    """A horizon, and optionally the two barriers, in price increments. Both barriers, or neither.
+
+    `exit_wait_ns` is how long after the horizon an exit that did not fill is tried again, and
+    `stuck_increments` how far against the position one that never filled is priced. Left at zero, a stuck
+    exit costs its two commissions and nothing more, which is no worst case: a configuration that is evaluated
+    sets both (config/learn.yaml has no default for either).
+    """
 
     horizon_ns: int
     profit_increments: int = 0
     loss_increments: int = 0
-    version: int = 1
+    version: int = 2
+    exit_wait_ns: int = 0
+    stuck_increments: int = 0
 
     def __post_init__(self) -> None:
         _checks.positive("horizon_ns", self.horizon_ns)
         _checks.non_negative("profit_increments", self.profit_increments)
         _checks.non_negative("loss_increments", self.loss_increments)
         _checks.positive("version", self.version)
+        _checks.non_negative("exit_wait_ns", self.exit_wait_ns)
+        _checks.non_negative("stuck_increments", self.stuck_increments)
         if (self.profit_increments == 0) != (self.loss_increments == 0):
             raise ValueError("a triple-barrier label needs both a profit and a loss barrier")
 
@@ -73,6 +97,8 @@ class LabelSpec:
             "horizon_ns": self.horizon_ns,
             "profit_increments": self.profit_increments,
             "loss_increments": self.loss_increments,
+            "exit_wait_ns": self.exit_wait_ns,
+            "stuck_increments": self.stuck_increments,
         }
 
 
@@ -91,6 +117,8 @@ class Label:
     sell_micro: int | None
     buy_barrier: Barrier | None = None
     sell_barrier: Barrier | None = None
+    buy_how: int = AT_HORIZON
+    sell_how: int = AT_HORIZON
 
 
 class PairTape:
@@ -127,6 +155,10 @@ class PairTape:
         found = bisect_right(self._confirmed, ts_ns)
         return self._confirmed[found - 1] if found else None
 
+    def confirmations(self, after_ns: int, upto_ns: int) -> list[int]:
+        """Every time the pair's book was confirmed after `after_ns` and no later than `upto_ns`, oldest first."""
+        return self._confirmed[bisect_right(self._confirmed, after_ns) : bisect_right(self._confirmed, upto_ns)]
+
 
 class Labeller:
     def __init__(self, spec: LabelSpec, instrument: Instrument, model: CostModel, calendar: Calendar) -> None:
@@ -142,19 +174,24 @@ class Labeller:
         """From a decision to the end of its label's window: the horizon and one latency."""
         return self.spec.horizon_ns + self.latency_ns
 
+    @property
+    def longest_ns(self) -> int:
+        """The longest a label of this spec can take to settle: the horizon, the wait for a late exit, a latency."""
+        return self.window_ns + self.spec.exit_wait_ns
+
     def label(self, tape: PairTape, n: int) -> Label:
         """The label of a decision made on event `n` (counted from 1) of the tape's stream."""
         if tape.pair != self.instrument.pair or not 1 <= n <= len(tape.at):
             raise LabelError(f"the stream of {tape.pair} has no event {n} to label for {self.instrument.pair}")
         decided = tape.at[n - 1]
-        entry_at, exit_at = decided + self.latency_ns, decided + self.window_ns
-        buy = self._outcome(tape, Side.BUY, entry_at, exit_at)
-        sell = self._outcome(tape, Side.SELL, entry_at, exit_at)
+        entry_at = decided + self.latency_ns
+        buy, buy_how, buy_end = self._outcome(tape, Side.BUY, decided)
+        sell, sell_how, sell_end = self._outcome(tape, Side.SELL, decided)
         up = down = None
         if self.spec.barriers:
             limit = decided + self.spec.horizon_ns
             up, down = self._barrier(tape, Side.BUY, entry_at, limit), self._barrier(tape, Side.SELL, entry_at, limit)
-        return Label(tape.pair, n, decided, exit_at, buy, sell, up, down)
+        return Label(tape.pair, n, decided, max(buy_end, sell_end), buy, sell, up, down, buy_how, sell_how)
 
     def _taker(self, tape: PairTape, side: Side, at_ns: int) -> int | None:
         """The price a fill-or-kill market order arriving at `at_ns` gets from the shadow venue, or None for no fill."""
@@ -172,11 +209,26 @@ class Labeller:
         notional = self.model.notional_micro(price, self.size, self.instrument)
         return self.model.commission_micro(notional, self.instrument.quote)
 
-    def _outcome(self, tape: PairTape, side: Side, entry_at: int, exit_at: int) -> int | None:
-        entry, leave = self._taker(tape, side, entry_at), self._taker(tape, side.opposite, exit_at)
-        if entry is None or leave is None:
-            return None
-        return side.sign * (leave - entry) * self._to_micro - self._fee(entry) - self._fee(leave)
+    def _outcome(self, tape: PairTape, side: Side, decided: int) -> tuple[int | None, int, int]:
+        """What taking `side` at `decided` came to, how it was priced, and when that was settled."""
+        due = decided + self.spec.horizon_ns  # when the exit is first sent
+        on_time = due + self.latency_ns
+        entry = self._taker(tape, side, decided + self.latency_ns)
+        if entry is None:
+            return None, NO_ENTRY, on_time
+        leave, how, end = self._taker(tape, side.opposite, on_time), AT_HORIZON, on_time
+        if leave is None:
+            last = due + self.spec.exit_wait_ns
+            how, end = PENALISED, last + self.latency_ns
+            for sent in tape.confirmations(due, last):
+                leave = self._taker(tape, side.opposite, sent + self.latency_ns)
+                if leave is not None:
+                    how, end = LATE_EXIT, sent + self.latency_ns
+                    break
+        if leave is None:
+            away = self.spec.stuck_increments * self.instrument.price_increment
+            leave = max(self.instrument.price_increment, entry - away) if side is Side.BUY else entry + away
+        return side.sign * (leave - entry) * self._to_micro - self._fee(entry) - self._fee(leave), how, end
 
     def _barrier(self, tape: PairTape, side: Side, entry_at: int, limit_ns: int) -> Barrier | None:
         entry = self._taker(tape, side, entry_at)

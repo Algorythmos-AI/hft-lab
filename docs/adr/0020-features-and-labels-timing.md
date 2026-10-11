@@ -110,3 +110,27 @@ all of it and of every row. It holds integers and text. It is derived data: neve
   observations; the validation of ADR 0021 resamples whole days because of it.
 - Every label priced on the placeholder cost model is a placeholder. The dataset says so, and so does every
   model fitted to it.
+
+## Addendum, 2026-10-11: an order that would not fill is an outcome, not a missing row
+
+Section 3 said that a side the venue would not have filled at either end has no outcome, and the dataset
+builder dropped every decision with such a side. A review found the bias in that: whether an exit fills is
+known only after the decision, and the trades that cannot be closed are the expensive ones. Leaving them out
+made every evaluation look better than the trading it stood for.
+
+The rule now:
+
+- **An entry that would not have filled is no trade.** The side's outcome is nothing made and nothing lost,
+  and the row is kept. A report counts it as unfilled; it is not a trade and does not enter a mean per trade.
+- **An exit that would not have filled at the horizon is priced late.** It is sent again on each later
+  confirmation of the pair's book, as a sleeve would, and priced at the first one the shadow venue would have
+  filled, up to the label's `exit_wait_ns`.
+- **Past that wait it is priced at a stated worst case:** `stuck_increments` price increments against the
+  position, with both commissions.
+- A row says how each side was priced, a dataset counts each kind, and so does every report.
+- `end_ns` is when the later side was settled, so the purge of ADR 0021 still goes by what each label read.
+- The only decision without a row is one whose label had not been settled when the recording stops.
+
+The label spec is version 2 and the dataset format version 2. With no wait and no penalty configured a stuck
+exit costs its two commissions only, which is no worst case: `config/learn.yaml` has no default for either.
+The shadow venue still reproduces, to the unit, exactly the outcomes marked as filled at the horizon.

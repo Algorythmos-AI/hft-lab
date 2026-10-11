@@ -18,6 +18,14 @@ A dataset that fails either is refused with `LeakError`; there is no setting tha
 half is carried by every row as `end_ns`, the time its label's window ends, and is enforced by the splitter
 (`hftlab.learn.validate`). A decision whose label window has not ended inside the recording has no row at all.
 
+That is the only reason a decision has no row. Whether an order would have filled is part of what happened
+after the decision, and the trades that could not be closed are the expensive ones: leaving them out would
+make every evaluation look better than the trading it stands for. So a row is kept and says how each side was
+priced (`buy_how`, `sell_how`, the codes of `hftlab.labels`): an entry that would not have filled is no trade,
+worth exactly nothing; an exit that would not have filled at the horizon is priced at the first later moment
+the shadow venue would have filled it, within the label's wait; and past that wait at the label's stated
+worst case. The dataset counts each kind (`counted`), and so does every report made from it.
+
 A dataset is made per pair and horizon from day folders of the recorder's store. It records what it was made
 from: the feature keys, the label spec, the cost model's parameters with its placeholder flag, the source days
 and a hash of all of it and every row. Everything in it is an integer or text. Nothing here is committed: a
@@ -33,9 +41,13 @@ from types import MappingProxyType
 from typing import Final, Protocol
 
 from hftlab.calendar import Calendar, last_rollover, next_close
-from hftlab.core import Quote
+from hftlab.core import Instrument, Quote
 from hftlab.features import FeatureBuilder, FeatureConfig, FeatureRow
 from hftlab.journal import canonical
+from hftlab.labels import AT_HORIZON as AT_HORIZON
+from hftlab.labels import LATE_EXIT as LATE_EXIT
+from hftlab.labels import NO_ENTRY as NO_ENTRY
+from hftlab.labels import PENALISED as PENALISED
 from hftlab.labels import Labeller, LabelSpec, PairTape
 from hftlab.record.format import RecordedEvent
 from hftlab.replay.reader import events as day_events
@@ -43,7 +55,8 @@ from hftlab.replay.reader import instruments as day_instruments
 from hftlab.venues.port import ConnectionEvent
 from hftlab.venues.sim.cost import CostModel
 
-VERSION: Final = 1
+VERSION: Final = 2
+HOW: Final = {AT_HORIZON: "at_horizon", NO_ENTRY: "no_entry", LATE_EXIT: "late_exit", PENALISED: "penalised"}  # by code
 CHECKS: Final = 16
 DISTURB_NS: Final = 3_600 * 1_000_000_000 + 7
 DISTURB_PRICE: Final = 1_009
@@ -76,14 +89,17 @@ class Row:
     day_ns: int  # the rollover that began the decision's trading day
     week_ns: int  # the Friday close that ends its trading week
     features: tuple[int, ...]
-    buy_micro: int
+    buy_micro: int  # zero where the entry would not have filled: no trade
     sell_micro: int
     buy_barrier: int | None = None
     sell_barrier: int | None = None
+    buy_how: int = AT_HORIZON  # how the outcome was priced: AT_HORIZON, NO_ENTRY, LATE_EXIT or PENALISED
+    sell_how: int = AT_HORIZON
 
     def plain(self) -> list[object]:
         head = [self.n, self.known_ns, self.end_ns, self.day_ns, self.week_ns]
-        return [*head, list(self.features), self.buy_micro, self.sell_micro, self.buy_barrier, self.sell_barrier]
+        tail = [self.buy_barrier, self.sell_barrier, self.buy_how, self.sell_how]
+        return [*head, list(self.features), self.buy_micro, self.sell_micro, *tail]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +113,7 @@ class Dataset:
     days: tuple[str, ...]  # the day folders it was made from
     events: int
     dropped: Mapping[str, int]  # feature rows that became no dataset row, by reason
+    counted: Mapping[str, int]  # outcomes that were not a fill at both ends as sent, by how they were priced
     rows: tuple[Row, ...]
     content_hash: str
 
@@ -124,6 +141,7 @@ class Dataset:
             "days": list(self.days),
             "events": self.events,
             "dropped": dict(self.dropped),
+            "counted": dict(self.counted),
             "rows": len(self.rows),
             "content_hash": self.content_hash,
         }
@@ -193,7 +211,8 @@ def build(
     found = list(source.rows(events))
     check_causal(source, events, found, checks)
     tape = PairTape(events, source.pair)
-    dropped = {"window_not_ended": 0, "no_fill": 0}
+    dropped = {"window_not_ended": 0}
+    counted = {HOW[how]: 0 for how in (NO_ENTRY, LATE_EXIT, PENALISED)}  # by side: a row has two outcomes
     rows: list[Row] = []
     for row in found:
         label = labeller.label(tape, row.n)
@@ -201,14 +220,18 @@ def build(
             raise LeakError(f"the label of row {row.n} is for another decision, or ends before it starts")
         if label.end_ns >= tape.last_ns:
             dropped["window_not_ended"] += 1  # the recording stops before the label can be known
-        elif label.buy_micro is None or label.sell_micro is None:
-            dropped["no_fill"] += 1
         else:
             up, down = label.buy_barrier, label.sell_barrier
             day, week = last_rollover(row.known_ns), next_close(row.known_ns)
             hits = (up.hit if up else None, down.hit if down else None)
-            outcomes = (label.buy_micro, label.sell_micro)
-            rows.append(Row(row.n, row.known_ns, label.end_ns, day, week, row.values, *outcomes, *hits))
+            how = (label.buy_how, label.sell_how)
+            if (label.buy_micro is None) != (how[0] == NO_ENTRY) or (label.sell_micro is None) != (how[1] == NO_ENTRY):
+                raise LeakError(f"the label of row {row.n} has an outcome without a trade, or a trade without one")
+            for one in how:
+                if one != AT_HORIZON:
+                    counted[HOW[one]] += 1
+            outcomes = (label.buy_micro or 0, label.sell_micro or 0)
+            rows.append(Row(row.n, row.known_ns, label.end_ns, day, week, row.values, *outcomes, *hits, *how))
     body: dict[str, object] = {
         "kind": "dataset",
         "version": VERSION,
@@ -221,6 +244,7 @@ def build(
         "days": list(days),
         "events": len(events),
         "dropped": dropped,
+        "counted": counted,
         "rows": [row.plain() for row in rows],
     }
     digest = hashlib.sha256(canonical(body).encode("ascii")).hexdigest()
@@ -234,9 +258,21 @@ def build(
         days=tuple(days),
         events=len(events),
         dropped=MappingProxyType(dropped),
+        counted=MappingProxyType(counted),
         rows=tuple(rows),
         content_hash=digest,
     )
+
+
+def build_for(
+    events: Sequence[RecordedEvent], instrument: Instrument, config: FeatureConfig, model: CostModel,
+    calendar: Calendar, *, horizon_ns: int, exit_wait_ns: int, stuck_increments: int, days: Sequence[str] = (),
+    checks: int = CHECKS,
+) -> Dataset:  # fmt: skip
+    """The dataset of one pair and horizon from a stream already read, with the wait and the worst case written out."""
+    spec = LabelSpec(horizon_ns, exit_wait_ns=exit_wait_ns, stuck_increments=stuck_increments)
+    source = FeatureBuilder(instrument.pair, config, calendar)
+    return build(events, source, Labeller(spec, instrument, model, calendar), days=days, checks=checks)
 
 
 def build_from_days(

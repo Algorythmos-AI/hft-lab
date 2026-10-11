@@ -43,13 +43,13 @@ def weeks_of_rows(weeks: int, per_week: int = 6, gap_ns: int = HOUR) -> list[Row
 
 def test_each_fold_tests_one_week_and_trains_on_the_weeks_before_it():
     rows = weeks_of_rows(4)
-    plan = v.walk_forward(rows, embargo_ns=WINDOW)
+    plan = v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=(SECOND,))
     assert plan.weeks == tuple(FIRST_CLOSE + k * WEEK for k in range(4)) and plan.held_out == ()
     assert [fold.week_ns for fold in plan.folds] == list(plan.weeks[1:]), "the first week has no earlier one"
     for number, fold in enumerate(plan.folds, 1):
         assert fold.test == tuple(range(6 * number, 6 * number + 6)) and fold.train == tuple(range(6 * number))
         assert fold.purged == 0
-    later = v.walk_forward(rows, embargo_ns=WINDOW, min_train_weeks=3)
+    later = v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=(SECOND,), min_train_weeks=3)
     assert [fold.week_ns for fold in later.folds] == [plan.weeks[3]]
 
 
@@ -58,11 +58,11 @@ def test_a_label_whose_window_reaches_into_the_next_fold_is_removed_from_its_tra
     monday = rows[6].known_ns  # the first decision of the second week
     planted_at = 5  # the last decision of the first week, given a label that only ends inside the second
     rows[planted_at] = dataclasses.replace(rows[planted_at], end_ns=monday + 10 * SECOND)
-    plan = v.walk_forward(rows, embargo_ns=WINDOW)
+    plan = v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=(SECOND,))
     second, third = plan.folds
     assert planted_at not in second.train and second.train == (0, 1, 2, 3, 4) and second.purged == 1
     assert planted_at in third.train, "a week later its window has long ended, and it may train"
-    honest = v.walk_forward(weeks_of_rows(3), embargo_ns=WINDOW)
+    honest = v.walk_forward(weeks_of_rows(3), embargo_ns=WINDOW, horizons_ns=(SECOND,))
     assert planted_at in honest.folds[0].train, "the same decision with a label that ended in time is kept"
 
 
@@ -71,7 +71,8 @@ def test_a_label_must_have_ended_a_whole_embargo_before_the_first_decision_of_th
     before = [row(start - WEEK + k * SECOND) for k in range(3)]
     for gap, kept in ((2 * WINDOW + 1, True), (2 * WINDOW, False), (WINDOW, False), (1, False)):
         edge = dataclasses.replace(row(start - gap), week_ns=before[0].week_ns)  # the last one before the test week
-        plan = v.walk_forward([*before, edge, row(start), row(start + SECOND)], embargo_ns=WINDOW)
+        rows = [*before, edge, row(start), row(start + SECOND)]
+        plan = v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=(SECOND,))
         assert (3 in plan.folds[0].train) == kept, f"decided {gap} ns before: its label ends {gap - WINDOW} ns before"
         assert plan.folds[0].purged == (0 if kept else 1)
 
@@ -89,7 +90,8 @@ def test_no_fold_trains_on_a_label_that_had_not_ended_or_on_a_week_held_out(step
         while next_close(at) - at > 5 * 24 * HOUR - 15 * 60 * SECOND or next_close(at) == at:
             at += HOUR  # the weekend: no decision is made while the market is shut
         rows.append(row(at, window_ns=window_h * HOUR * (50 if long else 1), n=len(rows) + 1))
-    plan = v.walk_forward(rows, embargo_ns=embargo_h * HOUR, min_train_weeks=min_train, hold_out_weeks=held)
+    how = {"min_train_weeks": min_train, "hold_out_weeks": held}
+    plan = v.walk_forward(rows, embargo_ns=embargo_h * HOUR, horizons_ns=(HOUR,), **how)
     all_weeks = sorted({r.week_ns for r in rows})
     assert plan.weeks + plan.held_out == tuple(all_weeks) and len(plan.held_out) == min(held, len(all_weeks))
     assert [fold.week_ns for fold in plan.folds] == list(plan.weeks[min_train:])
@@ -107,7 +109,7 @@ def test_no_fold_trains_on_a_label_that_had_not_ended_or_on_a_week_held_out(step
 def test_the_boundaries_of_every_fold_are_recorded_as_times_and_row_counts():
     rows = weeks_of_rows(3)
     rows[5] = dataclasses.replace(rows[5], end_ns=rows[6].known_ns)
-    record = v.walk_forward(rows, embargo_ns=WINDOW).record(rows)
+    record = v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=(SECOND,)).record(rows)
     assert record[0] == {
         "week_ns": FIRST_CLOSE + WEEK, "train_rows": 5, "train_first_ns": rows[0].known_ns,
         "train_last_end_ns": rows[4].end_ns, "purged_rows": 1, "test_rows": 6, "test_first_ns": rows[6].known_ns,
@@ -121,9 +123,23 @@ def test_the_boundaries_of_every_fold_are_recorded_as_times_and_row_counts():
                                    {"embargo_ns": WINDOW, "hold_out_weeks": -1}])  # fmt: skip
 def test_a_plan_without_an_embargo_or_without_training_weeks_is_refused(wrong):
     with pytest.raises(v.ValidationError):
-        v.walk_forward(weeks_of_rows(2), **wrong)
+        v.walk_forward(weeks_of_rows(2), horizons_ns=(SECOND,), **wrong)
     with pytest.raises(v.ValidationError, match="not in the order"):
-        v.walk_forward(weeks_of_rows(2)[::-1], embargo_ns=WINDOW)
+        v.walk_forward(weeks_of_rows(2)[::-1], embargo_ns=WINDOW, horizons_ns=(SECOND,))
+
+
+def test_an_embargo_shorter_than_the_longest_label_horizon_it_is_given_is_refused():
+    """The embargo exists to keep a label out of the fold it reaches into, so it can never be shorter than one."""
+    rows = weeks_of_rows(3)
+    for horizons in ((SECOND, 60 * SECOND), (60 * SECOND,), (WINDOW + 1,)):
+        with pytest.raises(v.ValidationError, match="shorter than the longest label horizon"):
+            v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=horizons)
+    with pytest.raises(v.ValidationError, match="no horizon was given"):
+        v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=())
+    with pytest.raises(TypeError):
+        v.walk_forward(rows, embargo_ns=WINDOW)  # there is no default to fall back on
+    assert v.walk_forward(rows, embargo_ns=60 * SECOND, horizons_ns=(SECOND, 60 * SECOND)).embargo_ns == 60 * SECOND
+    assert v.walk_forward(rows, embargo_ns=WINDOW, horizons_ns=(WINDOW,)).folds, "equal to the longest is enough"
 
 
 # ---- the hold-out, and the trials it counts --------------------------------------------------------------------------
@@ -132,7 +148,7 @@ def test_a_plan_without_an_embargo_or_without_training_weeks_is_refused(wrong):
 def three_weeks():
     stream = [q for week in range(3) for q in planted(week, 4, start_ns=T0 + week * WEEK, first_seq=1 + week * 1_000)]
     made = dataset(stream)
-    return made, v.walk_forward(made.rows, embargo_ns=made.window_ns, hold_out_weeks=1)
+    return made, v.walk_forward(made.rows, embargo_ns=made.window_ns, horizons_ns=(made.horizon_ns,), hold_out_weeks=1)
 
 
 def test_the_held_out_weeks_are_in_no_fold_and_are_read_once_per_frozen_configuration(tmp_path):
@@ -153,7 +169,7 @@ def test_the_held_out_weeks_are_in_no_fold_and_are_read_once_per_frozen_configur
     assert ledger.trials() == 2 and [e["what"] for e in ledger.entries()] == ["hold_out", "hold_out"]
     assert held.subject == f"{made.content_hash[:16]}:{plan.held_out[0]}:1"
     with pytest.raises(v.ValidationError, match="holds no week out"):
-        v.HoldOut(made, v.walk_forward(made.rows, embargo_ns=made.window_ns), ledger)
+        v.HoldOut(made, v.walk_forward(made.rows, embargo_ns=made.window_ns, horizons_ns=(made.horizon_ns,)), ledger)
 
 
 def test_the_trial_count_is_the_larger_of_the_signed_registry_and_the_ledger(tmp_path):
@@ -209,7 +225,8 @@ def test_every_evaluation_reports_the_oracle_the_model_and_a_seeded_coin_on_the_
     assert said["oracle"]["hindsight"] is True and "hindsight" not in said["model"] and said["random"]["seed"] == 11
     assert list(said) == ["rows", "money", "oracle", "model", "random", "no_trade", "oracle_clears_cost"]
     assert said["model"] == {"trades": signals, "total_micro": signals * WIN, "mean_micro": WIN, "wins": signals,
-                             "losses": 0, "won_micro": signals * WIN, "lost_micro": 0, "days": 1}  # fmt: skip
+                             "losses": 0, "won_micro": signals * WIN, "lost_micro": 0, "days": 1, "unfilled": 0,
+                             "late_exits": 0, "penalised": 0}  # fmt: skip
     assert said["no_trade"]["mean_micro"] is None and said["oracle_clears_cost"] is True
     still = dataset(planted(7, 12, effect=False))
     assert v.three_way(still.rows, still.pair, follow, seed=11).as_dict()["oracle_clears_cost"] is False, (

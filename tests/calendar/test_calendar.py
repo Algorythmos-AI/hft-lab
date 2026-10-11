@@ -120,6 +120,14 @@ def test_the_trading_day_in_hand_began_at_the_last_rollover_at_or_before_now(ts)
     assert cal.last_rollover(ts) <= cal.last_rollover(ts + HOUR), "it never goes back as time passes"
 
 
+@given(times)
+def test_the_trading_day_in_hand_ends_at_the_first_rollover_after_now(ts):
+    ends = cal.next_rollover(ts)
+    assert cal.new_york(ends).strftime("%H:%M:%S") == "17:00:00" and 0 < ends - ts <= DAY + HOUR
+    assert cal.last_rollover(ends) == ends and cal.last_rollover(ends - 1) == cal.last_rollover(ts)
+    assert cal.next_rollover(cal.last_rollover(ts)) == ends, "a day runs from one rollover to the next"
+
+
 @given(times, st.integers(0, 120), st.integers(0, 120))
 def test_the_rollover_window_is_closed_at_both_ends_and_nowhere_else(ts, before, after):
     rollover = cal.rollover_near(ts)

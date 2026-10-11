@@ -73,8 +73,8 @@ The repository is **public**. Assume every byte committed is read by strangers a
 ```
 src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
                book · strategy · shadow · feasibility · registry · risk · exec · trader · journal
+               features · labels · models · learn (computation only: no venue, no order)
                ops (the host layer) · publish (the status snapshot)
-               (later: features · labels · models · learn)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI
 research/      hypotheses/ experiments/ decisions/
 config/        risk limits, venue capability file, trial registry, cost model, calendar, and the settings of

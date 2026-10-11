@@ -307,3 +307,79 @@ requirements:
     verified_by: []
     rationale_cites: []
     kb_claims: []
+
+  - id: REQ-LEARN-002
+    title: A feature is causal and the same offline and live
+    statement: >-
+      A feature row must be computed from the events up to and including the one it is stamped with, must
+      hold exact integers only, and must come out the same whether a recording is read through or a live
+      stream is taken one event at a time. A crossed book, a book nobody confirmed and a shut market must
+      give no row.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/features/test_features.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-LEARN-003
+    title: Features are known before the label starts, and a label trains only after it has ended
+    statement: >-
+      The dataset builder must refuse feature rows that were, or say they were, made from anything after
+      their own event, and a training fold must hold no row whose label window, with an embargo, had not
+      ended before the first decision of its test week. A label must be priced with the cost model as the
+      shadow venue prices, and must never be a price level.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/learn/test_dataset.py, tests/learn/test_validate.py, tests/labels/test_labels.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-LEARN-004
+    title: A hold-out is read once and every evaluated configuration is counted
+    statement: >-
+      Hold-out weeks must be in no fold and must be handed over once per frozen configuration, with the read
+      written down before it happens. Every evaluation must be counted as a trial before it is scored, and
+      the count that deflates a statistic must be the larger of the signed registry's and the ledger's own.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/learn/test_validate.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-LEARN-005
+    title: A model is named by its hash, never overwritten, and loaded only as what the caller expects
+    statement: >-
+      A model file must carry its parameters, feature keys, label, cost model and training dataset under one
+      content hash, must hold no float, and must never be written over. Loading must refuse a file that does
+      not match its hash and a model whose pair, features or label are not the ones asked for.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/models/test_models.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-LEARN-006
+    title: Learning code reaches no venue, and a sleeve that asks a model replays
+    statement: >-
+      The feature, label, learning and model packages must import no venue and call nothing that sends an
+      order, and a label must be out of reach of anything a decision is made with. A sleeve that trades on a
+      model's score must take the same decisions in a replay, byte for byte, and must report that it may not
+      leave shadow while its model or its feasibility map rests on placeholder costs.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/learn/test_structure.py, tests/strategy/test_ml.py, tests/venues/test_guard.py]
+    rationale_cites: []
+    kb_claims: []
+
+  - id: REQ-LEARN-007
+    title: The promotion decision is a pure function of shadow results and a registered rule
+    statement: >-
+      The promotion decision must return promote only when every check of a rule that names its decision
+      record has passed, must return roll back whenever the champion breached its loss latch, and must say
+      why in reason codes. This is the part of REQ-LEARN-001 that needs no process; acting on the decision
+      automatically stays with REQ-LEARN-001.
+    basis: engineering_judgement
+    status: verified
+    verified_by: [tests/learn/test_promote.py]
+    rationale_cites: []
+    kb_claims: []

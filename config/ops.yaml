@@ -24,6 +24,12 @@ backup:
 #
 # F4 is `open`, and stays so until its gate is met: its code is complete against the fake broker, its gate
 # needs five trading days on the real paper account (HFT-EXP-0002, not run), and nothing has traded.
+#
+# F5 and F6 are `not_started`, and that is the truthful state of the phases, not of the code. Their
+# foundations are written and tested on synthetic streams (features, labels, datasets, validation, the model
+# file, an exact ridge model, an ML sleeve skeleton, the promotion decision as a function). Their deliverables
+# are not: no Directional Change sleeve, no model trained on real data, no sleeve trading on paper, no weekend
+# training, no weekly promotion. A phase is `open` when its code is written, and this code is not.
 phases:
   F0: done
   F1: open

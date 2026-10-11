@@ -97,8 +97,10 @@ requirements:
   - ferrouhi2024
   kb_claims:
   - CLM-ferrouhi2024-0005
-  status: open
-  verified_by: []
+  status: verified
+  verified_by:
+  - tests/features/test_features.py
+  - tests/learn/test_dataset.py
 - id: KBREQ-007
   area: features
   statement: The platform must fit scalers and other normalisation statistics on the training window only, store
@@ -109,8 +111,9 @@ requirements:
   kb_claims:
   - CLM-ferrouhi2024-0003
   - CLM-ferrouhi2024-0006
-  status: open
-  verified_by: []
+  status: verified
+  verified_by:
+  - tests/models/test_models.py
 - id: KBREQ-008
   area: features
   statement: The platform must check that an order-book feature behaves as expected on its own feed (sign balance
@@ -147,8 +150,10 @@ requirements:
   - CLM-ferrouhi2024-0005
   - CLM-ferrouhi2024-0011
   - CLM-ferrouhi2024-0018
-  status: open
-  verified_by: []
+  status: verified
+  verified_by:
+  - tests/labels/test_labels.py
+  - tests/learn/test_dataset.py
 - id: KBREQ-011
   area: labels
   statement: The platform must tag every label, teacher signal or result computed from realised future values as
@@ -163,8 +168,11 @@ requirements:
   - CLM-jaddu2023-0034
   - CLM-qin2024-0006
   - CLM-qin2024-0007
-  status: open
-  verified_by: []
+  status: verified
+  verified_by:
+  - tests/labels/test_labels.py
+  - tests/learn/test_structure.py
+  - tests/learn/test_validate.py
 - id: KBREQ-012
   area: models
   statement: The platform must fit any stacking or blending layer on out-of-fold predictions from the training window
@@ -258,8 +266,9 @@ requirements:
   - CLM-jaddu2023-0039
   - CLM-jaddu2023-0043
   - CLM-qin2024-0013
-  status: open
-  verified_by: []
+  status: verified
+  verified_by:
+  - tests/learn/test_promote.py
 - id: KBREQ-019
   area: evaluation
   statement: 'The platform must recompute each reported statistic from the stored predictions and fills, and must
@@ -354,8 +363,10 @@ requirements:
   kb_claims:
   - CLM-jaddu2023-0036
   - CLM-ketmanee2023-0011
-  status: open
-  verified_by: []
+  status: verified
+  verified_by:
+  - tests/learn/test_promote.py
+  - tests/learn/test_validate.py
 - id: KBREQ-026
   area: evaluation
   statement: The platform must compute profit and loss from fills on every venue and account and mark open inventory

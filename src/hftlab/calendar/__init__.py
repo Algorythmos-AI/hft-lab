@@ -7,6 +7,7 @@ from hftlab.calendar.week import (
     new_york,
     next_close,
     next_open,
+    next_rollover,
     rollover_near,
 )
 
@@ -22,5 +23,6 @@ __all__ = [
     "new_york",
     "next_close",
     "next_open",
+    "next_rollover",
     "rollover_near",
 ]

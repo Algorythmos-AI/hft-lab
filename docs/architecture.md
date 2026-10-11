@@ -58,15 +58,20 @@ record/       recorder, recording format, store with quota and offload, gap jour
 replay/       a recorded day read back as the stream the live process saw; the day check                F2
 book/         positions, cash and profit from fills: the shadow book; the broker book and the           F3
               reconciler that compares it with the venue's positions and executions                     F4
-strategy/     the sleeve interface, the idle and the control sleeve (directional-change, ml, dl: F5)    F3
+strategy/     the sleeve interface, the idle and the control sleeve, and the ML sleeve skeleton        F3
+              (directional-change and dl: F5, not built)
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
-features/  labels/  models/ (registry, hashed model files, scorer in its own process)
+features/     causal, exact features of one pair's quote stream, the same offline and live             F5
+labels/       cost-aware outcomes and triple-barrier outcomes, each with the time its window ends      F5
+models/       the hashed model file, the registry, an exact ridge model, two baselines, the scorer     F5
+              (in-process today; gradient boosting and neural networks are not built)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
 trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay          F4
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
-learn/        datasets, training, validation, promotion
+learn/        datasets with a look-ahead check, walk-forward validation, the promotion decision        F6
+              (foundations only: no training run, no weekly promotion, no process)
 ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
 publish/      the status snapshot: built from the status reading, checked, signed and sent                 F2
 ```
@@ -161,6 +166,13 @@ candidate models are trained and validated walk-forward by week with purge and e
 hold-out weeks; every trial is counted. A challenger runs in shadow for a week and replaces the champion
 only if it passes a gate written down beforehand, and it is rolled back automatically if it then breaches
 its loss latch ([ADR 0008](adr/0008-learning-loop.md)).
+
+That is the plan. What exists of it are the foundations, tested on synthetic streams only: features and labels
+with their timing rule ([ADR 0020](adr/0020-features-and-labels-timing.md)), the splits, the hold-out, the
+trial count and the promotion decision as a function
+([ADR 0021](adr/0021-validation-splits-trials-and-the-three-numbers.md)), and the model file, an exact ridge
+model and the scorer ([ADR 0022](adr/0022-model-file-registry-and-scorer.md)). Nothing trains at the weekend,
+nothing is promoted, and no model has been fitted to real data.
 
 ## How bugs are kept rare, loud and contained
 

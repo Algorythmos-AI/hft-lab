@@ -36,7 +36,7 @@ learning:
 #
 # F5 is `not_started`, and that is the truthful state of the phase, not of the code. Its foundations are
 # written and tested on synthetic streams (features, labels, datasets, validation, the model file, an exact
-# ridge model, gradient-boosted trees, an ML sleeve). Its deliverables are not: no Directional Change sleeve, no model trained on
+# ridge model, gradient-boosted trees, an ML sleeve). Its deliverables are not: no Directional Change sleeve beyond a baseline in shadow, no model trained on
 # real data, no sleeve trading on paper.
 #
 # F6 is `open`: the weekly loop's code is written and tested on synthetic data and against the fake broker

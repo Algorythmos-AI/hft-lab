@@ -30,7 +30,8 @@ def run(tmp_path, *more: str) -> int:
 def test_the_shipped_settings_keep_every_sleeve_in_shadow_and_hold_no_rule_that_could_be_met():
     settings = load(SHIPPED)
     assert settings.placeholder and settings.venue == "ibkr_paper" and settings.fsync is True
-    assert settings.names == ("idle", "control", "ml", "ml-challenger-1") and settings.clean_day_ns is None
+    assert settings.names == ("idle", "control", "ml", "ml-challenger-1", "directional-change")
+    assert settings.clean_day_ns is None
     assert places(settings.sleeves) == {"ml": ("champion", 0), "ml-challenger-1": ("challenger", 0)}, (
         "two places and no model: which model stands in a place is the lineup journal's to say"
     )
@@ -39,7 +40,7 @@ def test_the_shipped_settings_keep_every_sleeve_in_shadow_and_hold_no_rule_that_
         ladder = settings.rollout[name]
         assert ladder.start == "shadow" and ladder.to_min_size == NEVER and ladder.to_normal == NEVER
     text = SHIPPED.read_text()
-    assert text.count("PLACEHOLDER: never met") == 8 and "AS SHIPPED THIS FILE TRADES NOTHING ON PAPER" in text
+    assert text.count("PLACEHOLDER: never met") == 10 and "AS SHIPPED THIS FILE TRADES NOTHING ON PAPER" in text
     assert yaml.safe_load(text)["status"] == "placeholder"
 
 
@@ -50,7 +51,7 @@ def test_the_shipped_settings_run_in_shadow_only_mode_and_say_so(tmp_path, capsy
     assert "PLACEHOLDER" in said.err
     result = json.loads(said.out.strip().splitlines()[-1])
     assert result["mode"] == "shadow_only" and result["books"]["broker"] is None
-    assert [sleeve["stage"] for sleeve in result["sleeves"]] == ["shadow"] * 4
+    assert [sleeve["stage"] for sleeve in result["sleeves"]] == ["shadow"] * 5
     assert read(next((tmp_path / "trader" / "days").iterdir()) / "decisions.jsonl")[1][0]["serving"] == {
         "ml": None, "ml-challenger-1": None
     }, "nothing is registered: both places run idle"
@@ -65,6 +66,7 @@ def test_the_shipped_settings_run_in_shadow_only_mode_and_say_so(tmp_path, capsy
     assert run(tmp_path, "--stages") == 0
     assert capsys.readouterr().out.splitlines() == [
         "control: shadow; 0 clean trading day(s) in a row in this stage",
+        "directional-change: shadow; 0 clean trading day(s) in a row in this stage",
         "idle: shadow; 0 clean trading day(s) in a row in this stage",
         "ml: shadow; 0 clean trading day(s) in a row in this stage",
         "ml-challenger-1: shadow; 0 clean trading day(s) in a row in this stage",

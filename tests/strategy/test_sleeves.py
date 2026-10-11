@@ -280,4 +280,4 @@ def test_a_sleeve_is_handed_no_venue_no_clock_no_file_and_no_generator():
             if isinstance(node, ast.Call):
                 assert called_name(node) not in NOT_A_SLEEVES_BUSINESS, (rel, node.lineno)
             assert not isinstance(node, ast.Global | ast.Nonlocal), (rel, node.lineno)
-    assert seen == 4, "sleeve.py, control.py, ml.py and the package itself"
+    assert seen == 8, "sleeve.py, control.py, ml.py, the package itself, and the four files of dc/"

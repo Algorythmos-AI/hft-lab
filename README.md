@@ -8,7 +8,7 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 
 |                 |                                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 are written, and F6's weekly learning loop is written with its gate open, both tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
+| **Status**      | Code for F1 to F4 is written and tested against a fake broker and synthetic streams only · the F1, F2, F3 and F4 gates are open; F4's needs five days on the real paper account · foundations of F5 and a Directional Change baseline sleeve are written, and F6's weekly learning loop is written with its gate open, all tested on synthetic streams only: no model has been trained on real data, no promotion rule exists and nothing here is evidence of an edge · nothing has recorded or traded yet, and as shipped the trader runs in shadow-only mode · the host layer is written and tested off the host, and nothing is installed on any host · paper only · no live trading |
 | **Owner**       | [@Algorythmos-AI/maintainers](https://github.com/orgs/Algorythmos-AI/teams/maintainers)                      |
 | **Runs at**     | Nothing runs yet and nothing is installed on any host. Target: a shared Linux host, against an Interactive Brokers **paper** account. The units, the pre-flight gate and the install script are written and tested off the host only |
 | **Run locally** | `make bootstrap && make ci`                                                                                  |
@@ -94,7 +94,12 @@ What that does and does not mean:
   run).
 
 - **F5 has not started as a phase.** Its foundations are written: features, labels, datasets, validation, a
-  model file format, one exact ridge model and an ML sleeve skeleton.
+  model file format, one exact ridge model and an ML sleeve skeleton. So is the Directional Change sleeve
+  ([ADR 0024](docs/adr/0024-directional-change-sleeve.md)): a detector, a rule-based baseline in two
+  variants and a random-walk null to read it against. It is tested on synthetic streams, has seen no real
+  data, sits at stage `shadow` with placeholder numbers, and is expected to show no advantage over the
+  control sleeve after costs
+  ([`HFT-EXP-0005`](research/experiments/HFT-EXP-0005-directional-change-shadow/protocol.md), not run).
 - **F6 is open:** the weekly loop is written. Weekend training registers a candidate, the trader serves a
   champion and challengers named by hash in a hash-chained lineup journal, and the weekly decision promotes,
   keeps or rolls back ([ADR 0023](docs/adr/0023-weekly-learning-loop.md),
@@ -113,8 +118,7 @@ What that does and does not mean:
   the default. It has been fitted to synthetic streams only; its first week is registered
   ([`HFT-EXP-0004`](research/experiments/HFT-EXP-0004-first-gbm-challenger-shadow-week/protocol.md), not run)
   and its expected outcome is no advantage over the control sleeve or the ridge challenger after costs.
-  Neural networks are not built: they wait for recorded data and a decision on compute. The Directional Change sleeve waits for its published method to be read into
-  the knowledge base.
+  Neural networks are not built: they wait for recorded data and a decision on compute.
 
 The [roadmap](docs/roadmap.md) has the state of each part.
 

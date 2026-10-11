@@ -25,6 +25,8 @@ research/
 | [HFT-EXP-0003](experiments/HFT-EXP-0003-first-ridge-challenger-shadow-week/protocol.md) | The first ridge challenger's week in shadow beside the control sleeve: trained on Saturday, weighed the Sunday after, with the numbers it is measured with fixed and no promotion rule | Registered. **Not run**: nothing has been recorded or trained on real data |
 | [HFT-HYP-0004](hypotheses/HFT-HYP-0004-first-gbm-challenger-has-no-advantage.yaml) | The first gradient-boosted challenger shows no advantage over the control sleeve or the ridge challenger after costs. Stated as the expected outcome | Registered. No evidence yet |
 | [HFT-EXP-0004](experiments/HFT-EXP-0004-first-gbm-challenger-shadow-week/protocol.md) | A ridge and a gradient-boosted challenger in shadow for the same week beside the control sleeve, with the tree settings and the measuring numbers fixed, no search and no promotion rule | Registered. **Not run**: nothing has been recorded or trained on real data |
+| [HFT-HYP-0005](hypotheses/HFT-HYP-0005-directional-change-baselines-have-no-advantage.yaml) | The two Directional Change baselines, trend and contrarian, show no advantage over the control sleeve after costs and do not stand out of a random-walk null. Stated as the expected outcome | Registered. No evidence yet |
+| [HFT-EXP-0005](experiments/HFT-EXP-0005-directional-change-shadow/protocol.md) | Both variants at three thresholds in shadow on five recorded days, gross and net of cost for every threshold, beside the control sleeve and 99 walks of matched volatility | Registered. **Not run**: nothing has been recorded, and the command that runs the null on a recording is not built |
 
 There is no decision record yet, and the trial registry is empty.
 

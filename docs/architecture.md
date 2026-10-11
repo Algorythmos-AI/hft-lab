@@ -59,7 +59,8 @@ replay/       a recorded day read back as the stream the live process saw; the d
 book/         positions, cash and profit from fills: the shadow book; the broker book and the           F3
               reconciler that compares it with the venue's positions and executions                     F4
 strategy/     the sleeve interface, the idle and the control sleeve, and the ML sleeve skeleton        F3
-              (directional-change and dl: F5, not built)
+              dc/ (the Directional Change detector, baseline sleeve and null: F5, synthetic data only;
+              dl: not built)
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
 features/     causal, exact features of one pair's quote stream, the same offline and live             F5

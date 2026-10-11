@@ -256,7 +256,8 @@ class Trader:
         try:
             served = make(
                 settings.sleeves, lineup, registry=settings.registry, calendar=calendar,
-                others=lambda entry: make_sleeves([entry], sizes)[0], problem=problem,
+                others=lambda entry: make_sleeves([entry], sizes, costs=model, calendar=calendar)[0],
+                problem=problem,
             )  # fmt: skip
         except LineupError as exc:
             raise TraderRefused(str(exc)) from exc

@@ -37,6 +37,22 @@ sleeves:
   - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}                 # PLACEHOLDER margin
   - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
 
+  # The Directional Change sleeve (ADR 0024): a rule-based baseline, not a claimed edge. EVERY NUMBER BELOW IS A
+  # PLACEHOLDER. A run that is compared with anything takes its numbers from its registered experiment
+  # (research/experiments/). It has seen no real data.
+  - name: directional-change
+    kind: directional_change
+    price: mid                  # the series the events are detected on: half the sum of bid and ask. The one value
+    variant: trend              # PLACEHOLDER. trend | contrarian
+    threshold_percent: "0.10"   # PLACEHOLDER. IN PERCENT OF THE PRICE, as a quoted decimal: "0.10" is one thousandth
+    overshoot_multiple: null    # PLACEHOLDER. contrarian only: thresholds of overshoot before it enters, quoted
+    max_hold_seconds: 3600      # PLACEHOLDER. A position older than this is closed
+    min_spread_ratio: "5"       # PLACEHOLDER. No entry unless the threshold is worth this many quoted spreads
+    warm_up_events: 2           # PLACEHOLDER. Events discarded after a start or a gap
+    gap_seconds: 10             # PLACEHOLDER. A book unconfirmed for longer interrupts the series
+    retry_seconds: 10           # PLACEHOLDER. The least time between two orders after one came to nothing
+    max_attempts: 1             # PLACEHOLDER. Entry orders one event may get
+
 registry: var/learn             # models/ and reports/, each file named by its SHA-256; written by the training run
 
 clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
@@ -53,6 +69,11 @@ rollout:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
       normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
   ml:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  directional-change:                                 # a baseline to be judged (ADR 0024): shadow
     start: shadow
     promote:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met

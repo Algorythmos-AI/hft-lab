@@ -1,0 +1,38 @@
+# HFT-EXP-0005: the frozen settings of the Directional Change sleeve's first shadow run.
+# A config for `python -m hftlab.shadow --config <this file> --day <the five day folders>`.
+# Frozen once it is on main (research/README.md, rule 4). The numbers below are this experiment's, fixed
+# before any result exists. They are not a recommendation and the shipped configs keep their placeholders.
+journal_dir: var/shadow/HFT-EXP-0005
+seed: 1                         # seeds the shadow venue's latency draws
+
+pairs:                          # live mode only; this experiment runs on recorded days
+  - {pair: EUR.USD, form: cash}
+heartbeat_ms: 1000
+
+# What every Directional Change sleeve below shares. A threshold is IN PERCENT OF THE PRICE, a quoted decimal.
+shared: &shared
+  kind: directional_change
+  price: mid                    # half the sum of the best bid and ask
+  max_hold_seconds: 14400       # four hours
+  min_spread_ratio: "5"         # no entry unless the threshold is worth five quoted spreads
+  warm_up_events: 2
+  gap_seconds: 10
+  retry_seconds: 10
+  max_attempts: 2
+
+sleeves:
+  - {name: idle, kind: idle}
+  - {name: control, kind: control, seed: 1, entry_per_million: 2000, hold_seconds: 60, retry_seconds: 10}
+  - {name: dc-trend-005, <<: *shared, variant: trend, threshold_percent: "0.05", overshoot_multiple: null}
+  - {name: dc-trend-010, <<: *shared, variant: trend, threshold_percent: "0.10", overshoot_multiple: null}
+  - {name: dc-trend-020, <<: *shared, variant: trend, threshold_percent: "0.20", overshoot_multiple: null}
+  - {name: dc-contra-005, <<: *shared, variant: contrarian, threshold_percent: "0.05", overshoot_multiple: "1"}
+  - {name: dc-contra-010, <<: *shared, variant: contrarian, threshold_percent: "0.10", overshoot_multiple: "1"}
+  - {name: dc-contra-020, <<: *shared, variant: contrarian, threshold_percent: "0.20", overshoot_multiple: "1"}
+
+# The numbers the run is measured with. Read by nothing in the runner: they are fixed here for the report.
+measure:
+  bootstrap: {level_percent: 95, draws: 10000, seed: 1, block: trading_day}
+  null_walks: {count: 99, seed: 1, per: recorded_day}
+  least_round_trips: 30         # per sleeve; fewer, and that sleeve's row is inconclusive
+  least_days: 5

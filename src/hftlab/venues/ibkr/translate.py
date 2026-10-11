@@ -89,6 +89,28 @@ def whole(value: object, what: str) -> int:
     return exact(value, 0, what)
 
 
+def size_units(value: object, what: str) -> int:
+    """A minimum size or size step as whole base-currency units, the only sizes this platform trades in.
+
+    The gateway reports some pairs in whole units (1, 1000, 20000) and some finer than one unit (0.01 for
+    EUR.USD, seen on the paper gateway). A whole number is taken as it is. A fraction of a unit is taken as one
+    unit, but only when one unit is an exact multiple of it, so that every whole-unit size is one the gateway
+    accepts. Anything else (1.5, 0.3, zero, not a number) is refused rather than rounded.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise TranslationError(f"{what} is not a number: {value!r}")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise TranslationError(f"{what} is not finite")
+    stated = Decimal(repr(value))
+    if stated <= 0:
+        raise TranslationError(f"{what} {value!r} is not a positive size")
+    if stated < 1:
+        if Decimal(1) % stated != 0:
+            raise TranslationError(f"{what} {value!r} is a fraction that one whole unit is not a multiple of")
+        return 1
+    return whole(value, what)
+
+
 def increment_of(tick: object, what: str) -> tuple[int, int]:
     """(decimals, increment in units of those decimals) of a price step: 0.00005 is (5, 5), 0.005 is (3, 5)."""
     if isinstance(tick, bool) or not isinstance(tick, int | float) or not math.isfinite(tick) or tick <= 0:
@@ -150,9 +172,10 @@ def pair_of(contract: Contract | None) -> str | None:
 def instrument_from(details: ContractDetails, pair: str, kind: InstrumentKind) -> Instrument:
     """The instrument the gateway described. Every number comes from the gateway; none is assumed.
 
-    UNVERIFIED: for forex, `minTick` is the price increment (0.00005 for EUR.USD), and `minSize` and
-    `sizeIncrement` are whole numbers of base-currency units. A gateway that reports none of the size fields
-    raises here rather than be given a default.
+    For forex, `minTick` is the price increment (0.00005 for EUR.USD). `minSize` and `sizeIncrement` are in
+    base-currency units and may be finer than one unit (`size_units`). `minSize` is the smallest order the
+    gateway takes, not the size at which its pricing is good: that is the cost model's business. A gateway that
+    reports none of the size fields raises here rather than be given a default.
     """
     contract = details.contract
     if pair_of(contract) != pair or contract is None or KINDS.get(contract.secType) is not kind:
@@ -163,9 +186,9 @@ def instrument_from(details: ContractDetails, pair: str, kind: InstrumentKind) -
     return Instrument.from_pair(
         pair,
         price_scale=scale,
-        min_order_size=whole(details.minSize, f"{pair} minSize"),
+        min_order_size=size_units(details.minSize, f"{pair} minSize"),
         kind=kind,
-        size_increment=whole(details.sizeIncrement, f"{pair} sizeIncrement"),
+        size_increment=size_units(details.sizeIncrement, f"{pair} sizeIncrement"),
         price_increment=price_increment,
     )
 

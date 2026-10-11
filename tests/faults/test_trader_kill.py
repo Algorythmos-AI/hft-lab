@@ -15,7 +15,7 @@ from hftlab.exec import TERMINAL
 from hftlab.journal import read, verify
 from hftlab.trader.tape import parts, read_tape
 from tests.faults.kit import AFTER, BEFORE, Kill, Killed
-from tests.trader.kit import TRADED, Desk, put_stage
+from tests.trader.kit import TRADED, Desk, put_stage, raw_settings
 
 RUN_SECONDS = 12
 
@@ -195,6 +195,90 @@ def test_a_kill_at_the_moment_the_tape_changes_part_loses_no_line_and_writes_non
         desk.run(2 * RUN_SECONDS)
         desk.stop()
         consistent(desk, said)
+        found = desk.replay(tmp_path / f"replay-{how}-{at}")
+        assert all(one.identical for one in found), f"{said}: {[one.as_dict() for one in found]}"
+        assert [one.stopped for one in found] == [False, True], said
+
+
+# ---- the closing at the tape's hard limit (ADR 0027, addendum) -----------------------------------------------------
+
+# Nothing is opened from 8,000 bytes of tape; from 12,000 everything is closed, into a reserve of 28,000.
+LIMITS = {"part_bytes": 3_000, "quota_bytes": 40_000, "soft_bytes": 8_000, "reserve_bytes": 28_000}
+HARD_STEP, FLAT = "tape:hard", "decisions:tape_flat"
+
+
+def a_holding_desk(folder) -> Desk:
+    """A control sleeve that holds what it buys for ten minutes: it is still holding when the tapes are full."""
+    put_stage(folder, "control", "min_size")
+    loaded = raw_settings()
+    loaded["sleeves"][1]["hold_seconds"] = 600
+    return Desk(folder, settings=loaded, edge=LIMITS)
+
+
+def arm_closing(kill: Kill, desk: Desk) -> None:
+    """As `arm`, and the turn that says the hard limit is reached is a step with a name of its own."""
+    tape = desk.edge.write
+    arm(kill, desk)
+
+    def written(row):
+        hard = row[0] == "step" and row[5:] == [2]
+        return kill.step(HARD_STEP if hard else f"tape:{row[0]}", lambda: tape(row))
+
+    desk.edge.write = written
+
+
+def until_flat(desk: Desk) -> None:
+    for _ in range(90):
+        if desk.trader.flat_at_hard_limit:
+            return
+        desk.run(1)
+    raise AssertionError(f"never flat at the hard limit: {desk.edge.room()}, holding {desk.positions()}")
+
+
+def test_the_steps_of_a_closing_are_the_turn_the_close_its_send_its_fill_and_the_word_that_it_is_flat(tmp_path):
+    desk, kill = a_holding_desk(tmp_path), Kill()
+    arm_closing(kill, desk)
+    until_flat(desk)
+    closing = kill.steps[kill.steps.index(HARD_STEP) : kill.steps.index(FLAT) + 1]
+    for label in (HARD_STEP, "decisions:tape", "decisions:decision", "outbox:intent", "send", "tape:sent",
+                  "decisions:verdict", "tape:step", "outbox:fill", "decisions:broker_fill", "shadow:fill",
+                  FLAT):  # fmt: skip
+        assert label in closing, label
+    assert closing.index("outbox:intent") < closing.index("send") < closing.index("outbox:fill") < len(closing) - 1
+    assert closing.count("send") == 1 and 20 < len(closing) < 80
+
+
+@pytest.mark.parametrize("how", [BEFORE, AFTER])
+def test_a_kill_at_any_step_of_the_closing_duplicates_nothing_and_the_next_start_finishes_it(tmp_path, how):
+    counting, count = a_holding_desk(tmp_path / "count"), Kill()
+    arm_closing(count, counting)
+    until_flat(counting)
+    first, last = count.steps.index(HARD_STEP) + 1, count.steps.index(FLAT) + 1  # steps are numbered from one
+    for at in range(first, last + 1):
+        folder = tmp_path / f"{how}-{at}"
+        desk, kill = a_holding_desk(folder), Kill(at, how)
+        arm_closing(kill, desk)
+        with pytest.raises(Killed):
+            until_flat(desk)
+        said = f"killed {how} step {at} ({kill.died_at})"
+        disarm(desk)
+        desk.start()  # the tapes are where the dead process left them: at their hard limit
+        assert desk.trader.manager.blind, said
+        arm(recorder := Kill(), desk)
+        until_flat(desk)
+        disarm(desk)
+        kinds = recorder.steps
+        if "send" in kinds:
+            assert "outbox:reconciled" in kinds[: kinds.index("send")], f"{said}: a close went out before reconciling"
+        desk.stop()
+        consistent(desk, said)
+        assert desk.positions() == {} and desk.held() == (0, 0, 0), f"{said}: not flat"
+        executed = [booked.executed for booked in desk.market._orders.values() if booked.executed]
+        assert executed == [20_000, 20_000], f"{said}: one entry and one close, each once: {executed}"
+        closes = [e for e in desk.outbox() if e["type"] == "intent" and e["side"] == "SELL"]
+        assert 1 <= len(closes) <= 2, f"{said}: a close that died unsent may be proposed again, under a new id, once"
+        told = [e["room"] for e in desk.decisions() if e["type"] == "tape"]
+        assert told[-1] == "hard" and desk.of("tape_flat"), f"{said}: the new session was not told, or never flat"
         found = desk.replay(tmp_path / f"replay-{how}-{at}")
         assert all(one.identical for one in found), f"{said}: {[one.as_dict() for one in found]}"
         assert [one.stopped for one in found] == [False, True], said

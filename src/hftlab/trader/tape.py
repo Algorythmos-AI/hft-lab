@@ -5,10 +5,12 @@ are recorded here, one JSON line each, at the edge where they enter:
 
     ["open", at, venue, [instrument, ...]]        the connection, and what the venue says its instruments are
     ["marks", {...}]                              where each journal stood when the session began
-    ["step", at, state, [event, ...], beat]       one turn of the loop: the venue's events, and at most one beat
+    ["step", at, state, [event, ...], beat]       one turn of the loop: the venue's events, and at most one beat;
+                                                  with a sixth value, the room on the tapes, on the turn it changes
     ["ask", question, state, answer, error]       a question to the venue, and what it said or how it failed
     ["sent", verb, client order id, how, state]   how a send or a cancel went, as the order manager saw it
     ["stop", at]                                  the session ended on purpose
+    ["dark"]                                      the reserve is used up: the session went on, and wrote no more here
 
 `at` is the time of the turn, taken from the clock once and never read again inside the turn: it is the only
 time anything decided on that turn knows. A beat is the part of a turn that happens on a timer: the switches
@@ -32,12 +34,22 @@ On disk a session's tape is a small head and a run of parts, in the folder of it
     before the new one is made, and the turn's line is written into the new one only then. What a kill can
     leave is an empty last part, which reads as no lines.
   * The tapes are counted against a quota (`tape.quota_bytes` in the trader's settings), like the recorder's
-    store. A session is not begun at or past it. One that reaches it takes no further turn: it ends as a
-    session told to stop does, and the next start is refused until room is made. A full disk would take the
-    other desks on the host down with it.
+    store: a full disk would take the other desks on the host down with it. The quota is never a reason to
+    stop watching a position (ADR 0027, addendum). There are two limits under it, and each turn's line says
+    when the room changes (`hftlab.risk.room`), so a replay sees the same room at the same turn:
+      - at the SOFT limit the trader opens nothing more, and goes on recording and closing;
+      - at the HARD limit, the quota less a reserve that no entry can reach, it closes what it holds. From
+        there the tape is thinned so that the reserve lasts: a turn is taken on a beat and on nothing else,
+        and of a pair's quotes since the last turn only the newest is kept. What was dropped was never shown
+        to the trader, so the tape is still everything it decided on;
+      - a line that does not fit under the quota is not written, and nothing after it: the tape ends with
+        `["dark"]`, whose room is held back from every line before it. The session goes on, unrecorded, and
+        its replay is the same as far as the tape goes. A new session's head is written whatever the tapes
+        hold: a start is never refused for want of room, and the head and that mark are the only lines that
+        can pass the quota.
   * Closed parts are compressed by `python -m hftlab.trader --housekeep`, which the hourly housekeeping unit
     runs before its own work. A part is closed when it is not the last part of the last session of the
-    newest day, or ends with its session's `stop`. Nothing is ever deleted here.
+    newest day, or ends with its session's `stop` or `dark`. Nothing is ever deleted here.
 
 What a kill and what a power cut can lose. Every line is handed to the operating system as it is written, so
 a kill of the process loses no line. The disk is another matter:
@@ -84,6 +96,7 @@ from hftlab.core import (
 from hftlab.exec.manager import FAILED, LOCKED, REFUSED, SENT, UNCERTAIN, Asked
 from hftlab.record.format import describe, instrument_of
 from hftlab.record.store import compress, day_of
+from hftlab.risk.room import HARD, ROOM, SOFT
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.venues.guard import GuardedVenue
 from hftlab.venues.port import (
@@ -113,16 +126,14 @@ PART_BYTES: Final = 64_000_000  # ENGINEERING DEFAULT: a part is closed at the f
 _PART: Final = re.compile(r"\.part-(?P<number>[0-9]{4,})\.(?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl(?P<gz>\.gz)?")
 _TAIL: Final = 1 << 12  # more than a `stop` line: where the end of a part is looked at
 _CHUNK: Final = 1 << 20  # a tape is read for its hash this much at a time, never whole
+DARK: Final = b'["dark"]\n'  # the last line of a tape that ran out of reserve; its room is held back for it
+ENDS: Final = (b'["stop",', b'["dark"]')  # how the last line of a session that will write no more begins
 
 Row = list[Any]
 
 
 class TapeError(Exception):
     """The tape cannot be read, or a replay asked for something the recording does not hold at that point."""
-
-
-class TapeFull(TapeError):
-    """The tapes are at their quota. No session is begun until room is made; nothing was written."""
 
 
 class TapeEnded(BaseException):
@@ -152,6 +163,7 @@ class Step:
     state: ConnectionState
     events: tuple[VenueEvent, ...]
     beat: Beat | None
+    room: int | None = None  # the room on the tapes (hftlab.risk.room), on the turn it changes; None: as it was
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +196,10 @@ class Edge(Protocol):
     def witness(self, verb: str, client_order_id: str, outcome: str) -> None: ...
 
     def stop(self, at_ns: int) -> None: ...
+
+    def room(self) -> Mapping[str, int | None] | None:
+        """What the tapes hold against their limits, for the status file; None where nothing is counted."""
+        ...
 
 
 # ---- events as rows, and back ------------------------------------------------------------------------------------
@@ -393,14 +409,15 @@ def _ends_stopped(part: Path) -> bool:
         size = stream.seek(0, os.SEEK_END)
         stream.seek(max(0, size - _TAIL))
         tail = stream.read()
-    return tail.endswith(b"\n") and tail[:-1].rpartition(b"\n")[2].startswith(b'["stop",')
+    return tail.endswith(b"\n") and tail[:-1].rpartition(b"\n")[2].startswith(ENDS)
 
 
 def being_written(days: Path) -> Path | None:
     """The one part a running trader may still append to, or None.
 
     It is the last part of the last session of the newest day, unless it is compressed already or ends with
-    its session's `stop`. Every other part is closed: a new session writes new files and never an old one.
+    its session's `stop` or `dark`. Every other part is closed: a new session writes new files and never an
+    old one.
     """
     folders = sorted(path for path in days.iterdir() if path.is_dir()) if days.is_dir() else []
     last_heads = heads(folders[-1]) if folders else []
@@ -500,10 +517,19 @@ class LiveEdge:
         beat_ns: int = 1_000 * MS,
         part_bytes: int = PART_BYTES,
         quota_bytes: int | None = None,
+        soft_bytes: int | None = None,
+        reserve_bytes: int = 0,
         fsync: bool = False,
     ) -> None:
         if venue is not None and not isinstance(venue, GuardedVenue):
             raise TypeError("the trader sends orders through a guarded venue and through nothing else")
+        hard = None if quota_bytes is None else quota_bytes - reserve_bytes
+        if hard is None and (soft_bytes is not None or reserve_bytes):
+            raise ValueError("a soft limit and a reserve are parts of a quota: there is none without one")
+        if hard is not None and reserve_bytes <= 0:
+            raise ValueError("a quota without a reserve would stop the tape with nothing closed: it needs one")
+        if hard is not None and (hard <= 0 or (soft_bytes is not None and not 0 < soft_bytes <= hard)):
+            raise ValueError("the soft limit lies under the hard limit, which is the quota less the reserve")
         self._source, self._clock, self._pairs, self._venue = source, clock, tuple(pairs), venue
         self._switches, self._requests, self._should_stop = switches, requests, should_stop
         self._poll_ns, self._beat_ns = poll_ns, beat_ns
@@ -512,7 +538,11 @@ class LiveEdge:
         self._stream: IO[bytes] | None = None
         self._file: Path | None = None  # the head of the session being taped; None between sessions
         self._number, self._day, self._size, self._used = 0, "", 0, 0
-        self.full = False  # the tapes reached their quota: this session takes no further turn
+        self._soft, self._hard = soft_bytes, hard
+        self._days: Path | None = None  # the folder of day folders: what is counted against the quota
+        self._told = ROOM  # the room the session in hand was last told of, on a turn's line
+        self._pending: list[VenueEvent] = []  # at the hard limit: what came in since the last turn, thinned
+        self.dark = False  # the reserve is used up: this session's tape has its last line, and the session goes on
         self._head: list[Row] = []
         self._last = 0
         self._beat_at = 0
@@ -544,19 +574,56 @@ class LiveEdge:
         self._head = [["open", self._last, self._source.name, described, self._state.value]]
         return Opened(self._last, self._source.name, instruments, self._state)
 
+    @property
+    def level(self) -> int:
+        """The room on the tapes as they were last counted: ROOM, SOFT or HARD (hftlab.risk.room)."""
+        return self._level_at(self._used)
+
+    def _level_at(self, used: int) -> int:
+        if self._hard is None or used < (self._hard if self._soft is None else self._soft):
+            return ROOM
+        return HARD if used >= self._hard else SOFT
+
+    def room(self) -> dict[str, int | None] | None:
+        if self._quota is None:
+            return None
+        return {
+            "used_bytes": self._used, "soft_bytes": self._soft, "hard_bytes": self._hard, "quota_bytes": self._quota,
+            "level": self.level, "dark": int(self.dark),
+        }  # fmt: skip
+
+    def measure(self, days: Path) -> int:
+        """Count the tapes under `days` again, and say what room that leaves. Housekeeping makes room from outside."""
+        self._days = days
+        self._used = tape_bytes(days)
+        return self.level
+
+    def wait_for_room(self) -> bool:
+        """Between two sessions, with the book flat and the tapes at their hard limit: wait until they are under it.
+
+        Nothing is decided and nothing is written. The venue is still polled, so that what it sends does not
+        pile up; the tapes are counted again on every beat. True when there is room for a session; False when
+        the process was told to stop first.
+        """
+        while self._days is not None and not self._should_stop():
+            self._source.poll(self._poll_ns)
+            now = self._clock.now_ns()
+            if now - self._beat_at >= self._beat_ns:
+                self._beat_at = now
+                if self.measure(self._days) != HARD:
+                    return True
+        return False
+
     def begin(self, path: Path, marks: Mapping[str, object]) -> None:
-        """Write the head of a new session's tape. Refused, with nothing written, when the tapes are at their quota."""
+        """Write the head of a new session's tape. It is written whatever the tapes hold: a start is never refused
+        for want of room, because a session that does not begin watches nothing (ADR 0027, addendum)."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._used = tape_bytes(path.parent.parent)
-        if self._quota is not None and self._used >= self._quota:
-            raise TapeFull(
-                f"the tapes hold {self._used} of {self._quota} bytes: no session is begun until room is made "
-                "(the trader runbook, \"The tapes and their quota\")"
-            )
+        self.measure(path.parent.parent)
         self._stream = path.open("xb")  # a tape is written once; a name that is taken is a mistake, not a retry
-        self._file, self._number, self._day, self._size, self.full = path, 0, "", 0, False
+        self._file, self._number, self._day, self._size = path, 0, "", 0
+        self.dark, self._told, self._pending = False, ROOM, []
         for row in (*self._head, ["marks", dict(marks)]):
-            self.write(row)
+            self._put(row, _line(row))
         self._shut_part()  # the head is on the disk, and is never written again; the turns go into parts
         if self._fsync:
             _sync_folder(path.parent)
@@ -564,11 +631,25 @@ class LiveEdge:
     def write(self, row: Row) -> None:
         """One line, handed to the operating system at once: a kill of this process loses none of it.
 
-        A turn's first line is its `step`. Before one is written, the part is changed when the turn's UTC day
-        is not the part's or the part is full, so that a part holds whole turns.
+        A line that would not leave room under the quota for the tape's last word is not written, and the last
+        word is: `["dark"]`. Nothing is written after it.
         """
         if self._file is None:
             raise TapeError("the tape is not open")
+        if self.dark:
+            return
+        line = _line(row)
+        if self._quota is not None and self._used + len(line) + len(DARK) > self._quota:
+            self.dark = True
+            self._put(["dark"], DARK)
+            self._shut_part()  # it is closed for good, so the housekeeping job may compress it and make room
+            return
+        self._put(row, line)
+
+    def _put(self, row: Row, line: bytes) -> None:
+        """A turn's first line is its `step`. Before one is written, the part is changed when the turn's UTC day
+        is not the part's or the part is full, so that a part holds whole turns."""
+        assert self._file is not None
         timed = row[0] in ("step", "stop") and type(row[1]) is int
         day = day_of(row[1]) if timed else self._day or day_of(self._last)
         if self._number or self._stream is None:  # past the head
@@ -577,13 +658,10 @@ class LiveEdge:
                 self._shut_part()
                 self._open_part(day)
         assert self._stream is not None
-        line = json.dumps(row, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
         self._stream.write(line)
         self._stream.flush()
         self._size += len(line)
         self._used += len(line)
-        if self._quota is not None and self._used >= self._quota:
-            self.full = True
 
     def _shut_part(self) -> None:
         """Close the file being written, synced: a closed file of a tape is on the disk."""
@@ -605,24 +683,55 @@ class LiveEdge:
             self._used = tape_bytes(path.parent.parent)  # housekeeping may have made room since the last look
 
     def next(self, *, urgent: bool) -> Step | None:
-        while not (self._should_stop() or self.full):
+        while not self._should_stop():
             events = [event for event in self._source.poll(self._poll_ns) if encode(event) is not None]
             now = max(self._last + 1, self._clock.now_ns())  # a turn has a time of its own, later than the last
             state = self._source.state
-            beat = self._beat(state) if now - self._beat_at >= self._beat_ns else None
+            due = now - self._beat_at >= self._beat_ns
+            if self._told == HARD:
+                # The reserve has to last: a turn on a beat only, and of each pair's quotes only the newest.
+                self._hold(events)
+                if not due:
+                    continue
+                events, self._pending = self._pending, []
+            beat = self._beat(state) if due else None
             pressing = urgent and state in UP and now - self._last >= URGENT_NS
             if not (events or beat or pressing or state is not self._state):
                 continue
+            row: Row = ["step", now, state.value, [encode(event) for event in events], _beat_row(beat)]
+            # The room this turn is taken under counts the turn's own line: a turn whose line ends at or past a
+            # limit is already under it, so nothing is opened on a line that reaches the soft limit.
+            level = ROOM
+            if self._hard is not None:
+                level = self._level_at(self._used + len(_line(row)))
+                if level != self._told:  # the line says so, and is that much longer for it
+                    level = self._level_at(self._used + len(_line([*row, level])))
+            if self.dark and level != HARD:
+                return None  # room was made: this session ends here, and the next one is recorded again
             self._last, self._state = now, state
             if beat is not None:
                 self._beat_at = now
-            self.write(["step", now, state.value, [encode(event) for event in events], _beat_row(beat)])
+            room = None
+            if level != self._told:
+                room = self._told = level
+                row.append(level)
+            self.write(row)
             if beat is not None and self._fsync and self._stream is not None:
                 os.fsync(self._stream.fileno())  # what a power cut can lose is what was written since this
-            return Step(now, state, tuple(events), beat)
+            return Step(now, state, tuple(events), beat, room)
         return None
 
+    def _hold(self, events: Sequence[VenueEvent]) -> None:
+        """Keep what came in for the next turn: everything, but of each pair's quotes only the last one."""
+        for event in events:
+            if isinstance(event, Quote):
+                older = [one for one in self._pending if isinstance(one, Quote) and one.pair == event.pair]
+                self._pending = [one for one in self._pending if one not in older]
+            self._pending.append(event)
+
     def _beat(self, state: ConnectionState) -> Beat:
+        if self._days is not None and (self.dark or self.level != ROOM):
+            self._used = tape_bytes(self._days)  # the housekeeping job may have made room since the last beat
         switched: frozenset[str] | None
         try:
             switched = frozenset(self._switches())
@@ -639,12 +748,16 @@ class LiveEdge:
 
     def stop(self, at_ns: int) -> None:
         if self._file is not None:
-            self.write(["stop", at_ns])
+            self.write(["stop", at_ns])  # not written by a session that went dark: its tape has its last line
             self._shut_part()
             self._file = None
 
 
 # ---- replay: the recording stands in for the venue -----------------------------------------------------------------
+
+
+def _line(row: Row) -> bytes:
+    return json.dumps(row, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
 
 
 def _content(path: Path) -> bytes:
@@ -789,7 +902,8 @@ class ReplayEdge:
 
     def __init__(self, rows: Sequence[Row], *, paper: bool) -> None:
         self._rows, self._at = list(rows), 2
-        self.stopped = self._rows[-1][0] == "stop"  # the session said it ended; otherwise the process was killed
+        self.stopped = self._rows[-1][0] == "stop"  # the session said it ended; otherwise the process was killed,
+        self.dark = self._rows[-1][0] == "dark"  # or the session went on with no room left to record itself
         opened = self._rows[0]
         self.state = ConnectionState(opened[4])
         described = tuple(instrument_of(entry) for entry in opened[3])
@@ -821,6 +935,8 @@ class ReplayEdge:
         if self._at >= len(self._rows):
             raise TapeEnded()
         row = self._rows[self._at]
+        if row[0] == "dark":
+            raise TapeEnded()  # the session went on from here, and nothing says how
         if row[0] != kind or (what is not None and row[1] != what):
             wanted = kind if what is None else f"{kind} {what}"
             raise TapeError(f"line {self._at + 1}: the replay wants {wanted!r} where the recording has {row[:2]!r}")
@@ -830,11 +946,12 @@ class ReplayEdge:
     def next(self, *, urgent: bool) -> Step | None:
         if self._at >= len(self._rows):
             return None
-        if self._rows[self._at][0] == "stop":
+        if self._rows[self._at][0] in ("stop", "dark"):
             return None
         row = self.take("step")
         self.state = ConnectionState(row[2])
-        return Step(row[1], self.state, tuple(decode(event) for event in row[3]), _beat_of(row[4]))
+        room = row[5] if len(row) > 5 else None
+        return Step(row[1], self.state, tuple(decode(event) for event in row[3]), _beat_of(row[4]), room)
 
     def sent(self, verb: str, client_order_id: str) -> str:
         row = self.take("sent", verb)
@@ -848,6 +965,9 @@ class ReplayEdge:
 
     def stop(self, at_ns: int) -> None:
         return None
+
+    def room(self) -> None:
+        return None  # a replay counts no tapes: the room is on the lines it reads
 
 
 def _is_a_venue(venue: ReplayVenue) -> Venue:

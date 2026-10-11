@@ -9,7 +9,9 @@ What must hold:
 
   * a session that said it stopped is reproduced byte for byte;
   * a session that was killed is reproduced as far as it got: what it wrote is the beginning of what the
-    replay writes, because the replay goes on to the end of the turn the process died in.
+    replay writes, because the replay goes on to the end of the turn the process died in;
+  * a session whose tape ran out of reserve (its last line is `["dark"]`) went on unrecorded. It is reproduced
+    as far as its tape goes: what the replay writes is the beginning of what the session wrote.
 
 A replay under other settings than the day ran with is refused, not compared: the tape holds a hash of the
 files the decisions depend on.
@@ -48,10 +50,12 @@ class Replayed:
     identical: bool
     live_bytes: int
     replayed_bytes: int
+    dark: bool = False  # the tape ran out of reserve and the session went on: it is compared as far as the tape goes
 
     def as_dict(self) -> dict[str, object]:
+        ended = "stopped" if self.stopped else "dark" if self.dark else "killed"
         return {
-            "tape": self.tape, "ended": "stopped" if self.stopped else "killed", "identical": self.identical,
+            "tape": self.tape, "ended": ended, "identical": self.identical,
             "live_bytes": self.live_bytes, "replayed_bytes": self.replayed_bytes,
         }  # fmt: skip
 
@@ -123,6 +127,6 @@ def replay_day(
         begun = starts[number]
         ended = starts[number + 1] if number + 1 < len(starts) else len(whole)
         was, now = whole[begun:ended], copy.read_bytes()[begun:]
-        same = now == was if edge.stopped else now.startswith(was)
-        out.append(Replayed(tape.name, edge.stopped, same, len(was), len(now)))
+        same = now == was if edge.stopped else was.startswith(now) if edge.dark else now.startswith(was)
+        out.append(Replayed(tape.name, edge.stopped, same, len(was), len(now), edge.dark))
     return out

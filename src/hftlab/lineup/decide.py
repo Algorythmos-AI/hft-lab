@@ -203,9 +203,9 @@ def read_week(state_dir: Path, now_ns: int) -> tuple[Week, Evidence]:
             elif kind == "shadow_commission":
                 trips.fee(entry)
             elif kind == "latch" and inside and entry.get("tripped") == 1:
-                name, _, sleeve = str(entry.get("latch")).partition("/")
-                if name in _LOSS:
-                    found.latched.setdefault(sleeve, set()).add(serving.get(sleeve, ""))
+                parts = str(entry.get("latch")).split("/")  # DAILY_LOSS_SLEEVE/<sleeve>/<currency>
+                if parts[0] in _LOSS and len(parts) > 1:
+                    found.latched.setdefault(parts[1], set()).add(serving.get(parts[1], ""))
             elif kind == "break" and inside and entry.get("broken") == 1:
                 found.breaks += 1
     labels = set(week.days)

@@ -213,7 +213,8 @@ def test_a_promoted_champion_that_trips_its_loss_latch_is_replaced_by_the_one_be
     assert world.decide().action == "promote"
     # The week after: B is the champion, C runs in shadow. B breaches the sleeve's daily loss limit on Wednesday.
     serving = {ML: world.b.model, CHALLENGER: world.c.model}
-    world.days.week(MONDAY + 7 * DAY, serving, {ML: [-40, -40], CHALLENGER: GOOD}, latches=("DAILY_LOSS_SLEEVE/ml",))
+    results = {ML: [-40, -40], CHALLENGER: GOOD}
+    world.days.week(MONDAY + 7 * DAY, serving, results, latches=("DAILY_LOSS_SLEEVE/ml/USD",))
     without = Desk(world.learn, world.desk.trader, False, tmp_path / "nowhere", world.pages)  # no limits, no record
     outcome = decide.run(without, SUNDAY + 7 * DAY)[1]
     assert outcome.action == "roll_back" and outcome.said.startswith("roll back")
@@ -229,11 +230,11 @@ def test_a_promoted_champion_that_trips_its_loss_latch_is_replaced_by_the_one_be
 def test_a_rollback_needs_no_rule_and_a_latch_of_another_model_or_another_sleeve_is_not_the_champions(tmp_path):
     world = World(tmp_path, rule=None, limits=False, record="")
     world.lineup(Lineup(champion=world.b, previous=(world.a,)))
-    world.days.week(MONDAY, {ML: world.b.model, CHALLENGER: None}, {ML: COSTS}, latches=("DRAWDOWN_SLEEVE/ml",))
+    world.days.week(MONDAY, {ML: world.b.model, CHALLENGER: None}, {ML: COSTS}, latches=("DRAWDOWN_SLEEVE/ml/USD",))
     assert world.decide(dry_run=True).action == "roll_back"
     for serving, latch in (
-        ({ML: world.a.model, CHALLENGER: None}, "DAILY_LOSS_SLEEVE/ml"),  # the model before it tripped, not this one
-        ({ML: world.b.model, CHALLENGER: None}, "DAILY_LOSS_SLEEVE/control"),
+        ({ML: world.a.model, CHALLENGER: None}, "DAILY_LOSS_SLEEVE/ml/USD"),  # the model before it tripped
+        ({ML: world.b.model, CHALLENGER: None}, "DAILY_LOSS_SLEEVE/control/USD"),
         ({ML: world.b.model, CHALLENGER: None}, "ORDER_FAULT"),
     ):
         other = World(tmp_path / str(len(list(tmp_path.iterdir()))), rule=None, limits=False)
@@ -243,7 +244,7 @@ def test_a_rollback_needs_no_rule_and_a_latch_of_another_model_or_another_sleeve
     assert world.decide().action == "roll_back" and lineup.read(world.path).champion == world.a
     alone = World(tmp_path / "alone", rule=None)
     alone.lineup(Lineup(champion=alone.a))
-    alone.days.week(MONDAY, {ML: alone.a.model, CHALLENGER: None}, {}, latches=("DAILY_LOSS_SLEEVE/ml",))
+    alone.days.week(MONDAY, {ML: alone.a.model, CHALLENGER: None}, {}, latches=("DAILY_LOSS_SLEEVE/ml/USD",))
     assert alone.decide().action == "roll_back" and lineup.read(alone.path).champion is None, "the place runs idle"
 
 

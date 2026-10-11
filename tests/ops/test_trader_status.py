@@ -159,7 +159,7 @@ def test_the_screen_shows_the_tapes_against_their_soft_limit_their_hard_limit_an
     assert "tape" not in json.dumps(snap(reading))
 
 
-def test_the_soft_limit_is_a_warning_and_the_hard_limit_is_bad_each_under_a_code_the_contract_accepts(tmp_path):
+def test_each_limit_is_a_warning_here_under_a_code_the_contract_accepts_and_the_trader_pages_it_itself(tmp_path):
     desk, places, days = a_bounded_run(tmp_path, 2)
     while desk.edge.level == 0:
         desk.run(1)
@@ -171,13 +171,13 @@ def test_the_soft_limit_is_a_warning_and_the_hard_limit_is_bad_each_under_a_code
         desk.run(1)
     desk.stop()
     reading = read(places, desk.clock.now_ns())
-    assert reading.trader.tape.level == "hard" and reading.level == "bad"
-    assert status.exit_code(reading) == status.EXIT_BAD
+    assert reading.trader.tape.level == "hard" and reading.level == "warn"
+    assert status.exit_code(reading) == status.EXIT_OK and desk.pages.fired[-1] == "tape_hard_limit"
     assert [problem.code for problem in reading.problems] == ["trader_tape_hard_limit"]
     assert "AT THE HARD LIMIT: closing everything" in render(reading)
     found = snap(reading)
     assert contract.problems(found, SCHEMA) == [] and found["health"]["reasons"] == ["trader_tape_hard_limit"]
-    assert "trader_tape_hard_limit" in status.PAGED, "what this command pages it also takes back"
+    assert "trader_tape_hard_limit" not in status.PAGED, "the trader's own page, as its latches and breaks are"
 
     housekeep(days)  # no trader says anything now: the bytes are counted on the disk, as they are
     later = read(places, desk.clock.now_ns() + SECOND)
@@ -197,7 +197,7 @@ def test_a_session_that_is_no_longer_recorded_says_so_on_the_screen(tmp_path):
     reading = read(places, desk.clock.now_ns())
     assert reading.trader.tape.dark and "RESERVE USED UP: the session is not recorded" in render(reading)
     (problem,) = reading.problems
-    assert (problem.code, problem.level) == ("trader_tape_hard_limit", "bad") and "no longer recorded" in problem.text
+    assert (problem.code, problem.level) == ("trader_tape_hard_limit", "warn") and "no longer recorded" in problem.text
 
 
 def test_a_trader_under_no_quota_has_no_tape_line_and_one_whose_limits_cannot_be_read_is_unreadable(tmp_path):

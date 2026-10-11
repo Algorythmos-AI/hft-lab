@@ -205,7 +205,8 @@ the day's folder:
 Closed parts are compressed by the hourly `hft-housekeep.service`, after it has done the recording's own
 housekeeping. By hand: `trader --housekeep`.
 
-**You should see** `trader: tapes: compressed N closed part(s); B bytes on disk, a quota of Q`. It never
+**You should see** `trader: tapes: compressed N closed part(s); B bytes on disk, soft limit S, hard limit H,
+a quota of Q`. It never
 touches the part a running trader is writing, and it deletes nothing but the plain copy of a part whose
 compressed copy it has read back and found the same.
 
@@ -235,8 +236,8 @@ are small.
              tapes: 912,345,678 bytes; soft limit 900,000,000, hard limit 950,000,000, quota 1,000,000,000 (91%); AT THE SOFT LIMIT: exits only
 ```
 
-The bytes are counted when you run it; the limits are the trader's last word. The status is a warning at
-the soft limit and a failure at the hard limit. `trader --housekeep` prints the same three numbers, and the
+The bytes are counted when you run it; the limits are the trader's last word. The status shows a warning at
+either limit; the pages are the trader's own. `trader --housekeep` prints the same three numbers, and the
 daily summary shows them on its `disk` line.
 
 **To make room:** run `trader --housekeep` first. If that is not enough, move the oldest day folders'
@@ -264,7 +265,7 @@ again by themselves, every `flatten_retry_seconds`, and the position is closed w
 being recorded.
 
 **If the trader is restarted while the tapes are at a limit,** it starts. It reconciles, closes what a
-position left open if the tapes are at their hard limit, and waits for room as above. With no room at all
+kill left open if the tapes are at their hard limit, and waits for room as above. With no room at all
 it still starts: it writes its head, about a kilobyte, which is the only thing that can pass the quota, and
 runs unrecorded until there is room.
 

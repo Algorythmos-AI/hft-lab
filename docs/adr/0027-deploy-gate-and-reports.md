@@ -274,7 +274,7 @@ orders a minute.
   (`tests/trader/test_tape_reserve.py`). A quota that cannot hold the reserve, and a time limit too short
   for the limits, are refused by the arithmetic, by the trader and by the command.
 - The status screen shows the tapes' bytes, counted when it is run, against the soft limit, the hard limit
-  and the quota, with a warning at the soft limit and a failure at the hard one; the daily summary shows
+  and the quota, with a warning at either limit, as for a latch: the pages are the trader's own; the daily summary shows
   the same against the limits the day's last session journalled (`tests/ops/`).
 
 ### What it costs, and what it does not cover
@@ -296,5 +296,8 @@ orders a minute.
   short line.
 - **Nothing removes a tape, still.** Room is made by the housekeeping job compressing closed parts, the
   last part of a session that stopped or went dark among them, and by the owner moving old sessions away.
+- **A market that is shut is a closing that waits.** At the hard limit over a weekend the closes are refused
+  until the market opens: the owner is paged when the time limit has passed, and two days of beats, about
+  a hundred bytes each, come out of the reserve. If that uses it up, it is case 3.
 - **The reserve is a bound on bytes, not on time or money.** That the closing can finish inside the time
   limit is checked against the limits; that the market lets it is not something a limit can promise.

@@ -63,7 +63,7 @@ COUNTED: Final = {"decision": "decisions", "order": "orders", "refused": "refuse
 PAGED: Final = (
     "recorder_status_unreadable", "recorder_not_on_paper_venue", "recorder_io_error", "recorder_quota",
     "recorder_stale", "recorder_stopped", "connection_down", "shadow_journal_broken", "backup_failed",
-    "lineup_journal_broken", "trader_tape_hard_limit",
+    "lineup_journal_broken",
 )  # fmt: skip
 
 
@@ -447,7 +447,7 @@ def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[P
         text = "The trader's tapes are at their hard limit: it closes everything and opens nothing until room is made."
         if tape.dark:  # one code for both: the snapshot's contract holds twenty reasons and no more
             text = "The tapes' reserve is used up: the trader's session is no longer recorded. Make room now."
-        problems.append(Problem("trader_tape_hard_limit", BAD, text))
+        problems.append(Problem("trader_tape_hard_limit", WARN, text))  # a warning here: the trader pages it itself
     return reading, problems
 
 

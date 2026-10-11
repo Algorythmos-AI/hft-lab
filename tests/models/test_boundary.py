@@ -3,6 +3,10 @@
 Every test here runs in a process of its own in which the set cannot be imported at all, whether or not it is
 installed. So the same thing is shown on a developer's machine with `make ml` and in the base `test` job
 without it: the recorder, the trader and the scorer of a gradient-boosted model need none of it (ADR 0025).
+
+The array library is blocked with it. A sequence network is fitted with arrays and with nothing else that is
+not the platform's own (ADR 0029), and it is scored, in process and by the scorer's child, where arrays cannot
+be imported either.
 """
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ import subprocess
 import sys
 
 from hftlab.models import BUY, SELL, ModelRegistry, Tree, Trees
+from tests.models import test_net
 from tests.learn.kit import SATURDAY, learn_settings, record, weeks
 from tests.models.test_trees import a_model
 from tests.support import ROOT
@@ -46,6 +51,7 @@ for name in names:
     if name not in skipped:
         importlib.import_module(name)
 assert "hftlab.learn.boost" in sys.modules and "hftlab.learn.train" in sys.modules and "hftlab.models.trees" in sys.modules
+assert "hftlab.learn.sequence" in sys.modules and "hftlab.models.net" in sys.modules and "hftlab.features.window" in sys.modules
 print(len(names) - len(skipped), LOADED)
 """.replace("LOADED", LOADED)
     done = child(script)
@@ -59,7 +65,8 @@ def test_with_the_set_installed_or_not_importing_the_platform_loads_none_of_it()
     script = """
 import importlib
 for name in ("hftlab.trader", "hftlab.trader.__main__", "hftlab.record", "hftlab.record.__main__", "hftlab.lineup",
-             "hftlab.models", "hftlab.learn.train", "hftlab.learn.boost", "hftlab.learn.promote", "hftlab.strategy"):
+             "hftlab.models", "hftlab.learn.train", "hftlab.learn.boost", "hftlab.learn.sequence", "hftlab.learn.promote",
+             "hftlab.strategy", "hftlab.scoring.child"):
     importlib.import_module(name)
 print(LOADED)
 """.replace("LOADED", LOADED)
@@ -120,6 +127,41 @@ print(json.dumps([code, replies[0], [[r["side"], r["expected_micro"]] for r in r
     assert json.loads(done.stdout) == [0, {"loaded": digest}, decided, []]
 
 
+def test_a_seq_model_file_is_loaded_and_scored_in_process_and_by_the_child_where_arrays_cannot_be_imported(tmp_path):
+    """Integer sums and shifts of the standard library: the same decisions here, in the child, and over the pipe's lines."""
+    model = test_net.a_model()
+    digest = ModelRegistry(tmp_path).put(model)
+    spread, rows = test_net.SPREAD, [(100 + 5 * test_net.SPREAD, 0), (100 + 3 * test_net.SPREAD, 0), (100 - test_net.SPREAD, 7)]
+    script = f"""
+import io, json
+from pathlib import Path
+from hftlab.features import FeatureRow
+from hftlab.models import ModelRegistry, scorer_for, answer, ask
+from hftlab.scoring import child, wire
+model = ModelRegistry(Path({str(tmp_path)!r})).load({digest!r}, pair="EUR.USD", features={model.features!r},
+                                                   label={dict(model.label)!r})
+scorer = scorer_for(model)
+rows = [FeatureRow("EUR.USD", 1, 2, values) for values in {rows!r}]
+here = []
+asked = wire.frame(wire.load({digest!r}))
+for row in rows:
+    found = scorer.score(row)
+    assert json.loads(answer(scorer, ask(row)))["side"] == (found.side.value if found else None)
+    here.append([found.side.value, found.expected_micro] if found else [None, None])
+    asked += wire.frame(ask(row))
+source, sink = io.BytesIO(asked), io.BytesIO()
+code = child.serve(Path({str(tmp_path)!r}), source, sink)
+sink.seek(0)
+replies = [json.loads(wire.read_frame(sink.read)) for _ in range(4)]
+there = [[r["side"], r["expected_micro"]] for r in replies[1:]]
+print(json.dumps([type(scorer).__name__, code, replies[0], here, there, {LOADED}]))
+"""
+    done = child(script)
+    assert done.returncode == 0, done.stderr
+    decided = [["BUY", 5_000_000], [None, None], ["SELL", 3_000_000]]
+    assert spread == 1024 and json.loads(done.stdout) == ["NetScorer", 0, {"loaded": digest}, decided, decided, []]
+
+
 def run_training(folder, model: str) -> subprocess.CompletedProcess[str]:
     config = learn_settings(folder, model=model)
     (folder / "registry.yaml").write_text("history: []\n")
@@ -148,3 +190,11 @@ def test_without_the_set_a_ridge_run_trains_as_before_and_a_gbm_run_is_refused_b
     assert gbm.returncode == 2 and "refused" in gbm.stderr and "make ml" in gbm.stderr and "optional ML set" in gbm.stderr
     assert not (other / "learn").exists(), "no trial in the ledger, no model, no report, no run file"
     assert not (other / "trader").exists(), "and no candidate in the lineup"
+
+
+def test_without_the_array_library_a_seq_run_is_refused_before_anything_is_counted(tmp_path):
+    """It is in the base requirements, so this is an environment that was not built from them. It says so."""
+    record(tmp_path / "rec", weeks(1))
+    seq = run_training(tmp_path, "seq")
+    assert seq.returncode == 2 and "refused" in seq.stderr and "make bootstrap" in seq.stderr, seq.stderr
+    assert seq.stdout.strip().endswith("[]") and not (tmp_path / "learn").exists() and not (tmp_path / "trader").exists()

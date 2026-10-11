@@ -33,7 +33,7 @@ from hftlab.core import _checks
 from hftlab.journal import JournalError, canonical
 
 VERSION: Final = 1
-KINDS: Final = ("ridge", "gbm", "flat", "random")
+KINDS: Final = ("ridge", "gbm", "seq", "flat", "random")
 _HASH = re.compile(r"[0-9a-f]{64}")
 _FIELDS: Final = frozenset(
     {"kind", "version", "pair", "features", "label", "cost_model", "size", "dataset_hash", "params"}

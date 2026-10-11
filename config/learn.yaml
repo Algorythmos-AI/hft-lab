@@ -24,7 +24,7 @@ label:                          # how a trade that could not be closed at its ho
   exit_wait_seconds: 1800       # PLACEHOLDER: how long an exit that did not fill is tried again
   stuck_increments: 200         # PLACEHOLDER: past that wait, this many price increments against the position
 
-model: ridge                    # the kind of model a run fits: ridge | gbm. One kind per run; ridge is the default
+model: ridge                    # the kind of model a run fits: ridge | gbm | seq. One kind per run; ridge is the default
 ridge_penalty: "1"              # PLACEHOLDER: a quoted fraction above zero (ADR 0022). Read when model is ridge
 
 boosting:                       # gradient boosting (ADR 0025). Read when model is gbm, which needs the optional ML set
@@ -40,6 +40,24 @@ boosting:                       # gradient boosting (ADR 0025). Read when model 
   l2_ppm: 1000000               # the penalty on a leaf's value, in millionths
   leaf_scale: 1000              # a leaf is kept as a whole number of thousandths of a millionth of the quote currency
   seed: 1                       # nothing is subsampled, so nothing is drawn; fixed all the same
+
+sequence:                       # a small sequence network on windows of rows (ADR 0029). Read when model is seq, which
+                                # needs no install beyond the base requirements to TRAIN and nothing but the
+                                # standard library to score. Every number is a PLACEHOLDER, chosen small on purpose
+                                # and tuned on nothing. They are fixed: no run searches them, and a different
+                                # number is a different configuration, counted as another trial
+  window: 8                     # the rows of the pair the model is shown at once, the row in hand last. At most 64.
+                                # A window never spans a gap, a closed market, a reconnect or a day's rollover
+  kernel: 3                     # the rows under one filter of the convolution
+  filters: 8                    # the loader refuses more than 32
+  hidden: 16                    # the units of the one hidden layer. The loader refuses more than 64
+  epochs: 30                    # passes over the training rows, in the same batches every pass
+  batch_rows: 256
+  learning_rate_ppm: 2000       # Adam's step, in millionths
+  l2_ppm: 100                   # the penalty on a weight, in millionths
+  clip: 8                       # an input is cut off this many standard deviations from its training mean
+  cap: 8                        # an activation is at most this
+  seed: 1                       # fixes the starting weights, which are a hash of it; nothing else is drawn
 
 validation:
   min_train_weeks: 1            # PLACEHOLDER: a fold trains on at least this many earlier weeks

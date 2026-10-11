@@ -189,3 +189,10 @@ change: declared in configuration beforehand, small, and every member counted.
   small and were tuned on nothing. Choosing others on evidence is an experiment with its trials counted.
 - **On real data the likeliest outcome** of the first gbm challenger's week is no advantage over the control
   sleeve or over the ridge challenger after costs (`HFT-HYP-0004`, `HFT-EXP-0004`: registered, not run).
+
+## Addendum, 2026-10-11: a small network is built
+
+Section 7 said no neural network is built. [ADR 0029](0029-sequence-network-windows-and-fixed-point-scoring.md)
+adds a small one as a third kind of model file, `seq`. It took another route than this record's for its
+dependency: nothing is installed for it, and the optional set here is still LightGBM alone. It kept this
+record's boundary: floats to fit, whole numbers to keep and to score.

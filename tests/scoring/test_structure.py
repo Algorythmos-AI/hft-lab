@@ -28,7 +28,7 @@ PROCESSES = {"subprocess", "threading", "queue"}
 CHILD_MAY_LOAD = {
     "hftlab", "hftlab.journal", "hftlab.scoring", "hftlab.scoring.child", "hftlab.scoring.wire",
     "hftlab.models", "hftlab.models.baseline", "hftlab.models.file", "hftlab.models.ridge", "hftlab.models.scorer",
-    "hftlab.models.trees", "hftlab.features", "hftlab.features.builder", "hftlab.features.spec",
+    "hftlab.models.trees", "hftlab.models.net", "hftlab.features", "hftlab.features.builder", "hftlab.features.spec",
     "hftlab.features.window",
     "hftlab.calendar", "hftlab.calendar.events", "hftlab.calendar.week", "hftlab.record", "hftlab.record.format",
     "hftlab.core", "hftlab.core._checks", "hftlab.core.clock", "hftlab.core.enums", "hftlab.core.ids",

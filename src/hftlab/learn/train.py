@@ -17,14 +17,17 @@ For every configured pair and horizon, from the day folders of the recorder's st
 
 The report is one line of canonical JSON holding integers and text only, so the same store, settings and
 ledger give the same model hash and the same report, byte for byte. What differs from run to run (the time,
-the memory the process peaked at) is in a file of its own beside it, `last-run.json`.
+how long it took by the clock and in processor time, the memory the process peaked at) is in a file of its own
+beside it, `last-run.json`.
 
-The kind of model is the settings' `model`: `ridge`, fitted exactly (ADR 0022), or `gbm`, gradient-boosted
-trees fitted by a library of the optional ML set and kept as whole numbers (ADR 0025). Everything else of a run
-is the same for both: the folds, the ledger, the report, the registry and the lineup.
+The kind of model is the settings' `model`: `ridge`, fitted exactly (ADR 0022); `gbm`, gradient-boosted
+trees fitted by a library of the optional ML set and kept as whole numbers (ADR 0025); or `seq`, a small
+sequence network on windows of rows, fitted in floats and kept as whole numbers (ADR 0029). Everything else of
+a run is the same for all of them: the folds, the ledger, the report, the registry and the lineup.
 
 What it refuses (exit 2): to run while the market is open, unless it is a dry run; a store with too few weeks
-to make one fold; a hold-out this configuration has already read; a `gbm` run without the ML set installed.
+to make one fold; a hold-out this configuration has already read; a `gbm` run without the ML set installed; a
+fit whose estimated memory, on top of what the process already holds, is over the run's budget.
 The held-out weeks are in no fold, in no fit and in no summary, and are read only through `HoldOut.read`, which
 writes the read into the ledger first.
 It fails (exit 1) when the process peaked above its memory budget, and then registers nothing.
@@ -64,9 +67,15 @@ from hftlab.features import FeatureRow, at_ns
 from hftlab.journal import JournalError, canonical
 from hftlab.learn.boost import BoostError, LibraryMissing, TooFewRows, library
 from hftlab.learn.boost import fit as boost
-from hftlab.learn.config import GBM, Boosting, LearnConfigError, Settings, config_hash, load
+from hftlab.learn.config import GBM, SEQ, Boosting, LearnConfigError, Network, Settings, config_hash, load
 from hftlab.learn.dataset import Dataset, DatasetError, DaySource, LeakError, build_for, day_source
 from hftlab.learn.drift import EXPECTED_KEY, by_column, summarise
+from hftlab.learn.sequence import LibraryMissing as ArraysMissing
+from hftlab.learn.sequence import SequenceError
+from hftlab.learn.sequence import TooFewRows as TooFewWindows
+from hftlab.learn.sequence import fit as fit_network
+from hftlab.learn.sequence import library as array_library
+from hftlab.learn.sequence import needs as network_needs
 from hftlab.learn.validate import (
     HoldOut,
     HoldOutSpent,
@@ -127,20 +136,47 @@ def gbm_model(dataset: Dataset, positions: Sequence[int], settings: Boosting) ->
     return _model(dataset, GBM, boost([row.features for row in rows], targets, settings).params())
 
 
+def seq_model(dataset: Dataset, positions: Sequence[int], settings: Network) -> Model:
+    """A sequence network of the outcome of each side, fitted to the windows at `positions`, kept as whole numbers."""
+    rows = [dataset.rows[position] for position in positions]
+    targets = {BUY: [row.buy_micro for row in rows], SELL: [row.sell_micro for row in rows]}
+    return _model(dataset, SEQ, fit_network([row.features for row in rows], targets, settings).params())
+
+
 def fit_model(dataset: Dataset, positions: Sequence[int], settings: Settings) -> Model:
     """A model of the kind the settings name, fitted to the rows at `positions`."""
     if settings.model == GBM:
         return gbm_model(dataset, positions, settings.boosting)
+    if settings.model == SEQ:
+        return seq_model(dataset, positions, settings.network)
     return ridge_model(dataset, positions, settings.penalty)
 
 
 def ready(settings: Settings) -> None:
     """Refuse, before anything is counted or built, a kind of model this installation cannot fit."""
-    if settings.model == GBM:
-        try:
+    try:
+        if settings.model == GBM:
             library()
-        except LibraryMissing as exc:
-            raise TrainRefused(str(exc)) from exc
+        elif settings.model == SEQ:
+            array_library()
+    except (LibraryMissing, ArraysMissing) as exc:
+        raise TrainRefused(str(exc)) from exc
+
+
+def room(dataset: Dataset, rows: int, settings: Settings, measure: Callable[[], int]) -> None:
+    """Refuse, before a trial is counted, a fit that by its own estimate will not stay under the run's budget.
+
+    Only a kind that can say what a fit holds is asked: a sequence network's arrays are a known size.
+    """
+    if settings.model != SEQ:
+        return
+    held, needed = measure(), network_needs(rows, len(dataset.features), settings.network)
+    if held + needed > settings.memory_budget_bytes:
+        raise TrainRefused(
+            f"{dataset.pair} at {dataset.horizon_ns} ns: a fit of {rows} windows is estimated at {needed} bytes on "
+            f"top of the {held} the run holds, over its budget of {settings.memory_budget_bytes}. Nothing was "
+            "counted or fitted"
+        )
 
 
 def flat_model(dataset: Dataset) -> Model:
@@ -191,11 +227,13 @@ def _walk(dataset: Dataset, settings: Settings) -> tuple[Plan, list[int]]:
 def train_one(
     dataset: Dataset, settings: Settings, *, ledger: TrialLedger, registry: Path | None,
     feasibility: dict[str, object], feasibility_placeholder: bool, hold_out: bool,
+    measure: Callable[[], int] | None = None,
 ) -> Trained:  # fmt: skip
     """Evaluate one pair and horizon walk-forward, fit the candidate, and write the report. Pure but for the ledger."""
     frozen = settings.frozen(dataset.pair, dataset.horizon_ns, dict(dataset.cost_model))
     config = config_hash(frozen)
     plan, development = _walk(dataset, settings)
+    room(dataset, len(development), settings, measure or peak_bytes)  # the largest fit of the run is the candidate's
     fold_of = {dataset.rows[position].n: number for number, fold in enumerate(plan.folds) for position in fold.test}
     scorers: dict[int, Scorer | None] = {}
     expected: list[int] = []
@@ -207,7 +245,7 @@ def train_one(
         if number not in scorers:
             try:
                 scorers[number] = scorer_for(fit_model(dataset, plan.folds[number].train, settings))
-            except (RidgeError, TooFewRows):
+            except (RidgeError, TooFewRows, TooFewWindows):
                 scorers[number] = None  # too few training rows left after the purge: the fold abstains
                 untrained.add(number)
         scorer = scorers[number]
@@ -322,7 +360,7 @@ def read_store(
 def train_all(
     stream: Sequence[RecordedEvent], instruments: dict[str, Instrument], days: Sequence[DaySource],
     settings: Settings, *, costs: CostModel, calendar: Calendar, feasibility: FeasibilitySettings, ledger: TrialLedger,
-    registry: Path | None = None, hold_out: bool = False,
+    registry: Path | None = None, hold_out: bool = False, measure: Callable[[], int] | None = None,
 ) -> list[Trained]:  # fmt: skip
     """Every configured pair and horizon, in the order they are written. The stream is held once."""
     ready(settings)
@@ -346,7 +384,7 @@ def train_all(
             out.append(
                 train_one(
                     dataset, settings, ledger=ledger, registry=registry, feasibility=mapped,
-                    feasibility_placeholder=feasibility.placeholder, hold_out=hold_out,
+                    feasibility_placeholder=feasibility.placeholder, hold_out=hold_out, measure=measure,
                 )
             )  # fmt: skip
     return out
@@ -405,6 +443,12 @@ def peak_bytes() -> int:
     return peak if sys.platform == "darwin" else peak * 1024  # the one reports bytes, the others kilobytes
 
 
+def processor_ms() -> int:
+    """The processor time this process has used, in its own code and in the system's, in milliseconds."""
+    used = resource.getrusage(resource.RUSAGE_SELF)
+    return round((used.ru_utime + used.ru_stime) * 1000)
+
+
 def say(text: str) -> None:
     print(f"train: {text}", file=sys.stderr, flush=True)
 
@@ -433,7 +477,7 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
     trained = train_all(
         stream, instruments, sources, settings, costs=costs, calendar=calendar,
         feasibility=load_settings(args.feasibility), ledger=ledger, registry=args.trial_registry,
-        hold_out=args.hold_out,
+        hold_out=args.hold_out, measure=measure,
     )  # fmt: skip
     peak = measure()
     within = peak <= settings.memory_budget_bytes
@@ -443,6 +487,7 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
         "sources": by_source(sources), "imported_days_left_out": skipped,
         "rows": sum(json.loads(one.report)["dataset"]["rows"] for one in trained),
         "memory": {"peak_bytes": peak, "budget_bytes": settings.memory_budget_bytes, "within": within},
+        "took": {"wall_ns": clock.now_ns() - now, "processor_ms": processor_ms()},
         "candidates": [
             {"pair": one.pair, "horizon_ns": one.horizon_ns, "model": one.model.content_hash, "report": one.report_hash}
             for one in trained
@@ -506,7 +551,8 @@ def main(
         say(f"refused: the dataset was not made: {exc}")
         return EXIT_REFUSED
     except (
-        DatasetError, ValidationError, ModelError, BoostError, LineupError, JournalError, CorruptSegment, OSError
+        DatasetError, ValidationError, ModelError, BoostError, SequenceError, LineupError, JournalError, CorruptSegment,
+        OSError,
     ) as exc:  # fmt: skip
         say(f"FAILED: {exc}")
         return EXIT_FAILED

@@ -123,3 +123,11 @@ The scorer can now run in a process of its own ([ADR 0023](0023-weekly-learning-
 request and the reply lines of section 5 above are what crosses the pipe, unchanged, and the caller did not
 change: a sleeve is handed a scorer and cannot tell which kind. In process is still the default and is what a
 replay uses.
+
+## Addendum, 2026-10-11: a small network is built
+
+The addendum above that neural networks are still not built no longer holds.
+[ADR 0029](0029-sequence-network-windows-and-fixed-point-scoring.md) adds a small sequence network as a third
+kind of model file, `seq`. Its floats end where it is exported, as the trees' do; its scorer adds, multiplies
+and shifts whole numbers, and abstains wherever the rounding of its weights could change the decision. Its
+row is a window of rows, which the request and the reply lines of section 5 carry as they are.

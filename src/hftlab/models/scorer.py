@@ -18,6 +18,12 @@ decision on any machine, which is what lets a sleeve that asks a scorer replay b
 So is a model of boosted trees (ADR 0025). Its thresholds and its leaves are whole numbers in the model file;
 a prediction is a sum of whole numbers, and the two sides are compared as whole numbers. The library that
 fitted the trees is not imported here and is not needed to score them.
+
+And so is a small sequence network (ADR 0029). Its row is a window, the last rows of the pair side by side, and
+its weights are whole numbers at a fixed scale; scoring is integer sums, shifts and comparisons
+(`hftlab.models.net`). The whole numbers differ from the network that was fitted by a rounding whose bound is
+worked out from the file itself, and the scorer abstains wherever that bound could change the decision: where
+it does decide, the fitted network decides the same.
 """
 from __future__ import annotations
 
@@ -32,6 +38,8 @@ from hftlab.features import FeatureRow
 from hftlab.journal import canonical
 from hftlab.models.baseline import number
 from hftlab.models.file import Model, ModelError
+from hftlab.models.net import BITS, WEIGHT_BITS, Net, NetError
+from hftlab.models.net import KIND as SEQ
 from hftlab.models.ridge import Ridge
 from hftlab.models.trees import KIND as GBM
 from hftlab.models.trees import Trees, TreesError
@@ -132,6 +140,35 @@ class TreeScorer(_Checked):
         return Decision(Side.BUY if buy > sell else Side.SELL, max(buy, sell) // self._fit.scale, self._hash)
 
 
+class NetScorer(_Checked):
+    """A sequence network on a window of rows: per side, one whole-number output. It abstains inside its rounding."""
+
+    def __init__(self, model: Model) -> None:
+        super().__init__(model, SEQ)
+        try:
+            fit = Net.from_params(model.params)
+        except NetError as exc:
+            raise ModelError(f"model {self._hash[:12]} does not hold a sequence network: {exc}") from exc
+        if set(fit.out) != {BUY, SELL} or fit.window * fit.width != len(model.features):
+            raise ModelError("a sequence network predicts the outcome of each side from every value of its window")
+        self._fit, self._slack = fit, fit.slack()
+
+    def score(self, row: FeatureRow) -> Decision | None:
+        self._check(row)
+        try:
+            found = self._fit.totals(row.values)
+        except NetError as exc:
+            raise ScoreError(str(exc)) from exc
+        buy, sell = found[BUY], found[SELL]
+        best, slack = (buy, self._slack[BUY]) if buy > sell else (sell, self._slack[SELL])
+        # The fitted network is within `slack` of each output. Unless the sides are further apart than both
+        # slacks together, and the better one further above zero than its own, it might decide otherwise.
+        if abs(buy - sell) <= self._slack[BUY] + self._slack[SELL] or best <= slack:
+            return None
+        expected = best * self._fit.target_scale >> (BITS + WEIGHT_BITS)
+        return Decision(Side.BUY if buy > sell else Side.SELL, expected, self._hash)
+
+
 class FlatScorer(_Checked):
     """The baseline that never trades."""
 
@@ -165,6 +202,8 @@ def scorer_for(model: Model) -> Scorer:
         made = RidgeScorer(model)
     elif model.kind == GBM:
         made = TreeScorer(model)
+    elif model.kind == SEQ:
+        made = NetScorer(model)
     elif model.kind == "flat":
         made = FlatScorer(model)
     else:

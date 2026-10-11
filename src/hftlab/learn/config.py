@@ -78,8 +78,8 @@ class Settings:
     leak_checks: int
     summary_bins: int
     memory_budget_bytes: int
-    rule: Rule  # `NOT_IN_FORCE` while any part of the promotion rule is null
-    rule_in_force: bool
+    rule: Rule  # `NOT_IN_FORCE` while any number of the promotion rule is null
+    rule_in_force: bool  # every number is written AND a decision record is named
     baseline_sleeve: str
     drift: Drift
     scorer_timeout_ns: int
@@ -148,10 +148,14 @@ def _or_null(block: dict[str, Any], key: str, *, least: int = 1) -> int | None:
 
 
 def _rule(block: dict[str, Any]) -> Rule | None:
-    """The promotion rule, when every part of it is written. A rule with a null in it is no rule."""
-    if any(block[key] is None for key in _RULE):
-        if block["decision"] is not None and not isinstance(block["decision"], str):
-            raise LearnConfigError("promotion.decision must be null or a decision record id")
+    """The promotion rule, when every number of it is written. A rule with a null number in it is no rule.
+
+    Every number written and `decision` null is a rule that measures and is not in force: a week is weighed
+    with its numbers, for a report, and it names no decision record, so it can pass nothing.
+    """
+    if block["decision"] is not None and not isinstance(block["decision"], str):
+        raise LearnConfigError("promotion.decision must be null or a decision record id")
+    if any(block[key] is None for key in _RULE[1:]):
         for key in _RULE[1:]:
             _or_null(block, key, least=0)
         return None
@@ -225,7 +229,7 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
         summary_bins=_whole(validation, "summary_bins", least=2),
         memory_budget_bytes=_whole(loaded, "memory_budget_mb") * MB,
         rule=rule or NOT_IN_FORCE,
-        rule_in_force=rule is not None,
+        rule_in_force=rule is not None and rule.decision is not None,
         baseline_sleeve=baseline,
         drift=Drift(
             _or_null(drift, "min_rows"), _or_null(drift, "feature_shift_ppm"),

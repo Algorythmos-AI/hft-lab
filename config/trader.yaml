@@ -32,6 +32,13 @@ sleeves:
     hold_seconds: 60            # PLACEHOLDER
     retry_seconds: 10           # PLACEHOLDER
 
+  # The ML places (ADR 0023). A place names no model: the lineup journal in the state directory says which
+  # model stands in it, by hash, and an empty place runs idle. With nothing registered both run idle.
+  - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}                 # PLACEHOLDER margin
+  - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
+
+registry: var/learn             # models/ and reports/, each file named by its SHA-256; written by the training run
+
 clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
 
 rollout:
@@ -41,6 +48,16 @@ rollout:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
       normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
   control:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml-challenger-1:                                    # a challenger is judged in shadow, and stays there
     start: shadow
     promote:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met

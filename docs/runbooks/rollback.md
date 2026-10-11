@@ -90,6 +90,8 @@ maintainers before you go back: what it recorded has to stay readable.
 **If the platform does not start on either commit,** leave it stopped and say so. A stopped recorder costs
 data; a recorder started in a state nobody understands costs more.
 
-## Not here yet
+## Going back to a model
 
-Going back to the previous champion model is part of the learning loop (F6) and gets its own section then.
+Nothing. Going back to the previous champion model is not a deploy: the weekly decision does it by itself
+when a champion trips its loss latch, and the drill proves it on demand
+([learning runbook](learning.md), section 6).

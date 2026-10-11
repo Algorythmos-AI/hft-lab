@@ -91,6 +91,8 @@ def test_a_challenger_that_passes_the_rule_and_every_gate_is_promoted_with_the_r
 
 CHANGES = {
     "the rule is not in force": ({"rule": None}, "rule_not_in_force"),
+    "every number is written and no decision record is named": ({"rule": {**RULE, "decision": None}},
+                                                                "rule_not_in_force"),
     "no decision record of that id": ({"record": ""}, "decision_record_missing"),
     "a record the owner did not approve": ({"record": "approved_by: nobody\n"}, "decision_record_missing"),
     "the risk limits are not in force": ({"limits": False}, "limits_not_in_force"),
@@ -108,8 +110,13 @@ def test_the_same_week_promotes_nothing_when(why, tmp_path):
     after = lineup.read(world.path)
     assert after.champion == world.a and after.previous == () and after.challengers == ()
     assert world.last()["action"] == "keep" and world.last()["decision"] is None
-    if options.get("rule", RULE) is None:
-        assert outcome.said == "keep: rule not in force"
+    rule = options.get("rule", RULE)
+    if rule is None or rule["decision"] is None:
+        assert outcome.said == "keep: rule not in force" and world.learn.rule_in_force is False
+    if rule is not None and rule["decision"] is None:
+        (judged,) = outcome.challengers
+        assert judged.evidence["advantage_lower_micro"] == 145 * UNITS, "the week is still measured, for the report"
+        assert "rule_not_registered" in judged.reasons and "rule_not_in_force" in judged.reasons
 
 
 def test_a_break_a_placeholder_report_a_week_not_served_whole_or_too_little_evidence_each_keep(tmp_path):

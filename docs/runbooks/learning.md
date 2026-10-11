@@ -131,7 +131,8 @@ python3 -m json.tool var/learn/reports/<report>.json
 | `action`, `reasons` | What was decided, and every reason code |
 | `rule.in_force` | 1 only when every number is written **and** a decision record is named |
 | `gates` | `record`: the named decision record exists with `approved_by: owner`. `limits`: the risk limits are in force. `unfit`: challengers whose own report cannot carry a promotion |
-| `fitted_days_by_source` | For each challenger: the days its model was fitted to, by where they came from. `recorded` is the platform's own recordings; `imported:<label>` is history read from files ([history import](history-import.md)) |
+| `fitted_days_by_source` | For each challenger: the days its model was fitted to, by where they came from, as far as its files vouch for them. `recorded` is the platform's own recordings; `imported:<label>` is history read from files ([history import](history-import.md)). Empty when the report and the model file say different days: then no day is counted |
+| `model_file_days_by_source` | The same days as the model file itself says them, under its own hash. `unknown` for a model file of version 1, which does not say; such a model is judged by its report alone |
 | `challengers[].evidence` | `own_days`: the recorded days the model was fitted to, which must reach the rule's `min_days` (`too_few_own_days` when they do not; an imported day is never counted). `trades`, `days`, and the lower bounds of the day-block bootstrap: `advantage_lower_micro` against the champion (or the control sleeve while there is no champion) and `result_lower_micro` of its own result, per trade, in millionths of the pair's quote currency |
 | `challengers[].reasons` | Empty only for a challenger that passed the rule and every gate |
 | `reconciliation_breaks`, `latched` | The week's breaks, and whose loss latch tripped while serving which model |

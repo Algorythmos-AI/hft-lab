@@ -15,8 +15,11 @@ challenger. What it may then write:
               had no reconciliation break, AND the challenger's report does not rest on placeholders, AND
               the challenger's place served that model in every session of the week, AND its model was
               fitted to at least the rule's `min_days` days of this platform's own recordings: its report
-              says how many days came from where, and an imported day counts for nothing (ADR 0028). Every
-              one of these is checked here as well as in the rule; none is assumed from another.
+              says how many days came from where, and an imported day counts for nothing (ADR 0028). A
+              model file that says where its rows came from (version 2, ADR 0022) has to say the same days
+              as its report, or no day of it is counted; a file of the older version does not say, and the
+              report alone is read. Every one of these is checked here as well as in the rule; none is
+              assumed from another.
   keep        anything else. The week's challengers leave and the registered candidates take their places.
 
 Every change is one line of the lineup journal, with the hash of the decision report it rests on, and one
@@ -51,6 +54,7 @@ from hftlab.lineup import journal as lineups
 from hftlab.lineup.journal import Lineup, LineupError, Named
 from hftlab.lineup.serve import CHAMPION, places
 from hftlab.lineup.serve import load as load_model
+from hftlab.models.file import UNKNOWN, Model
 from hftlab.ops import host
 from hftlab.ops.alerts import Alerts, sender_from
 from hftlab.record.format import CorruptSegment, instrument_of
@@ -249,8 +253,11 @@ class Gates:
     record: bool  # the decision record the rule names exists, with the owner's approval
     limits: bool  # the risk limits are in force
     unfit: Mapping[str, str] = field(default_factory=dict)  # a challenger's model -> why its report cannot carry it
-    # a challenger's model -> the days it was fitted to, by source, as its report says (`recorded`, `imported:...`)
+    # a challenger's model -> the days it was fitted to, by source (`recorded`, `imported:...`): what its report
+    # says, and counted only where a model file that says its own days says the same (`vouched_days`)
     fitted: Mapping[str, Mapping[str, int]] = field(default_factory=dict)
+    # a challenger's model -> the days its own file says, by source; UNKNOWN for a file that does not say
+    files: Mapping[str, Mapping[str, int] | str] = field(default_factory=dict)
 
     def own_days(self, model: str) -> int:
         """The days of this platform's own recordings a model was fitted to. Imported days are not among them."""
@@ -370,19 +377,37 @@ def fitted_days(report: Mapping[str, object]) -> dict[str, int]:
     return {str(key): count for key, count in sorted(days.items()) if type(count) is int and count >= 0}
 
 
-def read_reports(lineup: Lineup, registry: Path) -> tuple[dict[str, str], dict[str, dict[str, int]]]:
-    """Each challenger's report, read once: why it cannot carry a promotion, and the days it was fitted to."""
-    out, fitted = {}, {}
+def vouched_days(model: Model, report: Mapping[str, object]) -> dict[str, int]:
+    """The days a model was fitted to, by source, as far as its two files vouch for them.
+
+    The report says them, and a model file of version 2 says them under its own hash. Where both speak they
+    must say the same, or no day is counted at all. A file of version 1 does not say: its split is unknown,
+    and the report alone is read, as it was before the file had the field.
+    """
+    said, own = fitted_days(report), model.fitted("days")
+    return said if own is None or own == said else {}
+
+
+def read_reports(
+    lineup: Lineup, registry: Path
+) -> tuple[dict[str, str], dict[str, dict[str, int]], dict[str, dict[str, int] | str]]:
+    """Each challenger's files, read once: why it cannot carry a promotion, the days it was fitted to, and the
+    days its model file says for itself."""
+    out: dict[str, str] = {}
+    fitted: dict[str, dict[str, int]] = {}
+    files: dict[str, dict[str, int] | str] = {}
     for challenger in lineup.challengers:
         try:
-            report = load_model(challenger, registry)[1]
+            model, report, _ = load_model(challenger, registry)
         except LineupError:
             out[challenger.model] = NOT_LOADED
             continue
         if report.get("not_a_result") != 0:
             out[challenger.model] = PLACEHOLDER
-        fitted[challenger.model] = fitted_days(report)
-    return out, fitted
+        fitted[challenger.model] = vouched_days(model, report)
+        own = model.fitted("days")
+        files[challenger.model] = UNKNOWN if own is None else own
+    return out, fitted, files
 
 
 # ---- the command ----------------------------------------------------------------------------------------------------
@@ -427,6 +452,9 @@ def _report(desk: Desk, week: Week, lineup: Lineup, evidence: Evidence, gates: G
         },
         "gates": {"record": int(gates.record), "limits": int(gates.limits), "unfit": dict(sorted(gates.unfit.items()))},
         "fitted_days_by_source": {model: dict(days) for model, days in sorted(gates.fitted.items())},
+        "model_file_days_by_source": {
+            model: days if isinstance(days, str) else dict(days) for model, days in sorted(gates.files.items())
+        },
         "baseline_sleeve": desk.learn.baseline_sleeve,
         "reconciliation_breaks": evidence.breaks,
         "latched": {sleeve: sorted(models) for sleeve, models in sorted(evidence.latched.items())},

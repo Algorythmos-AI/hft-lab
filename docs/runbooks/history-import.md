@@ -114,8 +114,9 @@ Importing the same folder again changes nothing: every day says `unchanged`.
   days beside the recordings, in date order. A date that is in both stores is read from the recording, and
   the imported day of that date is left out and named. The feasibility map takes `--imports` the same way.
 - **Every count says where it came from.** The dataset, every result of the evaluation report (under
-  `sources`), the line training prints for each candidate, the weekly scorecard's training line and the
-  feasibility map say how many rows and days were `recorded` and how many `imported:<label>`.
+  `sources`), the model file itself (its own `sources`, under its hash), the lines training prints for each
+  candidate, the weekly scorecard's training line and the feasibility map say how many rows and days were
+  `recorded` and how many `imported:<label>`.
 - **Not a promotion.** The weekly rule asks that a model was fitted to at least its `min_days` days of the
   platform's own recordings. An imported day is never counted, so a model fitted to imports alone is kept
   with `too_few_own_days`, whatever it did in shadow.

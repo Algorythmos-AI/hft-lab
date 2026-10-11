@@ -175,6 +175,8 @@ def test_a_report_says_for_every_result_how_many_rows_were_recorded_and_how_many
     settings = load(tmp_path / "learn.yaml")
     model = parse((settings.models / f"{report['model']['hash']}.json").read_bytes())
     assert model.dataset_hash == report["dataset"]["content_hash"]  # the model is named by a dataset that says so
+    assert model.sources == sources["model"], "and the model file says the split itself, as its report does"
+    assert f"says in its own file that it was fitted to: {A} {sources['model']['rows'][A]} row(s) of 4 day(s)" in err
 
 
 def test_the_same_quotes_recorded_and_imported_are_two_datasets_two_reports_and_two_models(tmp_path):

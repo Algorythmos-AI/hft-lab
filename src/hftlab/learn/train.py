@@ -39,6 +39,8 @@ history (`imported:<label>`), and the command says the same on its own line for 
 is taken from the recording, and the imported day of that date is left out and named. A run that read a day
 whose sizes are an importer's placeholder says `not_a_result`. No imported day counts towards a promotion:
 the weekly decision reads `sources.model.days.recorded` and nothing else of it (`hftlab.learn.promote`).
+The model file says the split of the rows it was fitted to as well, under its own hash (`sources`, ADR 0022),
+and the weekly decision counts a day only where the file and the report agree.
 
 Nothing here reaches a venue, and nothing here changes what the trader runs: a candidate serves nowhere until
 the weekly decision (`python -m hftlab.learn.promote`) makes it a challenger.
@@ -115,10 +117,11 @@ class TrainRefused(Exception):
     """The run will not be made as things are. A person, or more recorded weeks, is needed; a retry is not."""
 
 
-def _model(dataset: Dataset, kind: str, params: dict[str, object]) -> Model:
+def _model(dataset: Dataset, kind: str, params: dict[str, object], positions: Sequence[int] | None = None) -> Model:
+    """A model file of the dataset. Its `sources` are the split of the rows at `positions`: those it was fitted to."""
     return Model(
         kind, dataset.pair, dataset.features, dict(dataset.label), dict(dataset.cost_model), dataset.size,
-        dataset.content_hash, params,
+        dataset.content_hash, params, dataset.split(positions),
     )  # fmt: skip
 
 
@@ -126,21 +129,21 @@ def ridge_model(dataset: Dataset, positions: Sequence[int], penalty: Fraction) -
     """A ridge regression of the outcome of each side on the features, fitted exactly to the rows at `positions`."""
     rows = [dataset.rows[position] for position in positions]
     targets = {BUY: [row.buy_micro for row in rows], SELL: [row.sell_micro for row in rows]}
-    return _model(dataset, "ridge", fit([row.features for row in rows], targets, penalty).params())
+    return _model(dataset, "ridge", fit([row.features for row in rows], targets, penalty).params(), positions)
 
 
 def gbm_model(dataset: Dataset, positions: Sequence[int], settings: Boosting) -> Model:
     """Boosted trees of the outcome of each side, fitted to the rows at `positions` and kept as whole numbers."""
     rows = [dataset.rows[position] for position in positions]
     targets = {BUY: [row.buy_micro for row in rows], SELL: [row.sell_micro for row in rows]}
-    return _model(dataset, GBM, boost([row.features for row in rows], targets, settings).params())
+    return _model(dataset, GBM, boost([row.features for row in rows], targets, settings).params(), positions)
 
 
 def seq_model(dataset: Dataset, positions: Sequence[int], settings: Network) -> Model:
     """A sequence network of the outcome of each side, fitted to the windows at `positions`, kept as whole numbers."""
     rows = [dataset.rows[position] for position in positions]
     targets = {BUY: [row.buy_micro for row in rows], SELL: [row.sell_micro for row in rows]}
-    return _model(dataset, SEQ, fit_network([row.features for row in rows], targets, settings).params())
+    return _model(dataset, SEQ, fit_network([row.features for row in rows], targets, settings).params(), positions)
 
 
 def fit_model(dataset: Dataset, positions: Sequence[int], settings: Settings) -> Model:
@@ -180,12 +183,12 @@ def room(dataset: Dataset, rows: int, settings: Settings, measure: Callable[[], 
 
 
 def flat_model(dataset: Dataset) -> Model:
-    """The baseline that never trades."""
+    """The baseline that never trades. It is fitted to nothing; its sources are those of the dataset it is for."""
     return _model(dataset, "flat", {})
 
 
 def random_model(dataset: Dataset, seed: int) -> Model:
-    """The baseline that takes a side by a seeded coin."""
+    """The baseline that takes a side by a seeded coin. Its sources, too, are the whole dataset's."""
     return _model(dataset, "random", {"seed": seed})
 
 
@@ -515,6 +518,7 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
         if not after.same_models(lineup):
             append(settings.lineup, after, action=REGISTER, at_ns=now, report=one.report_hash)
         say(f"{one.pair} at {one.horizon_ns} ns: model {one.model.content_hash[:12]}, report {one.report_hash[:12]}")
+        say(f"model {one.model.content_hash[:12]} says in its own file that it was fitted to: {one.model.fitted_to}")
     _write_run(settings.state_dir, said)
     print(json.dumps(said, sort_keys=True), flush=True)
     if any(json.loads(one.report)["not_a_result"] for one in trained):

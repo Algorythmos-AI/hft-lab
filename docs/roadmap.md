@@ -30,9 +30,12 @@ then the parts of the snapshot that later phases make real. More pairs and a sec
 tests against a deterministic fake broker and against synthetic streams and recordings the tests make
 themselves. That is all it has been run against:
 
-- The capability probe has connected to the real paper gateway once, at a weekend, when there are no quotes.
-  That is the one thing here that has touched anything real. The probe report the F1 gate asks for needs an
-  open market, and F1 is still open. Nothing else has connected to a gateway.
+- The capability probe has run against the real paper gateway, read-only, once with the market open: on
+  2026-10-11, in the minutes after the weekly open (`HFT-EXP-0007`). EUR.USD, USD.JPY, AUD.USD and GBP.USD
+  each resolve as spot and as a CFD, with five levels of market depth and historical ticks. **Nothing about
+  costs, tradability or order timing is measured:** no order was placed, and the spreads of those minutes are
+  not inputs to the cost model. That is the one thing here that has touched anything real, and F1 is still
+  open. Nothing else has connected to a gateway.
 - **Nothing has traded.** No order has been placed on the paper account. The process that would is written,
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
@@ -143,7 +146,7 @@ experiment is frozen, so the note stays as it was registered. The
 | Recording format and store | Written: `src/hftlab/record/` ([ADR 0012](adr/0012-recording-format.md)). Tested with a kill at every byte of a block, restarts, a full quota and an offload that does not confirm |
 | Recorder process | Written: `python -m hftlab.record`, on a market-data view that has no order methods. Run so far only against the fake broker (`--dry-run-seconds`) |
 | Replay and the day check | Written: `python -m hftlab.replay --day DIR --check`. Replay parity is tested on recordings of the fake broker |
-| Recording 24 hours on weekdays | **Not started.** It needs three things the owner does, in this order: the capability probe, the host's pre-flight day of measurements ([ADR 0007](adr/0007-shared-host-isolation.md)), and the install. None of the three has been run. What they need from this repository is written: see "Where the host layer stands" |
+| Recording 24 hours on weekdays | **Not started.** It needs three things the owner does, in this order: the capability probe, the host's pre-flight day of measurements ([ADR 0007](adr/0007-shared-host-isolation.md)), and the install. The probe has run once, read-only, at the weekly open, which does not close F1; the other two have not been run. What they need from this repository is written: see "Where the host layer stands" |
 | Exit gate: five days, every gap accounted for, replay parity, memory and disk inside budget | Open. The quota in `config/recorder.yaml` is a placeholder until the host's disk budget is measured |
 
 ## Where the host layer stands
@@ -176,9 +179,9 @@ waits, the timer times) is a first choice, marked as one where it is written.
 | Venue port | Done: `src/hftlab/venues/port.py`, with the shared guard ([ADR 0009](adr/0009-venue-port-guard-and-fake-broker.md), [ADR 0011](adr/0011-synchronous-pumped-port.md)) |
 | Paper lock in stages | Done: before connecting, after the handshake, before every order; a reconnect starts unchecked |
 | IBKR adapter against the fake broker | Done: `src/hftlab/venues/ibkr/` over `ib_async`, `src/hftlab/venues/fake/`, and a contract suite both pass. Written and tested without a gateway |
-| The probe | Written and tested against the fake broker. It has connected to the real paper gateway once, at a weekend, when there are no quotes; **it has not been run with the market open** ([runbook](runbooks/ibkr-probe.md)) |
-| Exit gate: the probe report | Open. It needs the owner's run with the market open: update rate, depth and the order round trip cannot be measured at a weekend |
-| Exit gate: decision records for the access route and the instrument form | Open. They follow the report; [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
+| The probe | Written and tested against the fake broker, and run once against the real paper gateway, read-only, at the weekly open ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)). It now says when the gateway is cut off from the broker, with an exit status of its own, and never overwrites a report. **It has not been run in liquid hours, and never with orders** ([runbook](runbooks/ibkr-probe.md)) |
+| Exit gate: the probe report | Open. One report exists: four pairs resolve as spot and as a CFD, with five levels of depth and historical ticks. It holds no update rate or spread of normal hours and no order round trip. Still needed: a read-only run in liquid hours, and a run with `--orders` with Read-Only API off |
+| Exit gate: decision records for the access route and the instrument form | Open, and **not written on purpose**: the evidence for them, the two runs above, does not exist yet. [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
 
 F1 is not finished until the last two rows are. Everything the adapter assumes about the gateway and could
 not check offline is listed at the end of the runbook.

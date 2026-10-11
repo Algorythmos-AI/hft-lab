@@ -1,4 +1,4 @@
-# ADR 0028: Imported history: a store of its own, provenance in the data, and no download
+# ADR 0028: Imported history: a store of its own, provenance in the data, no download, and no promotion on it
 
 - **Status:** accepted, 2026-10-11. Written and tested on a few hand-written rows in temporary folders. **No
   exported file has been read with it, and no model has been fitted to an imported day.**
@@ -151,6 +151,61 @@ venue's.
 A size imbalance computed on two placeholders is exactly zero on every row. That is a made-up constant, and
 it is why such a day is flagged rather than passed off: the day's provenance says `sizes: placeholder`.
 
+### 7. Everything that counts rows says where they came from
+
+- **A dataset** keeps, for every day of its stream in order, the day, its source and how many events it gave,
+  and all of it is in the dataset's hash. The same quotes recorded and imported are two datasets with two
+  hashes. `split` says of any set of its rows how many rows, and how many days, came from each source. A row
+  belongs to the day the event of its decision came from, counted by the event's number, not by a clock.
+- **A stream nobody vouched for is `unstated`**, never `recorded`. Only a day folder that says it is the
+  platform's own is counted as that.
+- **The evaluation report** has a `sources` block with one entry for each of its results, by name: the
+  three-way comparison, the interval, the deflated Sharpe ratio, the hold-out and the fitted model. Each is
+  the rows and days by source of exactly the rows that result was computed on. Training prints the same on a
+  line per candidate, and the weekly scorecard says how many of the fitted rows were not recorded.
+- **A model file** names its dataset by that hash, so two models fitted to different mixes of sources are two
+  models, and the report that carries the split is pinned beside the model, hash by hash, in the lineup. The
+  model file was not given a field of its own for the split: see "What is not here".
+- **The feasibility map** says the days and the events by source, and names the days whose sizes are
+  placeholders.
+- **A run that read a day with placeholder sizes says it is not a result**, in the way a run on placeholder
+  costs does: `placeholders.sizes`, `not_a_result`. The weekly decision already refuses a challenger whose
+  report says that.
+- **A shadow run over imported days** names them `history:<day>=imported:<label>` in the first line of its
+  journal. It used to call any day folder a recording.
+- `python -m hftlab.learn.train --imports <store>` and the feasibility command with the same option read
+  an import store beside the recordings. A date both hold is read from the recording, and the imported day
+  is left out and named: where the platform has its own evidence, somebody else's is not mixed into it.
+
+### 8. An imported day counts towards no promotion
+
+Results on somebody else's quotes are not this venue's results. A model fitted to them has learned another
+venue's spread, another venue's sizes and another clock. It may still be worth a week in shadow, which costs
+nothing; it is not to become the champion on that evidence.
+
+So the weekly rule ([ADR 0021](0021-validation-splits-trials-and-the-three-numbers.md),
+[ADR 0023](0023-weekly-learning-loop.md)) has a data requirement, in the pure decision and again in the
+command:
+
+- A challenger is promoted only if its model was fitted to at least the rule's `min_days` days of **this
+  platform's own recordings**. The weekly decision reads that number from the challenger's evaluation report
+  (`sources.model.days.recorded`), which is pinned by hash beside the model.
+- **Days of imported history are not counted, however many there are.** A report that does not say where its
+  days came from has no recorded day. The reason code is `too_few_own_days`.
+- A rule asks for at least one day, so a model fitted to imports alone passes no rule. A test trains the
+  same model on the same quotes twice, recorded and imported, gives both the same good week, and sees one
+  promoted and the other kept.
+
+The rule was given no new number. Its `min_days` is asked twice: of the week's shadow evidence, as before,
+and of the recorded days behind the model. A number of its own would have been cleaner, and was not added
+because the registered experiments (`HFT-EXP-0003`, `HFT-EXP-0004`) freeze the rule's numbers value for
+value, and a settings file with a key they do not have could not be the file they describe. A decision
+record that sets the rule can introduce one.
+
+This is a change to how a challenger is evaluated. It makes the rule stricter and can turn no "keep" into a
+"promote". The rule is not in force, no result exists that it could have affected, and it was asked for by
+the owner; the record of it is this one.
+
 ## Consequences
 
 - The owner can put months of history beside the recordings with one command, and can prove afterwards which
@@ -167,6 +222,26 @@ it is why such a day is flagged rather than passed off: the day's provenance say
 - The format's sizes are whole base-currency units. An export whose sizes are in another unit is read only
   with that unit stated; one stated wrongly gives sizes that are wrong by that factor, and nothing here can
   notice.
+- A model fitted to recordings alone is judged exactly as before, as long as it was fitted to as many recorded
+  days as the rule asks of the shadow week. A fold needs a week to train on and a week to test, so a model
+  that was evaluated at all has more than a week of days behind it.
+- A dataset's hash changed for every dataset (its version is 3): where the days came from is now in it.
+  Models and reports made before this change name datasets by the old hashes, and say nothing of sources, so
+  the weekly decision counts no recorded day for them. None exists outside a test.
 - Nothing here has read a real export. The two fixed layouts are written from their column order; the first
   real file of each may show a detail they do not cover, and the generic layout is the way round it until a
   parser version is added.
+
+## What is not here
+
+- **A field for the split in the model file.** The model file's format belongs to work that was under way in
+  parallel, and was not touched. The model is bound to the split through its dataset's hash and through the
+  report pinned beside it; reading the split needs the report. Adding `sources` to the model file is a new
+  version of that file and a small change.
+- **A number of its own for the data requirement**, for the reason in decision 8.
+- **A mark on the week's shadow evidence.** The weekly decision counts shadow days from the trader's
+  journals, and the trader reads no day folder of any store: it sees the venue's quotes, and its replay
+  re-reads its own session's tape. So an imported day cannot become a day of shadow evidence today, and
+  nothing checks that it never will. Anything that later lets the trader run over a store has to carry the
+  day's origin into its journal first.
+- **A way to set `terms_verified`.** Decision 4.

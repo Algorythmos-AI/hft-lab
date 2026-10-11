@@ -33,10 +33,14 @@ BOOSTING = Boosting(trees=20, max_depth=3, leaves=8, learning_rate_ppm=200_000, 
                     l2_ppm=1_000_000, leaf_scale=1000, seed=1)  # fmt: skip
 
 
-def register(registry: Path, seed: int = 1, *, blocks: int = 40, not_a_result: int = 1, kind: str = "ridge") -> Named:
+def register(
+    registry: Path, seed: int = 1, *, blocks: int = 40, not_a_result: int = 1, kind: str = "ridge",
+    fitted_days: dict[str, int] | None = None,
+) -> Named:  # fmt: skip
     """Fit a model to a planted stream and keep it, with a report that says how it is served, by their hashes.
 
-    A ridge model unless `kind` is `gbm`, which needs the optional ML set to be fitted.
+    A ridge model unless `kind` is `gbm`, which needs the optional ML set to be fitted. The report says the model
+    was fitted to five days of the platform's own recordings unless `fitted_days` says otherwise, by source.
     """
     stream = planted(seed, blocks)
     made = build(stream, features(), labels())
@@ -49,6 +53,7 @@ def register(registry: Path, seed: int = 1, *, blocks: int = 40, not_a_result: i
         "horizon_ns": model.label["horizon_ns"], "model": {"hash": model.content_hash, "kind": model.kind},
         "serving": {"features": SERVING, "feasibility": the_map(stream)},
         "summary": summarise(columns, 5, rows=len(made.rows)),
+        "sources": {"model": {"days": {"recorded": 5} if fitted_days is None else fitted_days}},
     }  # fmt: skip
     ModelRegistry(registry / "models").put(model)
     return Named(model.content_hash, keep_report(registry / "reports", (canonical(report) + "\n").encode("ascii")))

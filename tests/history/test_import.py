@@ -257,7 +257,7 @@ def test_the_command_prints_a_report_and_exits_0_and_2_when_it_refuses(tmp_path,
     report = json.loads(out)
     assert report["kind"] == "import-report" and report["label"] == LABEL and report["terms_verified"] is False
     assert report["files"][0]["rows_kept"] == 3 and len(report["files"][0]["sha256"]) == 64
-    assert "terms_verified: false" in err and "not this venue's quotes" in err
+    assert "terms_verified: false" in err and "no promotion" in err
     assert cli.main(arguments(tmp_path, folder, "--store", str(tmp_path / "record"))) == 2  # the recorder's own place
     assert "where the recorder writes" in capsys.readouterr().err
     assert cli.main([*arguments(tmp_path, folder)[:4], "two words", *arguments(tmp_path, folder)[5:]]) == 2

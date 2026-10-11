@@ -77,7 +77,8 @@ def test_the_report_holds_the_three_numbers_the_interval_the_deflated_sharpe_and
     assert isinstance(report["deflated_sharpe"]["ratio"], str), "a float is kept as the text that reads back to it"
     assert report["rows"] == {"dropped": report["dataset"]["dropped"], "counted_by_side": report["dataset"]["counted"]}
     assert set(report["rows"]["counted_by_side"]) == {"no_entry", "late_exit", "penalised"}
-    assert report["placeholders"] == {"cost_model": 1, "feasibility": 1, "learn": 1} and report["not_a_result"] == 1
+    assert report["placeholders"] == {"cost_model": 1, "feasibility": 1, "learn": 1, "sizes": 0}
+    assert report["not_a_result"] == 1
     assert report["serving"]["feasibility"]["placeholder"] is True
     assert [fold["purged_rows"] for fold in report["plan"]["folds"]] == [0, 0] and len(report["plan"]["weeks"]) == 3
     assert report["config"]["exit_wait_ns"] == 2 * 10**9 and report["dataset"]["label"]["stuck_increments"] == 40

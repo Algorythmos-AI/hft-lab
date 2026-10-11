@@ -14,6 +14,10 @@ The checks, each with its own reason code when it fails:
 
   rule_not_registered            the rule names no decision record: a rule nobody wrote down passes nothing
   too_few_days / too_few_trades  less shadow evidence than the rule asks for
+  too_few_own_days               the challenger's model was fitted to fewer days of this platform's own
+                                 recordings than the rule's `min_days`. A day of imported history is not
+                                 counted, however many there are: results on somebody else's quotes are not
+                                 this venue's results (ADR 0028)
   days_differ                    the two did not run over the same trading days, so they cannot be compared
   advantage_not_above_zero       the lower bound of the day-block bootstrap of the challenger's mean result per
                                  trade, less the champion's, after costs, is not above zero
@@ -22,6 +26,10 @@ The checks, each with its own reason code when it fails:
   drawdown_beyond_bound          the challenger's largest fall from a high is beyond the rule's bound
   reconciliation_breaks          the challenger's week had a reconciliation break
   challenger_latch_breached      the challenger breached its own loss latch in shadow
+
+The rule has one number of days, and it is asked twice: of the week's shadow evidence, and of the recorded
+days the model was fitted to. A model fitted to imported history alone has none of the second, and no rule
+passes it: `min_days` is at least one.
 
 Results are the shadow book's, in integer millionths of the quote currency per trade, listed by trading day.
 The function reads nothing else: no file, no clock, no process. It moves no model and sets no stage; who acts
@@ -66,11 +74,16 @@ class Rule:
 
 @dataclass(frozen=True, slots=True)
 class ShadowResult:
-    """What one model did in shadow: its result per trade after costs, by trading day, and what went wrong."""
+    """What one model did in shadow: its result per trade after costs, by trading day, and what went wrong.
+
+    `own_days` is how many days of this platform's own recordings the model was fitted to, as its evaluation
+    report says. Days of imported history are not in it, and a model nobody vouched for has none.
+    """
 
     by_day: Mapping[int, Sequence[int]]
     reconciliation_breaks: int = 0
     latch_breached: bool = False
+    own_days: int = 0
 
     @property
     def trades(self) -> int:
@@ -88,6 +101,7 @@ def decide(champion: ShadowResult, challenger: ShadowResult, rule: Rule) -> Verd
     if champion.latch_breached:
         return Verdict(ROLL_BACK, ("champion_latch_breached",))
     evidence: dict[str, int] = {"trades": challenger.trades, "days": len(challenger.by_day)}
+    evidence["own_days"] = challenger.own_days
     reasons: list[str] = []
 
     def check(passed: bool, code: str) -> None:
@@ -97,6 +111,7 @@ def decide(champion: ShadowResult, challenger: ShadowResult, rule: Rule) -> Verd
     check(rule.decision is not None, "rule_not_registered")
     check(len(challenger.by_day) >= rule.min_days, "too_few_days")
     check(challenger.trades >= rule.min_trades, "too_few_trades")
+    check(challenger.own_days >= rule.min_days, "too_few_own_days")
     same_days = set(champion.by_day) == set(challenger.by_day)
     check(same_days, "days_differ")
     how = {"seed": rule.seed, "draws": rule.draws, "level_ppm": rule.level_ppm}

@@ -2,7 +2,7 @@
 
 For the owner ([ADR 0028](../adr/0028-imported-history.md)). The platform's own recordings come first. Before
 enough of them exist, tick files you exported yourself can be read into a second store and used to fit a
-model. **They are never this venue's results.**
+model. They are used for nothing else: **an imported day counts towards no promotion.**
 
 **Nothing on this page has been followed with a real file.** The import has read hand-written rows in tests
 only. Correct this page in the pull request that follows its first real use.
@@ -110,12 +110,20 @@ Importing the same folder again changes nothing: every day says `unchanged`.
 
 ## 6. What an imported day may be used for
 
-- **Looking, for now.** The replay, the day check and the feasibility map read an imported day as they read a
-  recorded one. Training on imported days, and the split by source in every report, come with the change that
-  follows this one; until it is merged, do not point a training run at this store.
-- **Not a result.** Results on another feed's quotes are not this venue's results.
+- **Fitting a model, and looking.** `python -m hftlab.learn.train --imports var/history` reads the imported
+  days beside the recordings, in date order. A date that is in both stores is read from the recording, and
+  the imported day of that date is left out and named. The feasibility map takes `--imports` the same way.
+- **Every count says where it came from.** The dataset, every result of the evaluation report (under
+  `sources`), the line training prints for each candidate, the weekly scorecard's training line and the
+  feasibility map say how many rows and days were `recorded` and how many `imported:<label>`.
+- **Not a promotion.** The weekly rule asks that a model was fitted to at least its `min_days` days of the
+  platform's own recordings. An imported day is never counted, so a model fitted to imports alone is kept
+  with `too_few_own_days`, whatever it did in shadow.
+- **Not a result.** Results on another feed's quotes are not this venue's results. A shadow run over imported
+  days says `history:<day>=imported:<label>` in the first line of its journal, never `recording:`.
 - **A file without sizes shows prices only.** Each of its quotes carries a size of one unit, which no order
-  fills against. If the export tool can write sizes, export them.
+  fills against: its labels are "no entry" and its feasibility windows "unfillable". A training run or a map
+  that read such a day says it is not a result. If the export tool can write sizes, export them.
 - **`terms_verified: false` stays.** It changes only by a design record that names the label, says who read
   which terms on which date and what they allow.
 

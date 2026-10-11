@@ -29,6 +29,7 @@ from hftlab.calendar import Calendar, CalendarError, load_calendar
 from hftlab.core import Instrument, InstrumentKind, WallClock
 from hftlab.core._checks import pair as check_pair
 from hftlab.record.format import CorruptSegment, RecordedEvent
+from hftlab.record.origin import origin_of
 from hftlab.replay.reader import events, instruments
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.safety.venues import UnknownVenueError, venue
@@ -201,6 +202,11 @@ def run_shadow(args: argparse.Namespace, config: dict[str, Any]) -> int:
         if path.exists() and path.stat().st_size:
             raise ConfigError(f"{path} already holds a journal: a recorded day is run into a new file each time")
         label = "recording:" + ",".join(day.name for day in args.day)
+        origins = [origin_of(day) for day in args.day]
+        if any(origin.imported for origin in origins):
+            # The journal's first line says what the quotes were. Imported days are never called a recording.
+            label = "history:" + ",".join(f"{day.name}={o.key}" for day, o in zip(args.day, origins, strict=True))
+            print("shadow: IMPORTED history (ADR 0028): results on it are not this venue's results", file=sys.stderr)
     else:
         try:
             if not venue(args.venue).needs_paper_lock:

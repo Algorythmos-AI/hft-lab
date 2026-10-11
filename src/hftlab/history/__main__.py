@@ -73,7 +73,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     rows, days = said["rows"], said["days_by_status"]
     print(
         f"history: {'DRY RUN, nothing written. ' if args.dry_run else ''}{rows} rows; days {days}. "
-        "source: imported, terms_verified: false. These are not this venue's quotes.",
+        "source: imported, terms_verified: false. Imported days count towards no promotion.",
         file=sys.stderr,
     )
     return EXIT_OK

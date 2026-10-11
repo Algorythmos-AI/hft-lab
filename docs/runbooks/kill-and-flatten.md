@@ -44,4 +44,5 @@ It is section 4 of the [trader runbook](trader.md): what each switch does with a
 that `FLATTEN` has finished, and when it is safe to clear it. In short: `KILL` stops everything that adds to
 a position and leaves exits alone; `FLATTEN` also closes every open line through the risk gate, trying a
 refused close again on a fixed interval; neither cancels a working order, and stopping the process does not
-make you flat. None of it has been drilled on the host.
+make you flat. The trader closes everything by the `FLATTEN` path on its own, with no file set, when its
+event tapes reach their hard limit (trader runbook, section 8). None of it has been drilled on the host.

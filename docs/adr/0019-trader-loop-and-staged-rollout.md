@@ -88,7 +88,8 @@ Three, all of them closes, all journalled with where they came from:
 
 - **`FLATTEN`.** On a beat the trader passes on what the gate proposes; each close passes the gate's own
   check. For a sleeve in `shadow` the trader closes the shadow book's lines itself, and the switches stop
-  its entries the way the gate would.
+  its entries the way the gate would. The event tape at its hard limit is closed for by this same path, with
+  no switch set ([ADR 0027](0027-deploy-gate-and-reports.md), addendum).
 - **Inherited positions.** A session starts every sleeve from its initial state. A line the books hold at
   that moment is closed by the trader: one closing order at a time, through the gate like any exit, tried
   again no sooner than a configured interval. Until it is flat the sleeve may not trade that pair. A line
@@ -178,7 +179,8 @@ sent.
 - **The tape is large.** One line a quote, in text. Since this record was written it is cut into parts by UTC
   day and by size, its closed parts are compressed by the housekeeping job and all tapes are held under a
   quota (`hftlab.trader.tape`, the trader runbook). Nothing removes a tape, the backup does not hold them,
-  and the host's disk budget has not been measured with a trader running.
+  and the host's disk budget has not been measured with a trader running. The quota stops entries and then
+  closes positions; it does not stop the trader watching one (ADR 0027, addendum).
 - **The tape survives a kill, and all but its last beat survives a power cut.** Its lines reach the operating
   system at once. A closed part is synced before the next is opened, and with `fsync` on the part being
   written is synced on every beat. After a power cut the outbox, which is synced before every send, can

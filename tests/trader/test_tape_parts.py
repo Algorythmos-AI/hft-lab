@@ -1,8 +1,8 @@
 """The tape on disk: a head and parts cut by UTC day and by size, compressed when closed, counted against a quota.
 
 What must hold: the parts read in order are the tape as one file would have held it, so a replay is the same
-byte for byte wherever the cuts fell and whether or not a part is compressed; and the tapes never grow past
-their quota.
+byte for byte wherever the cuts fell and whether or not a part is compressed. What the trader does as the tapes
+near their quota is in tests/trader/test_tape_room.py.
 """
 from __future__ import annotations
 
@@ -13,12 +13,13 @@ import shutil
 import pytest
 import yaml
 
-from hftlab.trader import TapeError, tape
-from hftlab.trader.__main__ import main, watch_tapes
-from hftlab.trader.config import PART_BYTES, TraderConfigError, load, parse
-from hftlab.trader.tape import TapeFull, being_written, heads, housekeep, parts, read_tape, tape_bytes
+from hftlab.trader import TapeError, room, tape
+from hftlab.trader.__main__ import main
+from hftlab.trader.config import FLATTEN_SECONDS, PART_BYTES, SOFT_PERCENT, TraderConfigError, load, parse
+from hftlab.trader.tape import LiveEdge, being_written, heads, housekeep, parts, read_tape, tape_bytes
+from hftlab.venues.view import MarketDataView
 from tests.support import ROOT
-from tests.trader.kit import SECOND, T0, Desk, Pages, put_stage, raw_settings
+from tests.trader.kit import PAIRS, SECOND, T0, Desk, put_stage, raw_settings
 
 DAY = 86_400 * SECOND
 MIDNIGHT = (T0 // DAY + 1) * DAY  # 2025-10-10 00:00 UTC: Thursday evening in New York, the market open
@@ -147,43 +148,38 @@ def test_a_missing_part_or_one_cut_short_before_a_later_part_is_a_hole_and_is_re
 # ---- the quota -----------------------------------------------------------------------------------------------------
 
 
-def test_a_session_that_reaches_the_quota_ends_as_one_told_to_stop_and_the_next_is_refused(tmp_path):
-    desk = a_desk(tmp_path / "live", edge={"part_bytes": 3_000, "quota_bytes": 20_000})
-    days = tmp_path / "live" / "days"
-    assert desk.run(60) is False and desk.edge.full
-    desk.stop()
-    used = tape_bytes(days)
-    assert 20_000 <= used < 20_000 + 3_000, "it took no turn after the one that reached the quota"
-    assert read_tape(desk.day() / HEAD)[-1][0] == "stop" and identical(desk, tmp_path / "scratch")
-    before = sorted(path.name for path in desk.day().iterdir())
-    with pytest.raises(TapeFull, match="no session is begun until room is made"):
-        desk.session()
-    assert sorted(path.name for path in desk.day().iterdir()) == before, "refused with nothing written"
-    housekeep(days)  # compressing the closed parts is one way to make room
-    assert tape_bytes(days) < 20_000
-    desk.start()
-    desk.run(2)
-    assert len(heads(desk.day())) == 2
-
-
 def test_without_a_quota_nothing_is_counted_and_nothing_stops(tmp_path):
     desk = a_desk(tmp_path / "live")
-    assert desk.run(5) is False and not desk.edge.full
+    assert desk.run(5) is False and desk.edge.room() is None and desk.edge.level == 0 and not desk.edge.dark
 
 
-def test_the_owner_is_paged_once_when_the_tapes_are_near_their_quota_and_once_when_they_are_not(tmp_path):
-    settings = parse(raw_settings(state_dir=str(tmp_path), tape={"part_bytes": 100, "quota_bytes": 1_000}))
-    pages = Pages()
+def test_the_tapes_are_counted_and_the_decision_journal_which_is_the_record_is_not(tmp_path):
     (tmp_path / "days" / "2025-10-09").mkdir(parents=True)
     part = tmp_path / "days" / "2025-10-09" / "session-001.part-0001.2025-10-09.jsonl"
-    part.write_bytes(b"x" * 899)
-    watch_tapes(settings, pages)
-    assert pages.fired == [] and pages.resolved == ["tape_near_quota"]
     part.write_bytes(b"x" * 900)
-    watch_tapes(settings, pages)
-    assert pages.fired == ["tape_near_quota"]
+    (tmp_path / "days" / "2025-10-09" / "session-001.tape.jsonl").write_bytes(b"x" * 50)
     (tmp_path / "days" / "2025-10-09" / "decisions.jsonl").write_bytes(b"x" * 5_000)
-    assert tape_bytes(tmp_path / "days") == 900, "the decision journal is the record and is not counted"
+    assert tape_bytes(tmp_path / "days") == 950
+
+
+def test_an_edge_is_given_a_quota_with_a_reserve_under_it_and_a_soft_limit_under_that_or_none_of_them(tmp_path):
+    desk = Desk(tmp_path, paper=False)
+
+    def edge(**limits):
+        return LiveEdge(
+            MarketDataView(desk.broker), desk.clock, pairs=PAIRS, switches=frozenset, requests=tmp_path / "requests",
+            should_stop=lambda: True, **limits,
+        )  # fmt: skip
+
+    assert edge().room() is None
+    said = edge(quota_bytes=1_000, soft_bytes=600, reserve_bytes=300).room()
+    assert (said["soft_bytes"], said["hard_bytes"], said["quota_bytes"]) == (600, 700, 1_000)
+    for wrong in ({"quota_bytes": 1_000}, {"soft_bytes": 5}, {"reserve_bytes": 5},
+                  {"quota_bytes": 1_000, "reserve_bytes": 1_000}, {"quota_bytes": 1_000, "reserve_bytes": -1},
+                  {"quota_bytes": 1_000, "soft_bytes": 701, "reserve_bytes": 300},
+                  {"quota_bytes": 1_000, "soft_bytes": 0, "reserve_bytes": 300}):  # fmt: skip
+        with pytest.raises(ValueError, match=r"quota|soft limit"):
+            edge(**wrong)
 
 
 # ---- what reaches the disk -------------------------------------------------------------------------------------------
@@ -213,9 +209,21 @@ def test_with_fsync_on_the_part_is_synced_on_every_beat_and_every_file_when_it_i
 def test_the_shipped_settings_cut_and_bound_the_tape_and_a_block_that_is_wrong_is_refused():
     shipped = load(ROOT / "config" / "trader.yaml")
     assert shipped.tape_part_bytes == PART_BYTES == tape.PART_BYTES and shipped.tape_quota_bytes == 1_000_000_000
+    assert (shipped.tape_soft_percent, shipped.tape_flatten_ns) == (SOFT_PERCENT, FLATTEN_SECONDS * SECOND) == (
+        90, 300 * SECOND
+    ), "the shipped file writes both out, and they are the defaults"
+    assert "soft_percent: 90" in (ROOT / "config" / "trader.yaml").read_text()
     assert parse(raw_settings()).tape_quota_bytes is None, "a file without the block sets no quota"
+    plain = parse(raw_settings(tape={"part_bytes": 10, "quota_bytes": 50}))
+    assert (plain.tape_soft_percent, plain.tape_flatten_ns) == (90, 300 * SECOND)
+    given = parse(raw_settings(tape={"part_bytes": 10, "quota_bytes": 50, "soft_percent": 60, "flatten_seconds": 45}))
+    assert (given.tape_soft_percent, given.tape_flatten_ns) == (60, 45 * SECOND)
     for block in ({"part_bytes": 10}, {"part_bytes": 10, "quota_bytes": 5}, {"part_bytes": 0, "quota_bytes": 5},
-                  {"part_bytes": 10, "quota_bytes": 50, "keep": 1}, "64MB"):  # fmt: skip
+                  {"part_bytes": 10, "quota_bytes": 50, "keep": 1}, "64MB",
+                  {"part_bytes": 10, "quota_bytes": 50, "soft_percent": 0},
+                  {"part_bytes": 10, "quota_bytes": 50, "soft_percent": 100},
+                  {"part_bytes": 10, "quota_bytes": 50, "soft_percent": "90"},
+                  {"part_bytes": 10, "quota_bytes": 50, "flatten_seconds": 0}):  # fmt: skip
         with pytest.raises(TraderConfigError):
             parse(raw_settings(tape=block))
 
@@ -231,3 +239,13 @@ def test_the_housekeeping_command_compresses_closed_parts_and_says_what_the_tape
     count = len(parts(desk.day() / HEAD))
     assert f"tapes: compressed {count} closed part(s); {tape_bytes(tmp_path / 'live' / 'days')} bytes on disk" in said
     assert main(["--config", str(config), "--housekeep"]) == 0 and "compressed 0 closed" in capsys.readouterr().err
+    bounded = raw_settings(state_dir=str(tmp_path / "live"), tape={"part_bytes": 3_000, "quota_bytes": 10_000_000})
+    config.write_text(yaml.safe_dump(bounded))
+    assert main(["--config", str(config), "--housekeep"]) == 0
+    said = capsys.readouterr().err
+    reserve = room.reserve_bytes(parse(bounded), None)  # the shipped limits are not in force: nothing can be sent
+    assert f"bytes on disk, soft limit 9000000, hard limit {10_000_000 - reserve}, a quota of 10000000" in said
+    assert 10_000 < reserve < 200_000
+    config.write_text(yaml.safe_dump({**bounded, "tape": {"part_bytes": 3_000, "quota_bytes": reserve}}))
+    assert main(["--config", str(config), "--housekeep"]) == 0, "a quota too small does not stop the housekeeping"
+    assert f"bytes on disk, a quota of {reserve}" in capsys.readouterr().err

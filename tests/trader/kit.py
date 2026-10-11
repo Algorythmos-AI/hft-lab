@@ -13,7 +13,7 @@ from hftlab.calendar import Calendar
 from hftlab.core import InstrumentKind, SimClock
 from hftlab.journal import Journal, read
 from hftlab.safety import PaperGate
-from hftlab.trader import LiveEdge, Trader
+from hftlab.trader import LiveEdge, Trader, room
 from hftlab.trader.config import Settings, parse
 from hftlab.trader.replay import replay_day
 from hftlab.venues.fake import FakeBroker, FakeConfig, FakeMarket
@@ -92,7 +92,9 @@ class Desk:
         edge: dict[str, object] | None = None,
     ) -> None:
         self.folder, self.paper, self.scorer_times = folder, paper, scorer_times
-        self.edge_options = edge or {}  # how the tape is cut and counted: part_bytes, quota_bytes, fsync
+        # How the tape is cut and counted: part_bytes, quota_bytes, soft_bytes, reserve_bytes, fsync. What is not
+        # given here is what the settings and the limits give, as the command works it out.
+        self.edge_options = edge or {}
         self.settings: Settings = parse(settings or raw_settings())
         self.risk = limits({**WIDE, **(changes or {})}) if paper else None
         self.costs = costs or plain_costs()
@@ -109,15 +111,21 @@ class Desk:
 
     def start(self) -> Trader:
         """A process start: a new connection, a new trader, on the same files and the same broker."""
+        self.connect()
+        return self.session()
+
+    def connect(self) -> LiveEdge:
+        """The process's edge on a new connection, with no session begun on it yet."""
         lock = PaperGate(port=self.market.config.port, env={"MODE": "paper"})
         self.broker = FakeBroker(self.clock, self.market, gate=lock, backoff=Backoff(), auto_advance=True)
         source = self.broker if self.paper else MarketDataView(self.broker)
+        options = {**room.edge_options(self.settings, self.risk), **self.edge_options}
         self.edge = LiveEdge(
             source, self.clock, pairs=PAIRS, switches=lambda: frozenset(self.switched),
             requests=self.folder / "requests", should_stop=lambda: self.clock.now_ns() >= self.until,
-            venue=self.broker if self.paper else None, **self.edge_options,
+            venue=self.broker if self.paper else None, **options,
         )  # fmt: skip
-        return self.session()
+        return self.edge
 
     def session(self) -> Trader:
         """A new session on the connection in hand: what the process does by itself after a rollover."""
@@ -164,6 +172,9 @@ class Desk:
     # ---- reading --------------------------------------------------------------------------------------------------
 
     def day(self) -> Path:
+        """The folder of the day in hand: the kit's own trader's, or the newest when the command ran the sessions."""
+        if getattr(self, "trader", None) is None:
+            return sorted((self.folder / "days").iterdir())[-1]
         return self.folder / "days" / self.trader.label
 
     def decisions(self) -> list[dict[str, object]]:

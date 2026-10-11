@@ -15,8 +15,12 @@ long the child may take is `scorer:` in the learning settings (--learn), which a
 else, and only when a place asks for a process.
 
 What it refuses to start on (exit code 2): a venue that is not the registered paper venue, a paper-only lock
-that does not pass, settings or risk limits that cannot be read, and a sleeve whose stage lets it place paper
-orders while the limits are not in force.
+that does not pass, settings or risk limits that cannot be read, a sleeve whose stage lets it place paper
+orders while the limits are not in force, and a tape quota that cannot hold the reserve kept for closing.
+
+The tapes at a limit are not a reason to refuse (hftlab.trader.room). At their soft limit a session starts on
+exits only and says so; at their hard limit it closes what the broker book holds, ends, and the process waits
+for room, which the housekeeping job makes, and then begins the next session by itself.
 
 With the limits not in force it runs in SHADOW-ONLY mode, and says so: it holds a view of the venue that has no
 order methods, builds no order manager, and every sleeve's orders go to the shadow venue alone. That is what
@@ -50,11 +54,12 @@ from hftlab.learn.config import load as load_learning
 from hftlab.lineup.serve import PROCESS
 from hftlab.ops import host
 from hftlab.ops.alerts import Alerts, sender_from
-from hftlab.risk import RiskConfig, RiskConfigError, RiskNotInForce, file_switches, load_risk_config
+from hftlab.risk import ROOM, RiskConfig, RiskConfigError, RiskNotInForce, file_switches, load_risk_config
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.safety.venues import UnknownVenueError, venue
 from hftlab.scoring.client import Times
 from hftlab.shadow.__main__ import ConfigError
+from hftlab.trader import room
 from hftlab.trader.config import Settings, TraderConfigError, digest, load
 from hftlab.trader.replay import replay_day
 from hftlab.trader.session import Notify, Silent, Trader, TraderRefused
@@ -71,7 +76,6 @@ COSTS = Path("config/cost_model.yaml")
 LEARN = Path("config/learn.yaml")
 CALENDAR = Path("config/calendar")
 EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
-TAPE_WARN_PERCENT = 90  # ENGINEERING DEFAULT: the owner is paged when the tapes have used this much of their quota
 
 
 def say(text: str) -> None:
@@ -113,25 +117,23 @@ def only_one(state: Path) -> Iterator[None]:
         yield
 
 
-def watch_tapes(settings: Settings, notify: Notify) -> None:
-    """Page once when the tapes are near their quota, and once when they are not any more."""
-    quota = settings.tape_quota_bytes
-    if quota is None:
-        return
-    used = tape_bytes(settings.state_dir / "days")
-    if used * 100 >= quota * TAPE_WARN_PERCENT:
-        text = f"The tapes have used {used * 100 // quota}% of their quota. At 100% the trader stops; see its runbook."
-        notify.fire("tape_near_quota", "Tapes near their quota", text, 4)
-    else:
-        notify.resolve("tape_near_quota", "Tapes under their quota", "There is room again.")
+def keep_house(settings: Settings, risk: Path) -> int:
+    """Compress the closed parts of the tapes. It takes no lock: the part a running trader writes is left alone.
 
-
-def keep_house(settings: Settings) -> int:
-    """Compress the closed parts of the tapes. It takes no lock: the part a running trader writes is left alone."""
+    It says what the tapes use against their limits. The hard limit depends on the risk limits; when those
+    cannot be read, or the quota cannot hold the reserve, the housekeeping is done all the same and only the
+    quota is named.
+    """
     days = settings.state_dir / "days"
     done = housekeep(days)
-    quota = "no quota" if settings.tape_quota_bytes is None else f"a quota of {settings.tape_quota_bytes}"
-    say(f"tapes: compressed {done} closed part(s); {tape_bytes(days)} bytes on disk, {quota}")
+    against = "no quota" if settings.tape_quota_bytes is None else f"a quota of {settings.tape_quota_bytes}"
+    try:
+        found = room.limits(settings, limits(risk))
+    except (RiskConfigError, TraderConfigError):
+        found = None
+    if found is not None:
+        against = f"soft limit {found.soft}, hard limit {found.hard}, {against}"
+    say(f"tapes: compressed {done} closed part(s); {tape_bytes(days)} bytes on disk, {against}")
     return EXIT_OK
 
 
@@ -150,15 +152,25 @@ def serve(
     """Session after session until told to stop. Each starts as a restart would: from the journals, blind."""
     sessions = 0
     while not should_stop():
-        watch_tapes(settings, notify)
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=notify,
             config_digest=config_digest, scorer_times=times,
         )  # fmt: skip
         sessions += 1
         say(f"session {trader.session} of {trader.label}; stages {json.dumps(trader.stages.all(), sort_keys=True)}")
+        if edge.level != ROOM:
+            found = edge.room() or {}
+            say(
+                f"EXITS ONLY: the tapes hold {found.get('used_bytes')} bytes, at their {room.NAMES[edge.level]} limit "
+                f"(soft {found.get('soft_bytes')}, hard {found.get('hard_bytes')}, quota {found.get('quota_bytes')}). "
+                "Nothing is opened until room is made; see the runbook, section 8."
+            )
         trader.run()
         print(json.dumps(trader.close(), sort_keys=True), flush=True)
+        if trader.flat_at_hard_limit:
+            say("the tapes are at their hard limit and the broker book is flat: waiting for room, with no session")
+            if edge.wait_for_room():
+                say("the tapes have room again")
     return sessions
 
 
@@ -190,6 +202,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         raise TraderRefused(f"{settings.venue} is not a broker's paper account")
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
     times = scorer_times(args.learn, settings)
+    tape = room.edge_options(settings, risk)  # refused here, before any connection, when the quota is too small
     stopping: list[int] = []
     for number in (signal.SIGTERM, signal.SIGINT):
         signal.signal(number, lambda received, _frame: stopping.append(received))
@@ -236,8 +249,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         edge = LiveEdge(
             source, clock, pairs=settings.pairs, switches=file_switches(switch_dir, names),
             requests=settings.state_dir / REQUESTS, should_stop=should_stop, venue=full, poll_ns=settings.poll_ns,
-            beat_ns=settings.beat_ns, part_bytes=settings.tape_part_bytes, quota_bytes=settings.tape_quota_bytes,
-            fsync=settings.fsync,
+            beat_ns=settings.beat_ns, fsync=settings.fsync, **tape,
         )  # fmt: skip
         try:
             serve(
@@ -315,7 +327,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.stages:
             return show_stages(settings, sys.stdout)
         if args.housekeep:
-            return keep_house(settings)
+            return keep_house(settings, args.risk)
         if args.reset or args.demote:
             if not args.operator:
                 raise TraderRefused("--operator NAME is needed: the journal says who asked")

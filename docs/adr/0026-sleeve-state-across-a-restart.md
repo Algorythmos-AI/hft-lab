@@ -94,8 +94,9 @@ sleeves.
    | A line was added to the last part, or the last part is cut short, lost a line, or is gone | Cold, `TAPE` |
    | An older part is missing (a hole), cannot be read, or does not unpack | Cold, `TAPE` |
    | A part or the head was written again, even to the same length and the same last line | Cold, `TAPE` |
-   | The tapes are at their quota | No session is begun, so nothing is restored or journalled. The entry is left as it is, and is believed at the start after room was made if nothing above happened |
-   | The session was ended by the quota | It ended as a stop does: its last word, then its entry. As the row above |
+   | The tapes are at a limit when the session starts ([ADR 0027](0027-deploy-gate-and-reports.md), addendum; this row first said that no session is begun) | A session is begun, on exits only, and restores as any other: a limit moves no journal and no tape |
+   | The session was ended by the tapes' hard limit, flat | It ended as a stop does: its last word, then its entry. The start after it restores, and so does every start until something above happens |
+   | The session's tape ran out of reserve (its last line is `dark`) | It ended on purpose and wrote its entry, tied to the tape as it stands. Restores, though that session cannot be replayed past its tape |
    | Room was made by moving the last session's own tape away | Cold, `TAPE`. Moving older sessions' tapes changes nothing |
 
    A state "saved before a part rolled" is the fourth and fifth rows. The entry is written after the tape's
@@ -185,7 +186,8 @@ back. It may import the shadow runner and the sleeves; nothing imports it. No im
 - With the tape in parts: every row of the table in point 3, one test case each. A trader cut just before
   and just after its tape went on to a new part, with every part compressed between the stop and the start
   and without, decides exactly as the trader that was never stopped, and every session replays byte for
-  byte. A session the quota ended is restored from once room is made (`tests/trader/test_resume.py`).
+  byte. A session the tapes' hard limit ended is restored from, by the start at that limit and by the one
+  after room is made (`tests/trader/test_resume.py`).
 - A saved state damaged in any one place is refused or is exactly another state; one written under any
   other setting is refused (`tests/strategy/test_saved_state.py`).
 - Every session of those tests replays byte for byte, the ones that restored and the one that found the

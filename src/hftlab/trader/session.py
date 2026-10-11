@@ -6,6 +6,8 @@
         -> the connection is made safe (the manager's `reconcile`), or the reconciler runs on its schedule
         -> the shadow venue is fed the quote and says what became of earlier orders: the shadow book
         -> the trader's own closes: FLATTEN, a position inherited from before a restart, a shadow book ahead
+        -> the room on the event tape, when the turn says it changed: exits only at the soft limit, and at the
+           hard limit everything is closed before the session ends (hftlab.trader.room)
         -> each sleeve is shown its news and the events, and says what it wants
              an intent -> the risk gate (through the order manager) -> the guarded venue,
              and the same order, at the same moment, on the shadow venue
@@ -57,13 +59,13 @@ from hftlab.lineup import FILE as LINEUP
 from hftlab.lineup.journal import LineupError
 from hftlab.lineup.serve import lineup_or_none, make
 from hftlab.record.format import Heartbeat, describe
-from hftlab.risk import Reason, RiskConfig, RiskGate
+from hftlab.risk import HARD, ROOM, SOFT, Reason, RiskConfig, RiskGate, TapeRoom
 from hftlab.scoring.client import READY, Scorers, Times
 from hftlab.scoring.record import SUFFIX as ABSTAINED
 from hftlab.shadow.__main__ import make_sleeves, minimum_sizes
 from hftlab.strategy import Action, Cancel, Event, Intent, Placed, Refused, Saves, Sleeve
-from hftlab.trader import resume
-from hftlab.trader.config import Settings
+from hftlab.trader import resume, room
+from hftlab.trader.config import Settings, TraderConfigError
 from hftlab.trader.slippage import Matched, report
 from hftlab.trader.stages import BREAK, LATCH, MIN_SIZE, OFF, PAPER, SHADOW, STEPPED_DOWN, Change, Stages, day_of
 from hftlab.trader.tape import Beat, Edge, Opened, Request, Step
@@ -84,6 +86,9 @@ SEEDS: Final = 1_000_000  # the shadow venue's seed is the configured one times 
 SLEEVE, FLATTEN, INHERIT, ALIGN = "sleeve", "flatten", "inherit", "align"  # where an order came from
 UNVERIFIED: Final = -1  # in a mark, where the number of entries would be: the journal's chain does not verify
 _SLEEVE_LATCHES: Final = (Reason.DAILY_LOSS_SLEEVE.value, Reason.DRAWDOWN_SLEEVE.value)
+_TAPE_CODES: Final = {ROOM: "", SOFT: Reason.TAPE_SOFT_LIMIT.value, HARD: Reason.TAPE_HARD_LIMIT.value}
+TAPE_SOFT, TAPE_HARD = "tape_near_quota", "tape_hard_limit"  # the alerts of the two limits on the tapes,
+TAPE_OVERDUE, TAPE_DARK = "tape_flatten_overdue", "tape_reserve_exhausted"  # and of the two ways the closing goes badly
 _ENDED: Final = {
     Stage.FILLED: OrderState.FILLED,
     Stage.CANCELLED: OrderState.CANCELLED,
@@ -187,6 +192,10 @@ class Trader:
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
+        try:
+            tape_limits = room.limits(settings, risk)  # refused before anything of this session is written
+        except TraderConfigError as exc:
+            raise TraderRefused(str(exc)) from exc
         self._clock = SimClock(opened.at_ns)
         self._instruments = {instrument.pair: instrument for instrument in opened.instruments}
         self._day = day_of(opened.at_ns)
@@ -311,6 +320,12 @@ class Trader:
         self._counts = {name: {"decisions": 0, "orders": 0, "refused": 0, "fills": 0} for name in self._names}
         self._n = 0
         self._day_over = False
+        self._room = ROOM  # the room on the tapes, as the turns have said; a session is told on its first turn
+        self._hard_since: int | None = None  # when the hard limit was reached: the closing is timed from here
+        self._overdue = False  # the closing took longer than its time limit, and the owner has been paged
+        self._flat = False  # at the hard limit the broker book is flat: the session ends
+        self._dark: bool | None = None  # whether the tape has stopped for want of reserve; None: not looked at yet
+        self._connection = opened.state  # the connection as the last turn saw it, for the session's last status
         self._status_path = self._folder / "status.json" if status else None
 
         # ---- the decision journal of the day ------------------------------------------------------------------------
@@ -332,7 +347,7 @@ class Trader:
             mode="paper" if self.paper else "shadow_only", stages=self._stages.all(), opening=self._opening,
             limits=risk.decision if risk else None, cost_model=model.as_dict(), config=config_digest,
             instruments=[describe(instrument) for instrument in self._instruments.values()],
-            serving=served.serving,
+            serving=served.serving, tape=None if tape_limits is None else tape_limits.as_dict(),
         )  # fmt: skip
         for name in sorted(served.serving):
             if name in served.refused:
@@ -385,6 +400,11 @@ class Trader:
         """True once a turn at or after the day's closing rollover has been taken: the session is to end."""
         return self._day_over
 
+    @property
+    def flat_at_hard_limit(self) -> bool:
+        """True once the tapes were at their hard limit and the broker book was flat: the session ended for that."""
+        return self._flat
+
     def _switches(self) -> frozenset[str]:
         """What the risk gate is told about the switches: as they were read at the last beat, never the files."""
         if self._switched is None:
@@ -396,7 +416,7 @@ class Trader:
     def run(self) -> bool:
         """Take turns until the edge has no more or the day is over. True when the day's close was seen."""
         try:
-            while not (self._day_over or self._renew):
+            while not (self._day_over or self._renew or self._flat):
                 step = self._edge.next(urgent=self._manager is not None and self._manager.blind)
                 if step is None:
                     break
@@ -410,6 +430,9 @@ class Trader:
         """One turn. Its time is the time of everything decided on it."""
         now = self._clock.advance_to(max(self._clock.now_ns(), step.at_ns))
         self._n += 1
+        self._connection = step.state
+        if step.room is not None:
+            self._on_room(step.room, now)  # first: everything decided on this turn is decided under it
         market: list[Event] = []
         for event in step.events:
             self._from_venue(event, now, market)
@@ -429,6 +452,8 @@ class Trader:
         self._scorers.tend()
         if step.beat is not None:
             self._watch_scorers()
+            self._watch_tape()
+        self._watch_closing(now)
         if step.beat is not None and self._status_path is not None:
             self._write_status(now, step.state)
         if now >= self._day:
@@ -512,6 +537,91 @@ class Trader:
             "request", what=request.what, subject=request.subject, value=request.value, operator=request.operator,
             done=done, refused=said,
         )  # fmt: skip
+
+    # ---- the room on the event tape (ADR 0027, addendum) -------------------------------------------------------------
+
+    def _on_room(self, level: int, now: int) -> None:
+        """The turn says the room on the tapes changed. The risk gate is shown it; one line, one page.
+
+        At the soft limit the gate's verdict is exits only, for every sleeve, and the sleeves that trade on
+        the shadow venue alone are stopped the way the switches stop them. At the hard limit the gate also
+        proposes the closes it proposes under FLATTEN, and `_own_closes` passes them on, on every beat.
+        """
+        before, self._room = self._room, level
+        if self._gate is not None:
+            self._gate.observe(TapeRoom(level))
+        if level != before:  # a session's first turn says the room whatever it is: room from the start is no news
+            self._write("tape", room=room.NAMES[level], before=room.NAMES[before], code=_TAPE_CODES[level])
+        self._hard_since = now if level == HARD else None
+        if level != HARD:
+            # Also what a session before this one left firing: a page is taken back by whoever sees it is over.
+            self._overdue = False
+            self._notify.resolve(TAPE_HARD, "Tapes under their hard limit", "Nothing is being closed for the tapes.")
+            self._notify.resolve(TAPE_OVERDUE, "The tapes have room again", "The closing is no longer forced.")
+        if level == ROOM:
+            self._notify.resolve(TAPE_SOFT, "Tapes under their soft limit", "There is room again: entries are allowed.")
+        elif level == SOFT:
+            text = "The tapes are at their soft limit. Nothing is opened; exits go on. Make room: the trader runbook."
+            self._notify.fire(TAPE_SOFT, "Tapes at their soft limit: exits only", text, 4)
+        else:
+            text = "The tapes are at their hard limit. Every position is being closed, then the session ends."
+            self._notify.fire(TAPE_HARD, "Tapes at their hard limit: closing everything", text, 5)
+
+    def _watch_closing(self, now: int) -> None:
+        """At the hard limit, once the turn is done: flat, and the session ends; past the time limit, and it stays.
+
+        Flat is first the broker book's: no line, no order on its way, and a connection that has been made
+        safe, without which nobody knows. The shadow book is closed too, and waited for, but only as long as
+        the time limit: it holds nobody's money, and what it still holds then is written down and left to the
+        next session. Past the time limit with anything open at the broker the owner is paged at the highest
+        priority and the journal says exactly what is open; the session, the reconciler and the closes go
+        on, because the alternative is a position nobody watches.
+        """
+        if self._room != HARD or self._hard_since is None or self._flat:
+            return
+        manager = self._manager
+        held = sorted(manager.book.open_lines().items()) if manager else []
+        flying = sorted(manager.in_flight()) if manager else []
+        blind = bool(manager is not None and manager.blind)
+        late = now - self._hard_since >= self._settings.tape_flatten_ns
+        if not (held or flying or blind):
+            shadow = sorted(self._shadow_book.open_lines().items())
+            if (shadow or self._shadow.open_orders()) and not late:
+                return
+            self._flat = True
+            left = [[name, pair, quantity] for (name, pair), quantity in shadow]
+            self._write("tape_flat", overdue=int(self._overdue), shadow=left)
+            if self._overdue:
+                self._notify.resolve(TAPE_OVERDUE, "Flat at the tapes' hard limit", "Everything is closed.")
+            return
+        if not self._overdue and late:
+            self._overdue = True
+            listed = [[name, pair, quantity] for (name, pair), quantity in held]
+            self._write("tape_overdue", open=listed, in_flight=flying, blind=int(blind))
+            text = (
+                f"NOT FLAT at the tapes' hard limit after {self._settings.tape_flatten_ns // 1_000_000_000} s: "
+                f"{len(held)} open line(s), {len(flying)} order(s) on their way. The trader stays up on exits only and "
+                "goes on closing; see its runbook, section 8."
+            )
+            self._notify.fire(TAPE_OVERDUE, "NOT FLAT at the tapes' hard limit", text, 5)
+
+    def _watch_tape(self) -> None:
+        """On a beat: the owner is told when the reserve itself is used up and the tape has stopped.
+
+        Not journalled: a session that has gone dark is past what its tape can replay.
+        """
+        found = self._edge.room()
+        if found is None or bool(found["dark"]) == self._dark:
+            return
+        self._dark = bool(found["dark"])
+        if self._dark:
+            text = (
+                "The tapes' reserve is used up. The session goes on, on exits only, and is no longer recorded: its "
+                "replay ends here. Make room now; see the trader runbook, section 8."
+            )
+            self._notify.fire(TAPE_DARK, "The tape has stopped; the trader has not", text, 5)
+        else:
+            self._notify.resolve(TAPE_DARK, "The tape is being written again", "This session is recorded.")
 
     # ---- the connection, the latches and the break ----------------------------------------------------------------
 
@@ -663,12 +773,16 @@ class Trader:
     # ---- the trader's own closes ----------------------------------------------------------------------------------
 
     def _own_closes(self, now: int) -> None:
-        """On a beat: the FLATTEN closes, what was inherited from before this session, and a shadow book ahead."""
+        """On a beat: the FLATTEN closes, what was inherited from before this session, and a shadow book ahead.
+
+        The tapes at their hard limit are closed for as FLATTEN is, in both books: the gate proposes the paper
+        closes itself, and the lines of a sleeve that trades on the shadow venue alone are closed here.
+        """
         switched = self._switched
         if self._gate is not None and self._manager is not None:
             for order in self._gate.flatten_orders():
                 self._close_on_paper(order, now)
-        if switched is not None and self._risk_flatten(switched):
+        if (switched is not None and self._risk_flatten(switched)) or self._room == HARD:
             for (name, pair), held in sorted(self._shadow_book.open_lines().items()):
                 if name in self._names and self._stages.stage(name) == SHADOW:
                     self._close_line(FLATTEN, name, pair, held, now)
@@ -980,7 +1094,9 @@ class Trader:
         kill = self._risk.kill_switch if self._risk else "KILL"
         if kill in self._switched:
             return Reason.KILL_SWITCH.value
-        return Reason.FLATTEN_SWITCH.value if self._risk_flatten(self._switched) else None
+        if self._risk_flatten(self._switched):
+            return Reason.FLATTEN_SWITCH.value
+        return _TAPE_CODES[self._room] or None  # the tapes at a limit stop its entries as the gate stops the others'
 
     def _to_paper(self, order: Order, instrument: Instrument, source: str, *, reducing: bool) -> str | None:
         """Propose an order to the order manager, which asks the risk gate. Sent, it is mirrored on the shadow venue.
@@ -1102,7 +1218,10 @@ class Trader:
     def _write_status(self, now: int, state: ConnectionState) -> None:
         """What the status command reads. Replaced whole, so a reader never sees half of it."""
         assert self._status_path is not None
-        said = {**self.summary(), "at_ns": now, "connection": state.value, "latched": sorted(self._latched)}
+        said = {
+            **self.summary(), "at_ns": now, "connection": state.value, "latched": sorted(self._latched),
+            "tape": self._edge.room(),
+        }  # fmt: skip
         partial = self._status_path.with_suffix(".partial")
         partial.write_text(json.dumps(said, sort_keys=True) + "\n", encoding="utf-8")
         os.replace(partial, self._status_path)
@@ -1124,6 +1243,8 @@ class Trader:
         self._write("slippage", lines=self.slippage())
         result = self.summary()
         self._write("stop", summary=result, day_closed=int(self._day_over))
+        if self._status_path is not None:
+            self._write_status(now, self._connection)  # its last word: a session can end between two beats
         self._stages.end(now)
         self._edge.stop(now)
         states, in_flight = self._kept()

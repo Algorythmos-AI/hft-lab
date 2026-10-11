@@ -7,7 +7,8 @@ and what its journal held when it was built. So a recorded day replays to the sa
     gate.observe(event)     a quote, a fill, a commission, an order event, a change of connection, a break
     gate.quiet(pair, at)    the venue answered and the pair's book had not changed: its quote is not stale
     gate.check(order)       the verdict; an order that is allowed is counted and its size is held at once
-    gate.flatten_orders()   while FLATTEN is set: the orders that close what the book holds
+    gate.flatten_orders()   while FLATTEN is set, or the event tape is at its hard limit: the orders that close
+                            what the book holds
 
 A verdict is ALLOW, REFUSE, or EXITS_ONLY: entries are stopped and an order may go only if it cannot leave the
 sleeve holding more than it holds, or holding the other way (`hftlab.risk.verdict`).
@@ -58,6 +59,7 @@ from hftlab.core import (
 from hftlab.core._checks import token
 from hftlab.journal import Journal, read
 from hftlab.risk.config import LossLatch, RiskConfig, RiskConfigError
+from hftlab.risk.room import HARD, ROOM, SOFT, TapeRoom
 from hftlab.risk.verdict import Outcome, Reason, Verdict
 from hftlab.venues.port import CommissionEvent, ConnectionEvent, ConnectionState
 
@@ -142,6 +144,7 @@ class RiskGate:
         self._now = 0
         self._state = ConnectionState.DISCONNECTED
         self._broken = False
+        self._room = ROOM  # the room on the trader's event tape, as last shown; not journalled, shown again at a start
         self._quotes: dict[str, Quote] = {}
         self._fresh: dict[str, int] = {}
         self._quoted: set[str] = set()  # pairs quoted on the connection in hand; only those can be confirmed fresh
@@ -195,6 +198,8 @@ class RiskGate:
                 self._quoted.clear()
         elif isinstance(event, BreakEvent):
             self._broken = event.broken
+        elif isinstance(event, TapeRoom):
+            self._room = event.level
 
     def quiet(self, pair: str, at_ns: int) -> None:
         """The venue confirmed that this pair's book has not changed: its last quote is as fresh as `at_ns`."""
@@ -332,6 +337,10 @@ class RiskGate:
             stopping.append(Reason.KILL_SWITCH)
         if self._config.flatten_switch in switched:
             stopping.append(Reason.FLATTEN_SWITCH)
+        if self._room == SOFT:
+            stopping.append(Reason.TAPE_SOFT_LIMIT)
+        elif self._room == HARD:
+            stopping.append(Reason.TAPE_HARD_LIMIT)
 
         if not self._calendar.is_open(now):
             refusing.append(Reason.MARKET_SHUT)
@@ -435,7 +444,8 @@ class RiskGate:
     # ---- FLATTEN ------------------------------------------------------------------------------------------------
 
     def flatten_orders(self) -> tuple[Order, ...]:
-        """While FLATTEN is set: one closing order for each line the book holds that has no order in flight.
+        """While FLATTEN is set, or the tape is at its hard limit: one closing order for each line the book holds
+        that has no order in flight.
 
         Each is a market order for what the book holds, never more, and no larger than the pair's order limit.
         They are proposals: each still has to pass `check`, like any order. A line with an order in flight
@@ -446,10 +456,13 @@ class RiskGate:
         not one per call. A close that was allowed needs no wait: when it has ended, what is left follows.
         """
         now = self._tick()
-        try:
-            if self._config.flatten_switch not in self._switches():
-                return ()
-        except OSError:
+        closing = self._room == HARD  # shown to the gate, not read: it holds when the switches cannot be read
+        if not closing:
+            try:
+                closing = self._config.flatten_switch in self._switches()
+            except OSError:
+                closing = False
+        if not closing:
             return ()
         busy = {(pending.order.sleeve, pending.order.pair) for pending in self._pending.values()}
         out = []

@@ -45,7 +45,11 @@ trader: session 1 of 2026-10-14; stages {"control": "shadow", "idle": "shadow"}
 | `... may place paper orders by the stage journal, and the risk limits are not in force` | A sleeve's stage is above `shadow` and `config/risk.yaml` is not in force. One of the two is wrong |
 | `another trader holds ...` | One is already running |
 | `a journal or a tape cannot be used` | A journal does not verify. It is never repaired: keep the file, and read section 6 |
-| `... the tapes hold N of M bytes: no session is begun until room is made` | The tapes are at their quota. Section 8 |
+| `tape.quota_bytes of N cannot hold the reserve ... the quota must be at least M` | The quota is too small for the limits: closing what they allow could not be recorded. Section 8, "If the start is refused" |
+| `tape.flatten_seconds is too short for the limits` | The largest book the limits allow cannot be closed inside the time limit. The same section |
+
+Full tapes are **not** a reason it refuses. With the tapes at a limit it starts and says
+`trader: EXITS ONLY: the tapes hold N bytes, at their soft limit (soft S, hard H, quota Q)`: section 8.
 
 **If it says `PAPER: limits in force by HFT-DEC-NNNN`** and you did not expect that, stop it (section 4).
 Paper orders are possible only after a decision record set the limits and another approved the sleeve's
@@ -104,6 +108,9 @@ There is no command that takes a sleeve up.
 
 **FLATTEN has finished when** `sudo hft-status` shows `0 open position(s)` on the trader line. Then, and not
 before, remove the file.
+
+The trader closes everything by this same path, with no file set, when its tapes reach their hard limit
+(section 8). `sudo hft-status` then shows `AT THE HARD LIMIT: closing everything` and `FLATTEN off`.
 
 **If positions stay open under FLATTEN,** the closes are being refused. The day's decisions say with which
 code: `grep '"verdict"' var/trader/days/<date>/decisions.jsonl | tail`. `STALE_QUOTE` and `MARKET_SHUT` mean
@@ -180,6 +187,10 @@ A day replays the same whether its tape is in one part or many, and whether the 
 not. `refused: ... one is missing, and the tape has a hole` means a part of that session was moved away or
 removed: bring it back beside the others and replay again.
 
+A session that says `"ended": "dark"` ran out of the tapes' reserve and went on unrecorded (section 8). It is
+identical as far as its tape goes, and `replayed_bytes` is smaller than `live_bytes`: the rest of that
+session was decided and journalled, and cannot be replayed.
+
 ## 8. The tapes and their quota
 
 The tape is what the trader was shown from outside, one line each: it is what a replay runs on. On disk, in
@@ -194,22 +205,78 @@ the day's folder:
 Closed parts are compressed by the hourly `hft-housekeep.service`, after it has done the recording's own
 housekeeping. By hand: `trader --housekeep`.
 
-**You should see** `trader: tapes: compressed N closed part(s); B bytes on disk, a quota of Q`. It never
+**You should see** `trader: tapes: compressed N closed part(s); B bytes on disk, soft limit S, hard limit H,
+a quota of Q`. It never
 touches the part a running trader is writing, and it deletes nothing but the plain copy of a part whose
 compressed copy it has read back and found the same.
 
-All tapes together are held under `tape.quota_bytes` in `config/trader.yaml`. That number is a
-**placeholder**: set it from the host's measured disk budget, by pull request, before the trader runs. The
-decision journals and the other journals are not counted: they are the record, and they are small.
+All tapes together are held under `tape.quota_bytes` in `config/trader.yaml`. That number, and the two
+beside it, are **placeholders**: set them from the host's measured disk budget, by pull request, before the
+trader runs. The decision journals and the other journals are not counted: they are the record, and they
+are small.
 
-- At 90% you get one page, `hft:tape_near_quota`, when a session starts.
-- At 100% the running session takes no further turn. It ends as it does on a stop: journals flushed, working
-  orders left to the order manager's rules, **positions left as they are**. The next start is refused (exit
-  code 2, not restarted). So make room when the page comes, not after.
-- **To make room:** run `trader --housekeep` first. If that is not enough, move the oldest day folders'
-  `session-*` files to another disk, whole sessions at a time, head and parts together. The days you move
-  can be replayed again only after they are moved back. Nothing in this platform removes a tape, and the
-  backup does not hold them ([backup](backup.md)).
+**The quota never stops the trader watching a position**
+([ADR 0027](../adr/0027-deploy-gate-and-reports.md), addendum). There are two limits under it:
+
+```
+0 ............ soft .............. hard ............................ quota
+  everything     exits only           closing only: the reserve
+```
+
+| The tapes reach | The trader | You get | You do |
+|---|---|---|---|
+| the soft limit: `tape.soft_percent` of the quota, 90 as shipped | opens nothing more. Exits go on. Stages are not touched | one page, `hft:tape_near_quota`, "Tapes at their soft limit: exits only" | **Make room now** (below). It trades again by itself within a second of there being room |
+| the hard limit: the quota less a reserve worked out from `config/risk.yaml` | closes every position, as under `FLATTEN` but with no file set, and ends the session when the broker book is flat. Then it waits, running, with no session | one page at the highest priority, `hft:tape_hard_limit` | Make room. It begins a session by itself when the tapes are under the hard limit |
+| the hard limit, and a position is still open after `tape.flatten_seconds` (300 as shipped) | **stays up**, on exits only, and goes on proposing the closes | one page at the highest priority, `hft:tape_flatten_overdue`, "NOT FLAT at the tapes' hard limit" | Read what is open and why (below). Make room |
+| the quota itself: the reserve is used up | **stays up** as above, and stops writing its tape. Everything else is still written | one page at the highest priority, `hft:tape_reserve_exhausted` | Make room at once. That session can be replayed only as far as its tape goes |
+
+**Where it stands.** `sudo hft-status` has a line under the trader:
+
+```
+             tapes: 912,345,678 bytes; soft limit 900,000,000, hard limit 950,000,000, quota 1,000,000,000 (91%); AT THE SOFT LIMIT: exits only
+```
+
+The bytes are counted when you run it; the limits are the trader's last word. The status shows a warning at
+either limit; the pages are the trader's own. `trader --housekeep` prints the same three numbers, and the
+daily summary shows them on its `disk` line.
+
+**To make room:** run `trader --housekeep` first. If that is not enough, move the oldest day folders'
+`session-*` files to another disk, whole sessions at a time, head and parts together. The days you move can
+be replayed again only after they are moved back. Nothing in this platform removes a tape, and the backup
+does not hold them ([backup](backup.md)). You do not restart anything: the running trader counts the tapes
+again every second while it is at a limit, writes a `tape` line into the day's decisions when the room
+changes, and takes back its page.
+
+**What the day's decisions say.** `grep -E '"type":"tape' var/trader/days/<date>/decisions.jsonl`:
+
+| Line | It means |
+|---|---|
+| `"type":"tape","room":"soft","code":"TAPE_SOFT_LIMIT"` | From this turn on nothing is opened. Refused entries carry that code |
+| `"type":"tape","room":"hard","code":"TAPE_HARD_LIMIT"` | From this turn on everything is closed |
+| `"type":"tape","room":"room"` | There is room again: back to normal |
+| `"type":"tape_flat"` | The broker book is flat at the hard limit: the session ends. `shadow` lists what the shadow book still held, if the time limit passed first |
+| `"type":"tape_overdue","open":[...],"in_flight":[...],"blind":0` | The time limit passed. `open` is every line still held, with its quantity; `in_flight` every order on its way; `blind: 1` means the connection is not safe yet and nothing can be sent (section 5) |
+
+**If it says NOT FLAT,** the closes are being refused, and the reason is the same as under `FLATTEN`
+(section 4): `grep '"verdict"' var/trader/days/<date>/decisions.jsonl | tail`. `PRICE_COLLAR` is a book
+beyond even the exit collar, `STALE_QUOTE` and `MARKET_SHUT` are no market to close into. They are tried
+again by themselves, every `flatten_retry_seconds`, and the position is closed when the book allows it.
+**Do not stop the trader:** it is the thing that is watching the position. Make room, so that it goes on
+being recorded.
+
+**If the trader is restarted while the tapes are at a limit,** it starts. It reconciles, closes what a
+kill left open if the tapes are at their hard limit, and waits for room as above. With no room at all
+it still starts: it writes its head, about a kilobyte, which is the only thing that can pass the quota, and
+runs unrecorded until there is room.
+
+**If the start is refused** with `tape.quota_bytes of N cannot hold the reserve`, the settings do not fit
+together, and no trader should run until they do. The reserve is what the tape can take in
+`tape.flatten_seconds` when everything goes wrong at once, and most of it is the venue's answers while a
+lost connection is made safe: it grows with the desk's `max_orders_per_minute` and with the time limit.
+The message names the least quota that works. The ways out, each a pull request: a larger `quota_bytes`
+inside the disk budget, a lower `soft_percent`, a shorter `flatten_seconds`, or fewer orders a minute in
+`config/risk.yaml` (which needs its decision record). `tape.flatten_seconds is too short for the limits`
+is the other way round: the largest book the limits allow cannot be closed in that time.
 
 **What a power cut can lose.** A kill of the process loses no line of the tape. A power cut is different:
 
@@ -246,8 +313,8 @@ page, `hft:sleeve-state`, naming each sleeve and its reason; it resolves at the 
 | `IN_FLIGHT`, `STAGE`, `SETTINGS`, `ABSENT` | One sleeve only: it had an order on its way, its stage or its settings changed, or it is new | Nothing |
 
 Things that do **not** make a start cold: the housekeeping job compressing the tape's parts, the last part
-among them; moving older sessions' tapes to another disk; a start refused because the tapes are at their
-quota (no session began, and the state is still there for the start after room is made).
+among them; moving older sessions' tapes to another disk; the tapes being at a limit (section 8), whether
+the session before ended there or this one starts there.
 
 Never edit, shorten or delete `sleeves.jsonl` to "fix" a cold start, and never copy one in from a backup to
 get a warm one: a restored file names a tape the backup does not hold, and is not believed.

@@ -12,10 +12,14 @@ from hftlab.risk.config import (
     parse_risk_config,
 )
 from hftlab.risk.gate import LatchError, RiskGate, Switches, latch_name
+from hftlab.risk.room import HARD, ROOM, SOFT, TapeRoom
 from hftlab.risk.switches import file_switches
 from hftlab.risk.verdict import Outcome, Reason, Verdict
 
 __all__ = [
+    "HARD",
+    "ROOM",
+    "SOFT",
     "DeskLimits",
     "LatchError",
     "LossLatch",
@@ -29,6 +33,7 @@ __all__ = [
     "RiskNotInForce",
     "SleeveLimits",
     "Switches",
+    "TapeRoom",
     "Verdict",
     "file_switches",
     "latch_name",

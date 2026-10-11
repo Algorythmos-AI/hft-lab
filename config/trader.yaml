@@ -59,10 +59,18 @@ registry: var/learn             # models/ and reports/, each file named by its S
 
 # The event tape (hftlab.trader.tape): a session's turns go into parts, a new one at each UTC midnight and when
 # one is full. Closed parts are compressed by the hourly housekeeping unit. All tapes together stay under the
-# quota: no session is begun at it, and one that reaches it ends as if told to stop. Nothing removes a tape.
+# quota, and the quota never stops the trader watching a position (hftlab.trader.room, ADR 0027's addendum):
+#   - from soft_percent of the quota on, nothing is opened: every sleeve is on exits only;
+#   - from the hard limit on, every position is closed, and the session ends when the broker book is flat. The
+#     hard limit is the quota less a reserve worked out from config/risk.yaml: what the tape can take in
+#     flatten_seconds. A start is refused when the quota cannot hold that reserve above the soft limit;
+#   - when the closing takes longer than flatten_seconds the owner is paged and the trader stays up.
+# Nothing removes a tape.
 tape:
   part_bytes: 64000000          # ENGINEERING DEFAULT. A part is closed at the first turn after it has grown to this
   quota_bytes: 1000000000       # PLACEHOLDER. Set from the host's measured disk budget before the trader runs (ADR 0007)
+  soft_percent: 90              # PLACEHOLDER. The share of the quota at which entries stop and the owner is paged
+  flatten_seconds: 300          # PLACEHOLDER. How long the closing at the hard limit may take before the owner is paged
 
 clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
 

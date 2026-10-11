@@ -17,7 +17,7 @@ from hftlab.journal import Journal, read, verify
 from hftlab.lineup import Lineup
 from hftlab.trader import resume, tape
 from hftlab.trader.session import mark
-from hftlab.trader.tape import TapeFull, ending, housekeep, last_head, parts, read_tape, tape_bytes
+from hftlab.trader.tape import ending, housekeep, last_head, parts, read_tape, tape_bytes
 from tests.lineup.kit import CHALLENGER, ML, effect, put, register
 from tests.lineup.kit import desk as lineup_desk
 from tests.trader.kit import NEVER, SECOND, T0, Desk, put_stage, raw_settings
@@ -205,22 +205,31 @@ def test_a_restart_after_the_tape_went_on_to_new_parts_restores_and_so_does_one_
     assert [one.identical for one in made.replay(tmp_path / "scratch")] == [True, True, True]
 
 
-def test_a_session_the_quota_ended_saves_its_state_and_it_is_restored_once_room_is_made_and_nothing_moved(tmp_path):
-    made = a_desk(tmp_path, edge={**SMALL, "quota_bytes": 20_000})
-    assert made.run(60, quotes=False) is False and made.edge.full
+def test_a_session_the_hard_limit_ended_saves_its_state_and_every_start_after_it_restores_it(tmp_path):
+    limits = {**SMALL, "quota_bytes": 60_000, "soft_bytes": 10_000, "reserve_bytes": 40_000}  # hard at 20,000
+    made = a_desk(tmp_path, edge=limits)
+    for _ in range(WHOLE):
+        if made.trader.flat_at_hard_limit:
+            break
+        made.run(1, quotes=False)
+    assert made.trader.flat_at_hard_limit, "a run that sends nothing has nothing to close: it ends at the hard limit"
     made.stop()  # it ends as a session told to stop does: its last word, then its entry
     days, head = tmp_path / "days", made.day() / HEAD
     assert read_tape(head)[-1][0] == "stop" and entries(tmp_path)[-1]["tape_end"] == ending(head)
-    kept = {path.name: path.read_bytes() for path in tmp_path.glob("*.jsonl")}
-    with pytest.raises(TapeFull):
-        made.session()
-    assert kept == {path.name: path.read_bytes() for path in tmp_path.glob("*.jsonl")}, "refused: no journal moved"
-    housekeep(days)  # room is made by compressing; the tape is the same tape
-    assert tape_bytes(days) < 20_000
+    assert tape_bytes(days) >= 20_000
+    made.start()  # a new process with the tapes still at their hard limit: it is not refused
+    assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}, "nothing moved, so the state is believed"
+    made.run(2, quotes=False)
+    assert made.trader.flat_at_hard_limit and made.trader.summary()["turns"] == 1
+    made.stop()
+    housekeep(days)  # room is made by compressing; the tapes are the same tapes
+    assert tape_bytes(days) < 10_000
     made.start()
     assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}
+    made.run(1, quotes=False)
     made.stop()
-    assert all(one.identical for one in made.replay(tmp_path / "scratch"))
+    assert [e["session"] for e in entries(tmp_path)] == [1, 2, 3]
+    assert all(one.identical and one.stopped for one in made.replay(tmp_path / "scratch"))
 
 
 @pytest.mark.parametrize("cut", [23, 61])

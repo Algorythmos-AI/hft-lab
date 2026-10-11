@@ -20,7 +20,8 @@ co-location and anything on the [never-build list](never-build.md) are out of sc
 One line of the plan has been overtaken. F7 speaks of an HFT section on the status site "after its refactor".
 The site already has a page for this desk, which says that nothing has been published yet, and the publisher
 on this side is written ([ADR 0018](adr/0018-snapshot-publish.md)). What is left of that line is the first
-send, which waits for the owner's signing key and for the site to accept this desk's key id and schema, and
+send, which waits for the owner to give the site this desk's key, under a key id of its own and scoped to this
+desk, and for the site to accept this desk's schema, and
 then the parts of the snapshot that later phases make real. More pairs and a second venue are unchanged.
 
 ## Where things stand
@@ -154,7 +155,7 @@ and tested off the host. None of it is installed, and none of it has run on any 
 | Install | Written: `deploy/bin/hft-install`, which refuses without a passing pre-flight and enables nothing unasked. Tested in dry runs against a temporary directory. **Never run for real** |
 | Status and the dead-man rule | Written: `python -m hftlab.ops.status`, tested against the files a real recorder writes over the fake broker |
 | Alerts | Written: once per problem, keys prefixed `hft:`. **No page has been sent**: the address is the owner's to configure |
-| Status snapshot | Written: `python -m hftlab.publish` ([ADR 0018](adr/0018-snapshot-publish.md)). **Nothing has been sent.** The signing key and the key id the site accepts are the owner's open decisions |
+| Status snapshot | Written: `python -m hftlab.publish` ([ADR 0018](adr/0018-snapshot-publish.md)). **Nothing has been sent.** How it signs is settled: a key and a key id of its own, which the site holds scoped to this desk, the site configured before the publisher ([runbook](runbooks/publish.md)). Setting that up is the owner's, and no send has been made |
 | Backup | Written: `python -m hftlab.ops.backup`, into a directory or to a tool; it never deletes. It takes the trader's folder and the learning folder whole (the order outbox, both books' journals, the stage journal, the lineup journal, the model registry) and names what it leaves out, each with its reason; the tapes are left out although they cannot be rebuilt, and say so. Tested against a real trader and a real training run on synthetic data. **No backup directory exists, and no restore has been drilled** |
 | The trader's tape | Written ([ADR 0027](adr/0027-deploy-gate-and-reports.md)): cut into parts by UTC day and by size, closed parts compressed by the housekeeping unit, all tapes held under a quota, the part being written synced on every beat. The quota no longer stops the trader with a position open (the record's addendum): at a soft limit it opens nothing, at a hard limit it closes everything by the `FLATTEN` path into a reserve sized from the risk limits, and it stays up, paging, while anything is still open. A day replays byte for byte across a cut, and a kill at the cut loses and duplicates nothing, against the fake broker. **The quota is a placeholder: the host's disk has not been measured with a trader running** |
 | Reports | Written: `python -m hftlab.ops.report`, a daily summary after the 17:00 New York rollover and a weekly scorecard after the Friday close, from the journals alone, in exact integers, with every missing part said to be absent. Tested on synthetic journals with numbers worked out by hand. **No report has been made from a real journal, none has been sent, and the timer is enabled nowhere** |

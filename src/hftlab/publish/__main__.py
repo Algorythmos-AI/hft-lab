@@ -9,6 +9,8 @@ shows (hftlab.ops.status). The address, the key id and the key come from the env
 HFT_PUBLISH_KEY_ID, HFT_PUBLISH_KEY. With one of them missing nothing is sent, and it says which. Its runbook
 is docs/runbooks/publish.md.
 
+A send the site refuses says the status and what it means to this sender (`hftlab.publish.send.MEANS`).
+
 Exit codes: 0 printed, sent, or the site already holds a newer snapshot; 1 the send failed; 2 refused: a
 setting or a file could not be read, the snapshot does not conform, or the address or a key is missing.
 """
@@ -29,7 +31,7 @@ from hftlab.core import Clock, WallClock
 from hftlab.ops import host, status
 from hftlab.ops.post import Poster, post
 from hftlab.publish import contract
-from hftlab.publish.send import ALREADY_NEWER, Refused, send
+from hftlab.publish.send import ALREADY_NEWER, Refused, meaning, send
 from hftlab.publish.snapshot import SnapshotError, build, commit_of, load_phases
 
 SECOND = 1_000_000_000
@@ -76,7 +78,7 @@ def run(
     if outcome.status == ALREADY_NEWER:
         print(f"publish: the site already holds a newer snapshot than {snapshot['run_id']} ({outcome})")
         return EXIT_OK
-    print(f"publish: NOT sent: {outcome}", file=sys.stderr)
+    print(f"publish: NOT sent: {meaning(outcome)}", file=sys.stderr)
     return EXIT_FAILED
 
 

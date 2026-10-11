@@ -5,16 +5,17 @@ starts or ends, and sends a small snapshot to the status site: stage, phases, he
 is doing. What may be in it is fixed by a contract ([contracts](../../contracts/README.md)): states, counts,
 times and codes. No account, no host name, no quote, no log line, no free text.
 
-**Nothing has been published yet, and two decisions are open. Both are yours:**
+**Nothing has been published yet.** How this desk signs is settled; carrying it out is yours:
 
 | Decision | State |
 |---|---|
-| The signing key for this desk | Not made. No key exists |
-| Which key id the site accepts for this desk | Not made. The site has to be given the id and the key |
+| The signing key for this desk | Settled: this platform signs with a key of its own, under a key id of its own. Neither is in this repository; you make the key in step 1 |
+| Which key id the site accepts for this desk | Settled: this platform's own key id, and the site holds it **scoped to this desk**. Beside the key in `DASHBOARD_INGEST_KEYS`, the site's `DASHBOARD_INGEST_SCOPES` says `{"<key id>": {"desks": ["hft"]}}`, so this key can publish this desk's snapshot and no other desk's |
+| The order | Settled: **the site first, then the publisher.** A publisher that sends before the site knows its key id is answered 401 every five minutes |
 
 The site also has to accept this desk's schema, `hft-lab/snapshot`, before the first send. The site's own
-repository is where that is done and checked. Until all three are true, the site's page for this desk goes on
-saying that nothing has been published.
+repository is where that is done and checked. Until the key, its scope and the schema are all in place on the
+site, its page for this desk goes on saying that nothing has been published.
 
 The shorthand, once per session:
 
@@ -28,6 +29,7 @@ hftrun() { sudo -u hft sh -c 'cd /home/hft/hft-lab && PYTHONPATH=src PYTHONDONTW
 |---|---|
 | Put the key, the address or the alert address into this repository, a unit file or a chat | The repository is public. They live in `/etc/hft/secrets.env` on the host and in the site's own settings |
 | Reuse another desk's key or key id | Each sender has its own, so that one desk can never be taken for another. The publisher refuses the id of a sender that names none |
+| Give this key a scope wider than `hft`, or none | The scope is what keeps a key taken from this host from writing another desk's page |
 | Reuse another desk's alert address | A page has to say whose it is |
 
 ## Look at the snapshot without sending it
@@ -47,10 +49,19 @@ hftrun -m hftlab.publish
    openssl rand -hex 32
    ```
 
-2. **Give the site the key and its id,** by the site's own runbook, and confirm there that the site accepts
-   the schema `hft-lab/snapshot`. Choose an id that names this desk.
+2. **Configure the site first,** by the site's own runbook. Choose a key id that names this desk, and set
+   two things there, side by side:
 
-3. **Write the secrets file on the host.** Only the publish job reads it. The recorder never does.
+   | Site setting | What goes in |
+   |---|---|
+   | `DASHBOARD_INGEST_KEYS` | This platform's key id with the key from step 1, in the form the site's runbook gives |
+   | `DASHBOARD_INGEST_SCOPES` | `{"<key id>": {"desks": ["hft"]}}`, with the same id |
+
+   Confirm there that the site accepts the schema `hft-lab/snapshot`, and that both settings are in force on
+   the deployment the address in step 3 points at. Do not go on to step 3 before this is done.
+
+3. **Then the publisher: write the secrets file on the host.** Only the publish job reads it. The recorder
+   never does.
 
    ```
    sudo install -m 0640 -o root -g hft /dev/null /etc/hft/secrets.env
@@ -76,13 +87,18 @@ hftrun -m hftlab.publish
 
    **You should see** `publish: sent` with a run id and `(HTTP 200)`.
 
+   A send the site refuses says the status and, after it, what that status means to this sender. The
+   publisher is told the status and nothing else of the site's answer, so where a status has two causes the
+   line names both; the site's own log says which.
+
    | It says | Cause |
    |---|---|
    | `not sending: ... is not set` | The line named is missing from the secrets file, or empty |
    | `HFT_PUBLISH_KEY_ID must be this platform's own key id` | The id is empty, malformed, or the one the site keeps for senders that name none |
-   | `NOT sent: HTTP 401` | The site does not know this key id, the key differs, or this host's clock is more than five minutes off: `timedatectl` |
-   | `NOT sent: HTTP 422` | The site refused the body. It does not know this schema yet, or its copy of the contract is older than ours. Nothing was stored, and nothing of another desk's was touched |
-   | `NOT sent: HTTP 403` | The site's deployment protection (set `HFT_PUBLISH_BYPASS`), or its ingest is switched off on that deployment |
+   | `NOT sent: HTTP 401` | The site does not know this key id (step 2 was skipped, or the id in the secrets file is not the one given to the site), the key differs, or this host's clock is more than five minutes off: `timedatectl` |
+   | `NOT sent: HTTP 403` | `key-scope`: the site knows the key, and its scope does not cover the desk the body belongs to. For this publisher that means the entry for this key id in `DASHBOARD_INGEST_SCOPES` does not list `hft`: mend it on the site. The other cause of a 403 is the site's deployment protection (set `HFT_PUBLISH_BYPASS`), or an ingest switched off on that deployment |
+   | `NOT sent: HTTP 503` | `key-scope-config`: the site's `DASHBOARD_INGEST_SCOPES` is malformed, and the site refuses rather than guess a scope. Waiting does not mend it: correct the setting on the site. A 503 can also be the site not serving, which the next run gets past by itself |
+   | `NOT sent: HTTP 422` | The key and its scope passed, and the site refused the body. It does not know this schema yet, or its copy of the contract is older than ours. Nothing was stored, and nothing of another desk's was touched |
    | `the site already holds a newer snapshot` | Not a fault. Two sends crossed |
    | `NOT sent: TimeoutError` or another error name | The network, or the site is down. The next run tries again |
    | `the snapshot does not conform to its contract` | A defect of ours. Nothing was sent. Copy the line to the maintainers |
@@ -123,9 +139,11 @@ still runs: every page is written to the journal of `hft-publish` instead, and n
 
 ## Changing the key
 
-Make a new key, give it to the site under the same id or a new one, change the two lines in
-`/etc/hft/secrets.env`, and start `hft-publish.service` once by hand. Remove the old key from the site when
-the new one has sent. No restart of anything else is needed.
+The site first again, then the publisher. Make a new key and give it to the site under the same id or a new
+one; a new id needs its own entry in `DASHBOARD_INGEST_SCOPES`, `{"desks": ["hft"]}` as before, or the first
+send under it is answered 403. Then change the two lines in `/etc/hft/secrets.env` and start
+`hft-publish.service` once by hand. Remove the old key, and an old id's scope, from the site when the new one
+has sent. No restart of anything else is needed.
 
 ## If the site stops showing the desk
 

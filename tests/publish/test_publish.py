@@ -17,6 +17,7 @@ import pytest
 
 from hftlab.core import SimClock
 from hftlab.ops import status
+from hftlab.ops.post import Outcome
 from hftlab.ops.status import read
 from hftlab.publish import __main__ as cli
 from hftlab.publish import contract, send, snapshot
@@ -324,13 +325,36 @@ def test_send_signs_with_the_clocks_time_and_reports_without_the_address_or_the_
     ("answer", "code", "said"),
     [((200, ""), 0, "publish: sent"), ((409, ""), 0, "already holds a newer snapshot"),
      ((401, ""), 1, "NOT sent: HTTP 401"), ((422, ""), 1, "NOT sent: HTTP 422"), ((503, ""), 1, "NOT sent: HTTP 503"),
-     ((None, "TimeoutError"), 1, "NOT sent: TimeoutError")],
+     ((403, ""), 1, "NOT sent: HTTP 403"), ((None, "TimeoutError"), 1, "NOT sent: TimeoutError")],
 )  # fmt: skip
 def test_the_exit_code_follows_the_sites_answer(configured, tmp_path, capsys, answer, code, said):
     transport = Transport(*answer)
     assert cli.main([*configured, "--send"], settings=SETTINGS, clock=SimClock(OPEN), poster=transport) == code
     out = capsys.readouterr()
     assert said in out.out + out.err and len(transport.sent) == 1, "one try: the timer is the retry"
+
+
+@pytest.mark.parametrize(
+    ("status", "said"),
+    [(401, "does not know this key id or this key, or the two clocks are more than five minutes apart"),
+     (403, "key-scope: the site's scope for this key id does not cover this desk's snapshot; or its deployment"),
+     (422, "does not hold this schema, or holds an older copy of the contract"),
+     (503, "key-scope-config: the site's scope setting cannot be read")],
+)  # fmt: skip
+def test_a_refusal_of_the_site_is_said_with_what_it_means_to_this_sender(configured, capsys, status, said):
+    transport = Transport(status, "")
+    assert cli.main([*configured, "--send"], settings=SETTINGS, clock=SimClock(OPEN), poster=transport) == 1
+    out = capsys.readouterr()
+    (line,) = out.err.splitlines()
+    assert line.startswith(f"publish: NOT sent: HTTP {status}: ") and said in line and out.out == ""
+    assert KEY not in line and "example" not in line and SETTINGS["HFT_PUBLISH_KEY_ID"] not in line
+
+
+def test_an_answer_with_no_known_meaning_is_said_as_it_came_and_a_status_with_two_causes_names_both():
+    assert send.meaning(Outcome(500)) == "HTTP 500" and send.meaning(Outcome(None, "TimeoutError")) == "TimeoutError"
+    assert send.meaning(Outcome(200)) == "HTTP 200" and set(send.MEANS) == {401, 403, 422, 503}
+    assert "deployment protection" in send.MEANS[403] and "not serving" in send.MEANS[503]
+    assert all(text.isascii() and "\n" not in text for text in send.MEANS.values())
 
 
 def test_send_without_a_key_refuses_says_so_and_sends_nothing(configured, tmp_path, capsys):

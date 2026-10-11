@@ -23,7 +23,7 @@ NEVER_LOADED = (
 def risk_sources():
     found = [(rel, tree) for rel, tree in sources() if rel.startswith(PACKAGE)]
     assert [rel.removeprefix(PACKAGE) for rel, _ in found] == [
-        "__init__.py", "config.py", "gate.py", "switches.py", "verdict.py",
+        "__init__.py", "config.py", "gate.py", "room.py", "switches.py", "verdict.py",
     ]  # fmt: skip
     return found
 

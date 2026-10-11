@@ -25,6 +25,9 @@ class Reason(Enum):
     KILL_SWITCH = "KILL_SWITCH"
     FLATTEN_SWITCH = "FLATTEN_SWITCH"
     SWITCHES_UNREADABLE = "SWITCHES_UNREADABLE"
+    # the record
+    TAPE_SOFT_LIMIT = "TAPE_SOFT_LIMIT"  # the event tape is at its soft limit: nothing is opened on a filling record
+    TAPE_HARD_LIMIT = "TAPE_HARD_LIMIT"  # it is at its hard limit: what is left of it is for closing what is held
     # limits
     PAIR_NOT_CONFIGURED = "PAIR_NOT_CONFIGURED"
     SLEEVE_NOT_CONFIGURED = "SLEEVE_NOT_CONFIGURED"

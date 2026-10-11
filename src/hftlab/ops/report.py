@@ -12,7 +12,8 @@ The daily summary, for the trading day between two 17:00 New York rollovers:
   * the trader: each sleeve's stage, its fills in the shadow book with the broker book's beside them, its
     result by currency from the SHADOW book, which is the result of record (ADR 0003), the desk's result in
     both books, the slippage report, reconciliation breaks, latches tripped and reset, stage changes;
-  * the disk: the recording and the tapes, each against its quota.
+  * the disk: the recording against its quota, and the tapes against their soft limit, their hard limit and
+    their quota. The two limits are the ones the trader journalled when its last session of the window began.
 
 The weekly scorecard, for the week that closed on a Friday: the same summed over its trading days, each
 sleeve against the control sleeve, the changes of the lineup since the Friday before (the weekend's training
@@ -409,10 +410,21 @@ class Disk:
     what: str
     used_bytes: int
     quota_bytes: int | None  # None: no quota is set for it
+    soft_bytes: int | None = None  # the tapes only: from here on the trader opens nothing. None: not journalled
+    hard_bytes: int | None = None  # the tapes only: from here on it closes what it holds
 
     @property
     def percent(self) -> int | None:
         return self.used_bytes * 100 // self.quota_bytes if self.quota_bytes else None
+
+    @property
+    def standing(self) -> str | None:
+        """Where the bytes stand against the two limits, when both are known."""
+        if self.soft_bytes is None or self.hard_bytes is None:
+            return None
+        if self.used_bytes >= self.hard_bytes:
+            return "AT THE HARD LIMIT"
+        return "AT THE SOFT LIMIT" if self.used_bytes >= self.soft_bytes else "under both"
 
 
 # ---- the lineup and the gates ----------------------------------------------------------------------------------------
@@ -757,7 +769,10 @@ def _disk_lines(disks: Sequence[Disk]) -> list[str]:
     out = []
     for disk in disks:
         quota = "no quota set" if disk.quota_bytes is None else f"of {disk.quota_bytes:,} bytes ({disk.percent}%)"
-        out.append(f"disk       {disk.what}: {disk.used_bytes:,} bytes {quota}")
+        limits = ""
+        if disk.standing is not None:
+            limits = f"; soft limit {disk.soft_bytes:,}, hard limit {disk.hard_bytes:,}: {disk.standing}"
+        out.append(f"disk       {disk.what}: {disk.used_bytes:,} bytes {quota}{limits}")
     return out
 
 
@@ -896,6 +911,23 @@ def _verified(path: Path, part: str, absent: dict[str, str]) -> list[dict[str, o
         return None
 
 
+def _tape_limits(days: Mapping[str, Sequence[Line]], quota: int | None) -> tuple[int | None, int | None]:
+    """The soft and the hard limit on the tapes, as the last session that began in these days journalled them.
+
+    They are the trader's own figures (the hard limit depends on the risk limits, which this layer does not
+    read). None, both, when no session journalled any, or the quota they were worked out for is another one.
+    """
+    for label in sorted(days, reverse=True):
+        for entry in reversed(days[label]):
+            said = entry.get("tape") if entry.get("type") == "start" else None
+            if isinstance(said, dict):
+                soft, hard = said.get("soft_bytes"), said.get("hard_bytes")
+                if type(soft) is int and type(hard) is int and said.get("quota_bytes") == quota:
+                    return soft, hard
+                return None, None
+    return None, None
+
+
 def gather(places: Places, labels: Sequence[str]) -> Read:
     """Read each journal once, and of the trader's days the ones named. Nothing is written.
 
@@ -921,7 +953,7 @@ def gather(places: Places, labels: Sequence[str]) -> Read:
                 days[label] = found
         stages = _verified(places.trader / "stages.jsonl", "clean day", absent)
         tapes = sum(path.stat().st_size for path in folder.glob("*/session-*") if path.is_file())
-        disks.append(Disk("the tapes", tapes, places.tape_quota))
+        disks.append(Disk("the tapes", tapes, places.tape_quota, *_tape_limits(days, places.tape_quota)))
     if places.lineup is not None and places.lineup.is_file():
         try:
             history = lineup_history(places.lineup)

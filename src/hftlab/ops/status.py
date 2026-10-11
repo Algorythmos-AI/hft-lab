@@ -63,7 +63,7 @@ COUNTED: Final = {"decision": "decisions", "order": "orders", "refused": "refuse
 PAGED: Final = (
     "recorder_status_unreadable", "recorder_not_on_paper_venue", "recorder_io_error", "recorder_quota",
     "recorder_stale", "recorder_stopped", "connection_down", "shadow_journal_broken", "backup_failed",
-    "lineup_journal_broken",
+    "lineup_journal_broken", "trader_tape_hard_limit",
 )  # fmt: skip
 
 
@@ -155,6 +155,18 @@ class BookReading:
 
 
 @dataclass(frozen=True, slots=True)
+class TapeReading:
+    """The trader's event tapes against their limits: the limits as the trader last said them, the bytes as they are."""
+
+    used_bytes: int  # counted now, on the disk: the housekeeping job changes it while no trader says anything
+    soft_bytes: int | None  # from here on the trader opens nothing; None: it has no soft limit
+    hard_bytes: int  # from here on it closes what it holds
+    quota_bytes: int
+    level: str  # "room", "soft" or "hard", by the bytes counted now
+    dark: bool  # the trader last said its reserve was used up and its session was no longer recorded
+
+
+@dataclass(frozen=True, slots=True)
 class TraderReading:
     """What the trader last said of itself (hftlab.trader writes it on every beat)."""
 
@@ -170,6 +182,7 @@ class TraderReading:
     breaks_today: int
     open_positions: int
     latched: tuple[str, ...]
+    tape: TapeReading | None = None  # None: its tapes are under no quota, or it runs code that does not say
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,6 +386,23 @@ def _book(value: object) -> BookReading | None:
     return BookReading(_nets(value.get("net_today_micro")), _nets(value.get("net_total_micro")))
 
 
+def _tape(said: object, folder: Path) -> TapeReading | None:
+    """The tapes against their limits. The limits are the trader's word; the bytes are counted here, now."""
+    if not isinstance(said, dict):
+        return None
+    soft, hard, quota = said.get("soft_bytes"), said["hard_bytes"], said["quota_bytes"]
+    if type(hard) is not int or type(quota) is not int or (soft is not None and type(soft) is not int):
+        raise ValueError("the limits on the tapes are whole numbers")
+    used = 0
+    for path in (folder / "days").glob("*/session-*"):
+        try:
+            used += path.stat().st_size
+        except OSError:  # the housekeeping job replaces a part with its compressed copy
+            continue
+    level = "hard" if used >= hard else "soft" if soft is not None and used >= soft else "room"
+    return TapeReading(used, soft, hard, quota, level, bool(said.get("dark")))
+
+
 def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[Problem]]:
     """The trader's own word, read and not judged beyond its age: it pages its latches and breaks itself."""
     path = sources.trader_status
@@ -397,6 +427,7 @@ def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[P
             age_ns=max(0, now_ns - at), day=str(said["day"]), connection=str(said["connection"]), sleeves=sleeves,
             shadow=shadow, broker=_book(books.get("broker")), breaks_today=int(books["reconciliation_breaks_today"]),
             open_positions=int(books["open_positions"]), latched=tuple(map(str, said.get("latched", []))),
+            tape=_tape(said.get("tape"), path.parent),
         )  # fmt: skip
     except (OSError, ValueError, KeyError, TypeError):
         text = f"{path} is there and cannot be read as the trader's status."
@@ -408,6 +439,15 @@ def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[P
     if reading.breaks_today:
         text = f"The trader flagged {reading.breaks_today} reconciliation break(s) today."
         problems.append(Problem("trader_reconciliation_break", WARN, text))
+    tape = reading.tape
+    if tape is not None and tape.level == "soft":
+        text = "The trader's tapes are at their soft limit: nothing is opened, exits go on. Make room (trader runbook)."
+        problems.append(Problem("trader_tape_soft_limit", WARN, text))
+    if tape is not None and tape.level == "hard":
+        text = "The trader's tapes are at their hard limit: it closes everything and opens nothing until room is made."
+        if tape.dark:  # one code for both: the snapshot's contract holds twenty reasons and no more
+            text = "The tapes' reserve is used up: the trader's session is no longer recorded. Make room now."
+        problems.append(Problem("trader_tape_hard_limit", BAD, text))
     return reading, problems
 
 
@@ -537,6 +577,19 @@ def render(reading: Reading) -> str:
             )
         if trader.latched:
             lines.append(f"             latched: {', '.join(trader.latched)}")
+        if trader.tape is not None:
+            tape = trader.tape
+            soft = "none" if tape.soft_bytes is None else f"{tape.soft_bytes:,}"
+            standing = {
+                "room": "under both limits", "soft": "AT THE SOFT LIMIT: exits only",
+                "hard": "AT THE HARD LIMIT: closing everything",
+            }[tape.level]  # fmt: skip
+            if tape.dark and tape.level == "hard":
+                standing += "; RESERVE USED UP: the session is not recorded"
+            lines.append(
+                f"             tapes: {tape.used_bytes:,} bytes; soft limit {soft}, hard limit {tape.hard_bytes:,}, "
+                f"quota {tape.quota_bytes:,} ({tape.used_bytes * 100 // tape.quota_bytes}%); {standing}"
+            )
     learning = reading.learning
     if learning is None:
         lines.append("  learning   nothing registered: no training run has kept a candidate here")

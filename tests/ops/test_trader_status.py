@@ -13,6 +13,7 @@ from hftlab.ops import status
 from hftlab.ops.status import read, render
 from hftlab.publish import contract
 from hftlab.publish.snapshot import build, trader_parts
+from hftlab.trader.tape import housekeep, tape_bytes
 from tests.ops.kit import sources
 from tests.support import ROOT
 from tests.trader.kit import SECOND, Desk, put_stage
@@ -131,3 +132,79 @@ def test_the_shipped_settings_say_where_the_traders_status_is(tmp_path):
         ROOT / "config" / "calendar", state=tmp_path, trader_config=tmp_path / "none.yaml",
     )  # fmt: skip
     assert without.trader_status is None
+
+
+# ---- the tapes against their limits (ADR 0027, addendum) -------------------------------------------------------------
+
+LIMITS = {"part_bytes": 3_000, "quota_bytes": 40_000, "soft_bytes": 8_000, "reserve_bytes": 28_000}  # hard at 12,000
+
+
+def a_bounded_run(tmp_path, seconds: int):
+    folder = tmp_path / "var" / "trader"
+    put_stage(folder, "control", "min_size")
+    desk = Desk(folder, edge=LIMITS)
+    desk.run(seconds)
+    return desk, sources(tmp_path, trader_status=folder / "status.json"), folder / "days"
+
+
+def test_the_screen_shows_the_tapes_against_their_soft_limit_their_hard_limit_and_their_quota(tmp_path):
+    desk, places, days = a_bounded_run(tmp_path, 2)
+    reading = read(places, desk.clock.now_ns())
+    tape, used = reading.trader.tape, tape_bytes(days)
+    assert (tape.used_bytes, tape.soft_bytes, tape.hard_bytes, tape.quota_bytes) == (used, 8_000, 12_000, 40_000)
+    assert (tape.level, tape.dark) == ("room", False) and reading.problems == ()
+    line = f"             tapes: {used:,} bytes; soft limit 8,000, hard limit 12,000, quota 40,000"
+    assert f"{line} ({used * 100 // 40_000}%); under both limits" in render(reading).splitlines()
+    assert contract.problems(snap(reading), SCHEMA) == [], "the limits are on the screen, not in the snapshot"
+    assert "tape" not in json.dumps(snap(reading))
+
+
+def test_the_soft_limit_is_a_warning_and_the_hard_limit_is_bad_each_under_a_code_the_contract_accepts(tmp_path):
+    desk, places, days = a_bounded_run(tmp_path, 2)
+    while desk.edge.level == 0:
+        desk.run(1)
+    reading = read(places, desk.clock.now_ns())
+    assert reading.trader.tape.level == "soft" and reading.level == "warn"
+    assert [problem.code for problem in reading.problems] == ["trader_tape_soft_limit"]
+    assert "AT THE SOFT LIMIT: exits only" in render(reading)
+    while not desk.trader.flat_at_hard_limit:
+        desk.run(1)
+    desk.stop()
+    reading = read(places, desk.clock.now_ns())
+    assert reading.trader.tape.level == "hard" and reading.level == "bad"
+    assert status.exit_code(reading) == status.EXIT_BAD
+    assert [problem.code for problem in reading.problems] == ["trader_tape_hard_limit"]
+    assert "AT THE HARD LIMIT: closing everything" in render(reading)
+    found = snap(reading)
+    assert contract.problems(found, SCHEMA) == [] and found["health"]["reasons"] == ["trader_tape_hard_limit"]
+    assert "trader_tape_hard_limit" in status.PAGED, "what this command pages it also takes back"
+
+    housekeep(days)  # no trader says anything now: the bytes are counted on the disk, as they are
+    later = read(places, desk.clock.now_ns() + SECOND)
+    assert later.trader.tape.used_bytes == tape_bytes(days) < 8_000 and later.trader.tape.level == "room"
+    assert later.problems == () and "under both limits" in render(later)
+
+
+def test_a_session_that_is_no_longer_recorded_says_so_on_the_screen(tmp_path):
+    desk, places, _ = a_bounded_run(tmp_path, 2)
+    while not desk.trader.flat_at_hard_limit:
+        desk.run(1)
+    desk.stop()
+    said = json.loads(places.trader_status.read_text())
+    assert said["tape"]["dark"] == 0 and said["tape"]["level"] == 2
+    said["tape"]["dark"] = 1
+    places.trader_status.write_text(json.dumps(said))
+    reading = read(places, desk.clock.now_ns())
+    assert reading.trader.tape.dark and "RESERVE USED UP: the session is not recorded" in render(reading)
+    (problem,) = reading.problems
+    assert (problem.code, problem.level) == ("trader_tape_hard_limit", "bad") and "no longer recorded" in problem.text
+
+
+def test_a_trader_under_no_quota_has_no_tape_line_and_one_whose_limits_cannot_be_read_is_unreadable(tmp_path):
+    _, places, reading = after_a_run(tmp_path, seconds=5)
+    assert reading.trader.tape is None and "tapes:" not in render(reading)
+    said = json.loads(places.trader_status.read_text())
+    said["tape"] = {"used_bytes": 1, "soft_bytes": 5, "hard_bytes": "many", "quota_bytes": 10}
+    places.trader_status.write_text(json.dumps(said))
+    again = read(places, reading.at_ns)
+    assert again.trader is None and [problem.code for problem in again.problems] == ["trader_status_unreadable"]

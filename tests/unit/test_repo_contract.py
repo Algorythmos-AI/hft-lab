@@ -107,6 +107,7 @@ def test_the_design_records_exist_in_order():
     topics += ["venue-port", "access-route", "synchronous", "recording-format", "cost-model", "sleeves"]
     topics += ["risk-gate", "order-manager", "host-layer", "snapshot-publish", "trader-loop"]
     topics += ["features-and-labels", "validation", "model-file", "weekly-learning-loop"]
+    topics += ["directional-change"]
     assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, len(topics) + 1)]
     for name, topic in zip(records, topics, strict=True):
         text = read(f"docs/adr/{name}")

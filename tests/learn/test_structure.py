@@ -64,7 +64,7 @@ def test_the_future_is_known_to_the_label_package_and_to_nothing_a_decision_is_m
     """A label is hindsight. What computes features, what scores them and what trades on the score cannot import one."""
     blind = [(rel, tree) for rel, tree in sources()
              if rel.startswith(("src/hftlab/features/", "src/hftlab/models/", "src/hftlab/strategy/"))]  # fmt: skip
-    assert len(blind) == 3 + 5 + 4
+    assert len(blind) == 3 + 5 + 6
     for rel, tree in blind:
         for _, name in imports(tree, rel):
             assert not name.startswith(("hftlab.labels", "hftlab.learn")), f"{rel} imports {name}"

@@ -56,14 +56,17 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The sleeve interface, the idle sleeve and the random control sleeve | `src/hftlab/strategy/` |
 | The shadow runner with a hash-chained journal | `src/hftlab/shadow/` |
 | The feasibility map: moves against the modelled cost, by pair and holding time | `src/hftlab/feasibility/` |
+| Reading a run back: round trips against the cost model trip by trip, and a Directional Change sleeve's day beside its random-walk null | `src/hftlab/review/` |
 | Features of the quote stream: causal, exact integers, the same from a recording and live | `src/hftlab/features/` |
 | Labels: cost-aware outcomes priced as the shadow venue prices, and triple-barrier outcomes | `src/hftlab/labels/` |
 | Datasets with a look-ahead check, walk-forward validation with a hold-out read once, the promotion decision as a function | `src/hftlab/learn/` |
 | The model file and its registry, an exact ridge regression, gradient-boosted trees kept and scored as whole numbers, two baselines, a scorer (no model ships) | `src/hftlab/models/` |
 | An ML sleeve skeleton that asks a scorer and reports that it may not leave shadow on placeholder costs | `src/hftlab/strategy/ml.py` |
+| The scorer in a process of its own: a versioned message format, a child that holds no venue, a timeout, a restart with back-off, and a record a replay abstains by (off as shipped) | `src/hftlab/scoring/` |
 | The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
+| Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
 | The research registry: its lint, the trial count, two hypotheses and two experiments, registered and not run | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
@@ -87,7 +90,10 @@ What that does and does not mean:
   ([runbook](docs/runbooks/install.md)).
 - **F1 is open** until the owner runs the capability probe against the real paper account
   ([runbook](docs/runbooks/ibkr-probe.md)).
-- **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days.
+- **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days. The command that
+  compares the control run with its recording trip by trip, which the registered experiment names, is
+  written (`python -m hftlab.review.trip_costs`,
+  [ADR 0026](docs/adr/0026-sleeve-state-across-a-restart.md)) and has read synthetic recordings only.
 - **F4 is open:** its code is complete against the fake broker, and its gate is five trading days of the
   control sleeve at minimum size on the real paper account with zero reconciliation breaks
   ([`HFT-EXP-0002`](research/experiments/HFT-EXP-0002-control-min-size-paper/protocol.md), registered, not
@@ -105,7 +111,14 @@ What that does and does not mean:
   keeps or rolls back ([ADR 0023](docs/adr/0023-weekly-learning-loop.md),
   [runbook](docs/runbooks/learning.md)). As shipped it promotes nothing: no promotion rule exists, and the
   decision says `keep: rule not in force`. Its gate is two full weekly cycles without manual help and one
-  rollback drill on the host; neither has happened. The scorer in its own process is not built.
+  rollback drill on the host; neither has happened. The scorer can run in a process of its own
+  (`src/hftlab/scoring/`), written and tested on synthetic rows; it is off as shipped and has not run on the
+  host.
+- **A sleeve's state is kept across a restart** ([ADR 0026](docs/adr/0026-sleeve-state-across-a-restart.md)):
+  saved when a session ends on purpose, and restored at the next start only when no journal and no tape moved
+  since. Otherwise the sleeve starts cold and the owner is told why. The Directional Change sleeve's
+  random-walk null can be run on a recorded day (`python -m hftlab.review.dc_null`). Both are written and
+  tested on synthetic data; nothing of either has run on a host or seen real data.
 - All of it has been run on synthetic streams the tests make, some with an effect planted in them on
   purpose, and against the fake broker. **No real data exists yet, no model has been trained on real data,
   and nothing here is evidence of an edge.** The first challenger's week is registered

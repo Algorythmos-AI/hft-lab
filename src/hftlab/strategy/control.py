@@ -26,10 +26,26 @@ from hftlab.book import SleeveView
 from hftlab.core import Fill, OrderEvent, OrderState, Quote, Side
 from hftlab.core.ids import check_sleeve
 from hftlab.record.format import Heartbeat
-from hftlab.strategy.sleeve import ENTRY, EXIT, Action, Event, Intent, Placed, Refused
+from hftlab.strategy.sleeve import (
+    ENTRY,
+    EXIT,
+    Action,
+    Event,
+    Intent,
+    Placed,
+    Refused,
+    StateError,
+    one_of,
+    opened,
+    text_or_none,
+    whole,
+    whole_or_none,
+)
 
 MILLION = 1_000_000
 FLAT, ENTERING, HOLDING, EXITING = "flat", "entering", "holding", "exiting"
+PHASES = (FLAT, ENTERING, HOLDING, EXITING)
+KIND, VERSION = "control", 1  # of a saved state
 _DEAD = (OrderState.CANCELLED, OrderState.REJECTED, OrderState.EXPIRED)
 
 
@@ -91,6 +107,27 @@ class ControlSleeve:
 
     def initial(self) -> ControlState:
         return tuple(PairState() for _ in self.sizes)
+
+    # ---- written down and read back (ADR 0026) --------------------------------------------------------------------
+
+    def settings(self) -> dict[str, object]:
+        """Every setting as a plain value: what a saved state was reached under."""
+        return {
+            "seed": self.seed, "sizes": dict(self.sizes), "entry_per_million": self.entry_per_million,
+            "hold_ns": self.hold_ns, "retry_ns": self.retry_ns,
+        }  # fmt: skip
+
+    def save(self, state: ControlState) -> dict[str, object]:
+        pairs = [
+            [mine.phase, mine.order_id, mine.since_ns, mine.trips, mine.exits, mine.tried_ns] for mine in state
+        ]
+        return {"kind": KIND, "version": VERSION, "settings": self.settings(), "state": pairs}
+
+    def restore(self, saved: Mapping[str, object]) -> ControlState:
+        rows = opened(saved, KIND, VERSION, self.settings())
+        if not isinstance(rows, list) or len(rows) != len(self.sizes):
+            raise StateError("the saved state does not hold one entry for each pair")
+        return tuple(_pair_state(row) for row in rows)
 
     def decide(
         self, state: ControlState, event: Event, now_ns: int, view: SleeveView
@@ -161,3 +198,13 @@ class ControlSleeve:
     def _put(self, state: ControlState, pair: str, new: PairState) -> ControlState:
         slot = self._slot[pair]
         return (*state[:slot], new, *state[slot + 1 :])
+
+
+def _pair_state(row: object) -> PairState:
+    if not isinstance(row, list) or len(row) != 6:
+        raise StateError(f"not a saved pair of the control sleeve: {row!r}")
+    phase, order_id, since, trips, exits, tried = row
+    return PairState(
+        one_of(phase, PHASES, "phase"), text_or_none(order_id, "order"), whole(since, "since_ns"),
+        whole(trips, "trips"), whole(exits, "exits"), whole_or_none(tried, "tried_ns"),
+    )  # fmt: skip

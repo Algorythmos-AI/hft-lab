@@ -10,7 +10,9 @@ state, the record of the deploys, and everything the trader and the learning loo
 
   * the trader's folder: the order outbox (which is also the broker book's journal: every fill it booked), the
     shadow book's journal, the risk gate's latches, the reconciler's journal, the stage journal, the lineup
-    journal (which model is champion) and every day's decision journal;
+    journal (which model is champion), every day's decision journal, and the sleeves' saved states
+    (`sleeves.jsonl`, ADR 0026: a record of what each session kept; a copy that comes back from a backup is
+    not restored from, because the tape it is tied to is left out below);
   * the learning folder: the model registry (`models/`), the evaluation reports (`reports/`), the trial ledger
     and the word the last training run left.
 

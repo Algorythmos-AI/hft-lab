@@ -1,8 +1,9 @@
 # ADR 0023: The weekly learning loop as processes: training, the lineup journal, the decision, the scorer
 
-- **Status:** accepted, 2026-10-11. Sections 1 to 4 and 6 are built and tested on synthetic streams and
-  against the fake broker only. Section 5, the scorer in its own process, is decided and **not built**.
-  Nothing has been trained on real data, no model has served, and the gate of F6 is open.
+- **Status:** accepted, 2026-10-11. Every section is built and tested on synthetic streams and against the
+  fake broker only; section 5, the scorer in its own process, was built last and is off as shipped. Nothing
+  has been trained on real data, no model has served, nothing has run on the host, and the gate of F6 is
+  open.
 - **Context:** F6, the learning loop
 
 ## Context
@@ -124,27 +125,56 @@ every monitor is computed, reported and breaches nothing.
 So that calibration can be read from the journals, an intent may carry what the model expected of it, and the
 trader journals it beside the decision. Nothing routes on it.
 
-### 5. The scorer in its own process (decided, not built)
+### 5. The scorer in its own process
 
-**Nothing of this section exists in the code.** Every ML place scores in the trader's process, and
-`scorer: process` in the trader's settings is refused, so that it cannot be believed to be isolated when it
-is not. The settings it will read (`scorer:` in `config/learn.yaml`) are parsed and unused. What follows is
-the design it will be built to.
+Built ([`hftlab.scoring`](../../src/hftlab/scoring/client.py)) and tested with real child processes on
+synthetic rows. It has served no real model and has not run on the host. As shipped every place says
+`scorer: in_process`; a place that says `scorer: process` is scored by a child of the trader.
 
-The trader may be configured to ask a scorer child over a pipe (`scorer: process` on an ML sleeve).
+- **The message format is fixed and versioned** ([`wire`](../../src/hftlab/scoring/wire.py)): one byte of
+  version, four bytes of length, big-endian, and that many bytes of one line of canonical JSON, at most
+  65,536. The lines are the request and the reply of [ADR 0022](0022-model-file-registry-and-scorer.md),
+  unchanged, and two more: a question that asks the child to load a model by its hash, and a refusal. Whole
+  numbers and text only; a line with a float in it is not a message. Nothing is pickled and nothing that
+  arrives is run. A frame of another version or of an impossible length ends the conversation before a byte
+  of it is read.
+- **The child** (`python -m hftlab.scoring.child`) reads the model file under the hash it is asked for,
+  refuses a file that is not what its name says, and answers with the hash of what it holds. It answers a row
+  with the arithmetic of the in-process scorer, because it is the same code. A question it cannot answer is
+  refused in a frame and the next one is read. It ends when its input ends. It is started with the place of
+  the package and nothing of the trader's environment, and what it imports is the model file, the scorers and
+  the wire format: no venue, no order path, no network.
+- **The lineup's model or none.** At the start of a session the trader waits, for at most `start_ms`, for the
+  child's answer to the load. Any answer but the lineup's hash is a refusal: the place runs idle and the owner
+  is paged, as for a model file that cannot be read. A child that is merely slow is not refused; it is down.
+- **A timeout.** No reply within `timeout_ms`, a closed pipe, a reply that is not one, a reply from another
+  model, a refusal: the sleeve abstains on that row, the child is killed, and the loop goes on. A row is sent
+  once and never asked again. The pipe is written without blocking, so a child that does not read cannot hold
+  the loop either.
+- **A restart with back-off.** A failed child is started again no sooner than a wait that doubles from
+  `restart_first_ms` to `restart_last_ms`, and is the first wait again once a row was scored. While the child
+  is down or starting, a row is abstained on at once: nothing in the loop waits for a start. A restarted
+  child that answers the load with another model is refused for the rest of the session. The back-off and the
+  time a start may take are measured on the session's clock, which is injected.
+- **It never raises into the trader.** Whatever a child does ends in an abstention. A row that cannot be
+  written as one message is abstained on too, and the child is not blamed for it.
+- **A clean stop.** When a session ends the child's input is closed, which is how it is told; one that does
+  not leave is killed. A child whose trader dies sees the same end of input and leaves.
+- **The in-process scorer stays,** for tests and for replay. Both give the same decision on the same row.
+- **Replay never needs the child.** A row the scorer process did not score is written, as it happens, into a
+  hash-chained file beside the session's tape (`session-NNN.abstained.jsonl`,
+  [`record`](../../src/hftlab/scoring/record.py)), and then into the decision journal as an `abstained`
+  line with the reason. A replay scores in process, abstains on exactly those rows and writes the same
+  lines, so a day with a failed scorer replays byte for byte. A record that does not verify is not replayed
+  from. When a child came back is not journalled: it is not a function of the tape. The owner is paged when
+  a scorer stops answering and when it answers again.
+- **One thread decides.** Each child has a second thread that moves whole frames from the child's output
+  into a queue and does nothing else. The one real wait in the loop is the wait for a reply, bounded by the
+  timeout; a hung child costs one timeout and then nothing until its back-off is over.
 
-- **The message format is fixed and versioned:** one byte of version, four bytes of length, big-endian, and
-  that many bytes of the request or reply line of [ADR 0022](0022-model-file-registry-and-scorer.md). A
-  frame of another version or longer than the limit ends the conversation.
-- **A timeout.** No reply within the configured time, a closed pipe, a malformed reply or a reply from
-  another model: the sleeve abstains on that row, the child is killed, and the trader's loop goes on. The
-  child is started again no sooner than a back-off that doubles to a limit. The scorer never raises into the
-  trader.
-- **The in-process scorer stays,** for tests and for replay. Both give the same decision on the same row,
-  because the child runs the same exact arithmetic.
-- **Replay.** A row the process scorer abstained on by failure is written, as it happens, into a file beside
-  the session's tape. A replay scores in process and abstains on exactly those rows, so a day with a failed
-  scorer still replays byte for byte.
+What changed from the design as first written: the load is a message and not an argument; a start has its
+own time, `start_ms`, beside the three settings the design named; and the file beside the tape is a
+hash-chained journal with the reasons in it, mirrored in the decision journal.
 
 ### 6. Units
 
@@ -183,6 +213,16 @@ that pages.
 - A planted shift of a feature, of the spread or of what a model's expectations come to is found to the
   count, and takes the sleeve down to shadow through the trader (`tests/learn/test_drift.py`,
   `tests/lineup/test_watch.py`).
+- A scorer process gives the in-process decision on every one of thousands of rows, for a ridge model and
+  for a model of boosted trees written by hand (`tests/scoring/test_client.py`), and a day scored in a
+  process is byte for byte the day scored in the trader (`tests/scoring/test_session.py`).
+- A hung child and a killed child each make their sleeve abstain while the trader takes its turns and the
+  other sleeves trade; a new child answers after the back-off; and the day replays byte for byte with no
+  child (`tests/scoring/test_session.py`).
+- A child that holds another model is refused; a frame or a line that is not one is refused without either
+  side failing (`tests/scoring/test_child.py`, `tests/scoring/test_wire.py`).
+- The child can reach no venue, no order path and no network, by a scan of everything it imports and by
+  starting one and looking (`tests/scoring/test_structure.py`).
 
 **What it costs, and what it does not cover**
 
@@ -207,8 +247,19 @@ that pages.
   model, which is all that exists.
 - **The backup does not hold the lineup journal, the models or the reports yet.** A lost disk loses the
   lineup's history; the models are trained again from the recordings.
-- **The scorer shares the trader's process.** A scorer that hangs, hangs the trader's turn. The ridge
-  scorer is one exact sum, so this is a limit for the models that are not built yet.
+- **As shipped the scorer shares the trader's process.** Both ML places say `scorer: in_process`, where a
+  scorer that hangs, hangs the trader's turn. The two kinds of model there are score with exact sums, so this
+  is a limit for models that are not built yet; `scorer: process` is there for them.
+- **A scorer process costs a timeout when it fails.** The loop waits up to `timeout_ms` once for a child that
+  hangs, and again for each restarted child that hangs on its first row, with the back-off between them.
+  Whether 20 ms is the right wait is a setting nobody has measured on the host.
+- **A child that is slow and right is treated as wrong.** A reply after the timeout is thrown away with the
+  child. Under load on a shared host that can happen, and each time it costs the rows of a back-off.
+- **Rows are lost while a child starts.** A start takes tens of milliseconds, and every row of that time is
+  an abstention. They are in the record, so the day still replays.
+- **An outage writes a line a row,** into the record and into the decision journal, for as long as it lasts.
+  A place that is refused for the rest of a session writes one for every row its sleeve would have asked
+  about.
 - **None of it has run on the host,** and on real data the likeliest outcome of the first challenger's week
   is no advantage over the control sleeve after costs (`HFT-HYP-0003`).
 

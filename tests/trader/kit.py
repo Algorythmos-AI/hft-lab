@@ -88,9 +88,10 @@ class Desk:
         reject=None,
         at_ns: int = T0,
         start: bool = True,
+        scorer_times=None,
         edge: dict[str, object] | None = None,
     ) -> None:
-        self.folder, self.paper = folder, paper
+        self.folder, self.paper, self.scorer_times = folder, paper, scorer_times
         self.edge_options = edge or {}  # how the tape is cut and counted: part_bytes, quota_bytes, fsync
         self.settings: Settings = parse(settings or raw_settings())
         self.risk = limits({**WIDE, **(changes or {})}) if paper else None
@@ -122,7 +123,7 @@ class Desk:
         """A new session on the connection in hand: what the process does by itself after a rollover."""
         self.trader = Trader(
             self.edge, self.settings, self.edge.open(), model=self.costs, calendar=Calendar(), risk=self.risk,
-            notify=self.pages, config_digest=DIGEST, folder=self.folder,
+            notify=self.pages, config_digest=DIGEST, folder=self.folder, scorer_times=self.scorer_times,
         )  # fmt: skip
         return self.trader
 

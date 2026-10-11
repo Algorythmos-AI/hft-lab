@@ -17,7 +17,7 @@ research/
 | Record | What it is | State |
 |---|---|---|
 | [HFT-HYP-0001](hypotheses/HFT-HYP-0001-shadow-accounting-is-honest.yaml) | The shadow accounting is honest: a sleeve that never trades earns exactly zero, and one that trades at random loses the modelled cost | Registered. No evidence yet |
-| [HFT-EXP-0001](experiments/HFT-EXP-0001-control-shadow/protocol.md) | The control sleeve in shadow on five recorded days, with its seed, entry rate, holding time and waiting time fixed | Registered. **Not run**: nothing has been recorded from the real feed yet |
+| [HFT-EXP-0001](experiments/HFT-EXP-0001-control-shadow/protocol.md) | The control sleeve in shadow on five recorded days, with its seed, entry rate, holding time and waiting time fixed | Registered. **Not run**: nothing has been recorded from the real feed yet. The trip-by-trip tool its protocol says is not built has been written since (`python -m hftlab.review.trip_costs`); the protocol is frozen |
 
 | [HFT-HYP-0002](hypotheses/HFT-HYP-0002-order-path-agrees-with-the-broker.yaml) | The order path agrees with the broker, and the shadow venue fills no better than the paper account | Registered. No evidence yet |
 | [HFT-EXP-0002](experiments/HFT-EXP-0002-control-min-size-paper/protocol.md) | The control sleeve at minimum size on the paper account for five trading days: zero reconciliation breaks expected, and the shadow-versus-broker slippage reported with the direction the cost model is meant to err in | Registered. **Not run**: nothing has connected to a gateway, and the risk limits are not in force |
@@ -26,7 +26,7 @@ research/
 | [HFT-HYP-0004](hypotheses/HFT-HYP-0004-first-gbm-challenger-has-no-advantage.yaml) | The first gradient-boosted challenger shows no advantage over the control sleeve or the ridge challenger after costs. Stated as the expected outcome | Registered. No evidence yet |
 | [HFT-EXP-0004](experiments/HFT-EXP-0004-first-gbm-challenger-shadow-week/protocol.md) | A ridge and a gradient-boosted challenger in shadow for the same week beside the control sleeve, with the tree settings and the measuring numbers fixed, no search and no promotion rule | Registered. **Not run**: nothing has been recorded or trained on real data |
 | [HFT-HYP-0005](hypotheses/HFT-HYP-0005-directional-change-baselines-have-no-advantage.yaml) | The two Directional Change baselines, trend and contrarian, show no advantage over the control sleeve after costs and do not stand out of a random-walk null. Stated as the expected outcome | Registered. No evidence yet |
-| [HFT-EXP-0005](experiments/HFT-EXP-0005-directional-change-shadow/protocol.md) | Both variants at three thresholds in shadow on five recorded days, gross and net of cost for every threshold, beside the control sleeve and 99 walks of matched volatility | Registered. **Not run**: nothing has been recorded, and the command that runs the null on a recording is not built |
+| [HFT-EXP-0005](experiments/HFT-EXP-0005-directional-change-shadow/protocol.md) | Both variants at three thresholds in shadow on five recorded days, gross and net of cost for every threshold, beside the control sleeve and 99 walks of matched volatility | Registered. **Not run**: nothing has been recorded. Its protocol says the command that runs the null on a recording is not built; the protocol is frozen, and the command has been written since (`python -m hftlab.review.dc_null`) |
 
 There is no decision record yet, and the trial registry is empty.
 

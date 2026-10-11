@@ -37,7 +37,7 @@ _VALIDATION: Final = frozenset(
 _RULE: Final = ("decision", "min_trades", "min_days", "max_drawdown_micro", "draws", "level_ppm", "seed")
 _PROMOTION: Final = frozenset({*_RULE, "baseline_sleeve"})
 _DRIFT: Final = frozenset({"min_rows", "feature_shift_ppm", "calibration_gap_micro", "spread_ratio_x100"})
-_SCORER: Final = frozenset({"timeout_ms", "restart_first_ms", "restart_last_ms"})
+_SCORER: Final = frozenset({"timeout_ms", "start_ms", "restart_first_ms", "restart_last_ms"})
 RIDGE: Final = "ridge"
 GBM: Final = "gbm"
 MODELS: Final = (RIDGE, GBM)
@@ -128,6 +128,7 @@ class Settings:
     baseline_sleeve: str
     drift: Drift
     scorer_timeout_ns: int
+    scorer_start_ns: int
     scorer_restart_first_ns: int
     scorer_restart_last_ns: int
     placeholder: bool
@@ -296,6 +297,7 @@ def parse(loaded: object, source: str = "the learning settings") -> Settings:
             _or_null(drift, "calibration_gap_micro"), _or_null(drift, "spread_ratio_x100", least=101),
         ),
         scorer_timeout_ns=_whole(scorer, "timeout_ms") * MS,
+        scorer_start_ns=_whole(scorer, "start_ms") * MS,
         scorer_restart_first_ns=first * MS,
         scorer_restart_last_ns=last * MS,
         placeholder=loaded["status"] != "decided",

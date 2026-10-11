@@ -216,5 +216,6 @@ Keep it, stop both timers, and open an issue with the file.
 - **The backup does not hold the lineup journal, the models or the reports.** `hft-backup.service` hands over
   the recordings and the shadow journal. Until it also takes `var/trader/lineup.jsonl` and `var/learn/`, a
   lost disk loses the lineup's history, and every model is trained again from the recordings.
-- **The scorer in its own process** (`scorer: process` on an ML place) is described in ADR 0023 and its state
-  is said there. As shipped every place scores in the trader's process.
+- **The scorer in its own process** (`scorer: process` on an ML place) is built and tested with real child
+  processes off the host (ADR 0023, section 5). It has never run on a host. As shipped every place scores in
+  the trader's process.

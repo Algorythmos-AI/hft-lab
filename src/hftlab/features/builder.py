@@ -28,11 +28,14 @@ nobody was watching.
 The state is a value. Its history is a pair of tuples no longer than the quotes of the longest window, copied
 on every quote: simple and replayable, and slow for windows of minutes on a feed of thousands of quotes a
 second. That is a limit of this implementation, not of the definitions.
+
+A state can be written out and read back exactly (`dump`, `load`), so that a restart does not throw the
+history away. Nothing is recomputed on the way back: a state read back is equal to the one written.
 """
 from __future__ import annotations
 
 from bisect import bisect_right
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -44,6 +47,7 @@ from hftlab.venues.port import ConnectionEvent
 
 SECOND: Final = 1_000_000_000
 MILLION: Final = 1_000_000
+_SAVED: Final = frozenset({"n", "now_ns", "times", "mids", "top", "fresh_ns", "changed_ns", "day", "week_close_ns"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +93,41 @@ class FeatureBuilder:
 
     def initial(self) -> FeatureState:
         return FeatureState()
+
+    # ---- written out and read back ----------------------------------------------------------------------------
+
+    def settings(self) -> dict[str, object]:
+        """The pair, the feature keys in order and the windows: what a saved state was built with."""
+        return {
+            "pair": self.pair, "keys": list(self.keys), "lookbacks_ns": list(self.config.lookbacks_ns),
+            "rate_window_ns": self.config.rate_window_ns, "range_window_ns": self.config.range_window_ns,
+            "stale_after_ns": self.config.stale_after_ns,
+        }  # fmt: skip
+
+    def dump(self, state: FeatureState) -> dict[str, object]:
+        """The state as plain values a JSON line holds exactly: whole numbers and lists of them."""
+        return {
+            "n": state.n, "now_ns": state.now_ns, "times": list(state.times), "mids": list(state.mids),
+            "top": None if state.top is None else list(state.top), "fresh_ns": state.fresh_ns,
+            "changed_ns": state.changed_ns, "day": list(state.day), "week_close_ns": state.week_close_ns,
+        }  # fmt: skip
+
+    def load(self, saved: object) -> FeatureState:
+        """The state `dump` wrote. Raises `ValueError` unless it is whole: every number whole, the history in order."""
+        if not isinstance(saved, Mapping) or set(saved) != _SAVED:
+            raise ValueError("not a saved feature state")
+        times, mids, top, day = (_wholes(saved[key], key) for key in ("times", "mids", "top", "day"))
+        scalars = [saved[key] for key in ("n", "now_ns", "fresh_ns", "week_close_ns")]
+        changed = saved["changed_ns"]
+        if any(type(value) is not int or value < 0 for value in (*scalars, *(() if changed is None else (changed,)))):
+            raise ValueError("a saved feature state holds whole numbers that are not negative")
+        if times is None or mids is None or day is None or len(times) != len(mids) or len(day) != 2:
+            raise ValueError("a saved feature state has a time for each mid of its history, and one trading day")
+        if list(times) != sorted(times) or (top is not None and len(top) != 4):
+            raise ValueError("a saved feature state's history is in the order it was received")
+        book = None if top is None else (top[0], top[1], top[2], top[3])
+        n, now, fresh, week_close = scalars
+        return FeatureState(n, now, times, mids, book, fresh, changed, (day[0], day[1]), week_close)
 
     def step(self, state: FeatureState, event: RecordedEvent, now_ns: int) -> tuple[FeatureState, FeatureRow | None]:
         """The state after `event`, and the row it completes, if the book can be trusted to give one."""
@@ -149,3 +188,12 @@ class FeatureBuilder:
             state, row = self.step(state, event, now)
             if row is not None:
                 yield row
+
+
+def _wholes(value: object, what: str) -> tuple[int, ...] | None:
+    """A saved list of whole numbers as a tuple; None for a saved nothing."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or any(type(item) is not int for item in value):
+        raise ValueError(f"a saved feature state's {what} is a list of whole numbers")
+    return tuple(value)

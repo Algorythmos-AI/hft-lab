@@ -93,6 +93,33 @@ print(json.dumps([type(scorer).__name__, out, {LOADED}]))
     assert json.loads(done.stdout) == ["TreeScorer", [["SELL", 14_000_000], None, ["BUY", 14_000_000]], []]
 
 
+def test_the_scorers_own_process_serves_a_gbm_model_where_the_library_cannot_be_imported(tmp_path):
+    """The child of ADR 0023 is what scores for the trader once a place says `scorer: process`: it needs none of it."""
+    split = Tree(feature=(4,), threshold=(0,), left=(~0,), right=(~1,), leaves=(-6_000_000_000, 14_000_000_000))
+    other = Tree(feature=(4,), threshold=(-1,), left=(~0,), right=(~1,), leaves=(14_000_000_000, -6_000_000_000))
+    model = a_model(Trees(1000, 10, 10, {BUY: (split,), SELL: (other,)}, {"trees": 1}, "by hand"))
+    digest = ModelRegistry(tmp_path).put(model)
+    script = f"""
+import io, json
+from pathlib import Path
+from hftlab.features import FeatureRow
+from hftlab.models import ask
+from hftlab.scoring import child, wire
+asked = wire.frame(wire.load({digest!r}))
+for imbalance in (-500_000, 0, 500_000):
+    asked += wire.frame(ask(FeatureRow("EUR.USD", 1, 2, (10, 0, 0, 0, imbalance, 0, 0, 0, 0, 0))))
+source, sink = io.BytesIO(asked), io.BytesIO()
+code = child.serve(Path({str(tmp_path)!r}), source, sink)
+sink.seek(0)
+replies = [json.loads(wire.read_frame(sink.read)) for _ in range(4)]
+print(json.dumps([code, replies[0], [[r["side"], r["expected_micro"]] for r in replies[1:]], {LOADED}]))
+"""
+    done = child(script)
+    assert done.returncode == 0, done.stderr
+    decided = [["SELL", 14_000_000], [None, None], ["BUY", 14_000_000]]
+    assert json.loads(done.stdout) == [0, {"loaded": digest}, decided, []]
+
+
 def run_training(folder, model: str) -> subprocess.CompletedProcess[str]:
     config = learn_settings(folder, model=model)
     (folder / "registry.yaml").write_text("history: []\n")

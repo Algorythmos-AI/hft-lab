@@ -401,7 +401,8 @@ def test_the_adapter_may_use_the_network_and_the_broker_library():
 @pytest.mark.parametrize(
     "module",
     ["risk/gate.py", "venues/__init__.py", "venues/port.py", "venues/guard.py", "venues/fake/broker.py",
-     "venues/sim/venue.py", "record/recorder.py", "replay/reader.py", "shadow/runner.py"],
+     "venues/sim/venue.py", "record/recorder.py", "replay/reader.py", "shadow/runner.py", "scoring/child.py",
+     "scoring/client.py", "scoring/wire.py"],
 )  # fmt: skip
 def test_everything_else_including_the_recorder_and_the_shadow_venue_may_use_neither(module):
     assert len(violations(f"src/hftlab/{module}", ast.parse(NETWORK_SOURCE))) == 4

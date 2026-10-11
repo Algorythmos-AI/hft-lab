@@ -108,7 +108,7 @@ def learn_settings(folder: Path, **changes) -> Path:
                       "max_drawdown_micro": None, "draws": None, "level_ppm": None, "seed": None},
         "drift": {"min_rows": None, "feature_shift_ppm": None, "calibration_gap_micro": None,
                   "spread_ratio_x100": None},
-        "scorer": {"timeout_ms": 20, "restart_first_ms": 100, "restart_last_ms": 30_000},
+        "scorer": {"timeout_ms": 20, "start_ms": 5_000, "restart_first_ms": 100, "restart_last_ms": 30_000},
     }  # fmt: skip
     for key, value in changes.items():
         loaded[key] = {**loaded[key], **value} if isinstance(loaded[key], dict) else value

@@ -191,3 +191,9 @@ sent.
   authenticates who wrote it beyond the host's own file permissions.
 - **A real gateway.** Everything here has run against the fake broker. The five days of the F4 gate
   (`HFT-EXP-0002`) are what show whether the paper account behaves as the fake does.
+
+## Addendum, 2026-10-11: a restart no longer has to close what it finds
+
+"A restart closes what it finds" above now holds for a sleeve that starts cold. A sleeve whose state is saved
+at the end of a session and may be believed at the next start is restored, and keeps what it holds
+([ADR 0026](0026-sleeve-state-across-a-restart.md)). A restart still cancels working orders.

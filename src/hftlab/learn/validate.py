@@ -7,9 +7,9 @@
                  dataset was built with (`embargo_for`).
   hold-out       the last weeks of a dataset are in no fold. `HoldOut.read` hands them over once per frozen
                  configuration and writes that read into the trial ledger first; a second read is refused.
-  three numbers  every evaluation scores, on the same rows and under the same costs: the oracle (the better
-                 side in hindsight, which no strategy can have), the model, and a seeded coin. The no-trade
-                 baseline is the fourth line, and is zero.
+  three numbers  every evaluation scores, on the same rows and under the same costs: the oracle (in
+                 hindsight the better side wherever one pays, and no trade elsewhere: more than any strategy
+                 can have), the model, and a seeded coin. The no-trade baseline is the fourth line, and is zero.
   bootstrap      a confidence interval of the mean result per trade after costs, resampling whole trading
                  days: trades of one day stand or fall together, because they are not independent.
   deflated       the Sharpe ratio per period, and the probability that it beats the best of as many
@@ -26,7 +26,6 @@ independent trades. The day blocks of the bootstrap are what allows for that; no
 """
 from __future__ import annotations
 
-import hashlib
 import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -38,6 +37,7 @@ from typing import Final
 from hftlab.core import Side
 from hftlab.features import FeatureRow
 from hftlab.learn.dataset import Dataset, Row
+from hftlab.models.baseline import number
 from hftlab.registry.ledger import TrialLedger
 
 MILLION: Final = 1_000_000
@@ -109,12 +109,12 @@ def walk_forward(rows: Sequence[Row], *, embargo_ns: int, min_train_weeks: int =
     kept = weeks[: max(0, len(weeks) - hold_out_weeks)]
     held = weeks[len(kept) :]
     folds = []
-    for number in range(min_train_weeks, len(kept)):
-        test = by_week[kept[number]]
+    for index in range(min_train_weeks, len(kept)):
+        test = by_week[kept[index]]
         starts = rows[test[0]].known_ns
-        earlier = [position for week in kept[:number] for position in by_week[week]]
+        earlier = [position for week in kept[:index] for position in by_week[week]]
         train = tuple(position for position in earlier if rows[position].end_ns + embargo_ns < starts)
-        folds.append(Fold(kept[number], train, tuple(test), len(earlier) - len(train)))
+        folds.append(Fold(kept[index], train, tuple(test), len(earlier) - len(train)))
     return Plan(embargo_ns, tuple(kept), tuple(held), tuple(folds))
 
 
@@ -138,12 +138,6 @@ class HoldOut:
 
 
 # ---- three numbers, side by side -------------------------------------------------------------------------------------
-
-
-def number(seed: int, *parts: int) -> int:
-    """A 64-bit number fixed by the seed and the parts: seeded randomness with no generator and no position."""
-    text = "|".join(str(part) for part in (seed, *parts))
-    return int.from_bytes(hashlib.blake2b(text.encode("ascii"), digest_size=8).digest(), "big")
 
 
 @dataclass(slots=True)
@@ -191,7 +185,7 @@ class Report:
 
     @property
     def oracle_clears_cost(self) -> bool:
-        """Does even perfect foresight of the side make money after costs here? If not, nothing can."""
+        """Does any row pay after costs, even with perfect foresight? If not, there is nothing here to model."""
         return self.oracle.total_micro > 0
 
     def as_dict(self) -> dict[str, object]:
@@ -210,7 +204,8 @@ def three_way(rows: Sequence[Row], pair: str, decide: Decide, *, seed: int) -> R
     """The oracle, the model and a seeded coin on the same rows. The model is shown the features and nothing else."""
     oracle, model, coin = Tally(), Tally(), Tally()
     for row in rows:
-        oracle.add(row.day_ns, max(row.buy_micro, row.sell_micro))
+        if max(row.buy_micro, row.sell_micro) > 0:
+            oracle.add(row.day_ns, max(row.buy_micro, row.sell_micro))
         side = decide(FeatureRow(pair, row.n, row.known_ns, row.features))
         if side is not None:
             model.add(row.day_ns, row.buy_micro if side is Side.BUY else row.sell_micro)
@@ -281,7 +276,7 @@ def advantage(
 
     A side with no trade on the drawn days has a mean of zero there: not trading earns nothing.
     """
-    days = sorted(day for day in {*challenger, *champion} if challenger.get(day) or champion.get(day))
+    days = [day for day in sorted({*challenger, *champion}) if challenger.get(day) or champion.get(day)]
     ours = [tuple(challenger.get(day, ())) for day in days]
     theirs = [tuple(champion.get(day, ())) for day in days]
     return _resample(

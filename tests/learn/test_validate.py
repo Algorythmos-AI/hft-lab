@@ -200,9 +200,9 @@ def test_every_evaluation_reports_the_oracle_the_model_and_a_seeded_coin_on_the_
         return None if not leaning else Side.BUY if leaning > 0 else Side.SELL
 
     report = v.three_way(made.rows, made.pair, follow, seed=11)
-    assert report.rows == len(made.rows) == report.oracle.trades == report.random.trades
+    assert report.rows == len(made.rows) == report.random.trades and report.oracle.trades == signals
     assert report.model.trades == signals and report.model.total_micro == signals * WIN == report.model.won_micro
-    assert report.oracle.total_micro == signals * WIN - (len(made.rows) - signals) * COST, "the better side, every row"
+    assert report.oracle.total_micro == signals * WIN, "wherever one side pays: the model found them all"
     assert report.no_trade.trades == 0 and report.no_trade.total_micro == 0
     assert report.random.total_micro < report.no_trade.total_micro < report.model.total_micro
     said = report.as_dict()
@@ -239,11 +239,11 @@ def test_nothing_beats_the_oracle_and_every_tally_adds_up(outcomes, seed):
     for tally in (report.oracle, report.model, report.random, report.no_trade):
         assert tally.won_micro - tally.lost_micro == tally.total_micro and tally.wins + tally.losses <= tally.trades
         assert sum(len(day) for day in tally.by_day.values()) == tally.trades
-    assert report.oracle.total_micro >= report.random.total_micro
-    best = {r.n: max(r.buy_micro, r.sell_micro) for r in rows}
+    assert report.oracle.total_micro >= max(report.random.total_micro, report.model.total_micro, 0)
+    best = {r.n: max(r.buy_micro, r.sell_micro, 0) for r in rows}
     took = {r.n: r.buy_micro if choice[r.n] is Side.BUY else r.sell_micro for r in rows if choice[r.n] is not None}
-    assert report.model.total_micro == sum(took.values()) <= sum(best[n] for n in took)
-    assert report.oracle_clears_cost == (sum(best.values()) > 0)
+    assert report.model.total_micro == sum(took.values()) and report.oracle.total_micro == sum(best.values())
+    assert report.oracle_clears_cost == any(best.values()) and report.random.trades == len(rows)
 
 
 # ---- the day-block bootstrap -----------------------------------------------------------------------------------------

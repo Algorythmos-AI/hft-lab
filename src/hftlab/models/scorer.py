@@ -1,0 +1,177 @@
+"""The scorer: a feature row in, a decision or nothing out (ADR 0022).
+
+    score(feature_row) -> Decision | None
+
+A decision is a side and the outcome the model expects from taking it, after costs, in whole millionths of the
+quote currency, rounded down. None is an abstention: the model expects nothing above zero from either side, or
+cannot tell the two apart. Whether an expectation is large enough to trade on is not the scorer's business:
+the sleeve that asks has a margin of its own.
+
+The interface is made to cross a process boundary later. A request and a reply are each one line of canonical
+JSON holding integers and text only (`ask`, `answer`, `heard`), so the scorer can be moved into a process of
+its own without the caller changing. In this round it runs in the caller's process.
+
+Scoring is exact. A ridge model's weights are fractions and a row's values are whole numbers; each prediction
+is one integer sum and one division, and the two sides are compared as fractions. The same row gives the same
+decision on any machine, which is what lets a sleeve that asks a scorer replay byte for byte.
+"""
+from __future__ import annotations
+
+import json
+import math
+from dataclasses import dataclass
+from fractions import Fraction
+from typing import Protocol
+
+from hftlab.core import Side
+from hftlab.features import FeatureRow
+from hftlab.journal import canonical
+from hftlab.models.baseline import number
+from hftlab.models.file import Model, ModelError
+from hftlab.models.ridge import Ridge
+
+BUY, SELL = "buy", "sell"  # the two targets a model is fitted to: the outcome of taking each side
+
+
+class ScoreError(ValueError):
+    """The row is not one this model can score: another pair, or another number of features."""
+
+
+@dataclass(frozen=True, slots=True)
+class Decision:
+    side: Side
+    expected_micro: int  # what the model expects the side to make after costs, rounded down
+    model: str  # the hash of the model that said so
+
+
+class Scorer(Protocol):
+    @property
+    def model(self) -> Model: ...
+
+    def score(self, row: FeatureRow) -> Decision | None:
+        """The side the model would take on this row and what it expects of it, or None to abstain."""
+        ...
+
+
+class _Linear:
+    """One target's prediction as whole numbers: (constant + sum of weight x value) / divisor."""
+
+    __slots__ = ("constant", "divisor", "weights")
+
+    def __init__(self, intercept: Fraction, weights: tuple[Fraction, ...]) -> None:
+        self.divisor = math.lcm(intercept.denominator, *(w.denominator for w in weights))
+        self.constant = int(intercept * self.divisor)
+        self.weights = tuple(int(w * self.divisor) for w in weights)
+
+    def at(self, values: tuple[int, ...]) -> Fraction:
+        return Fraction(self.constant + sum(w * x for w, x in zip(self.weights, values, strict=True)), self.divisor)
+
+
+class _Checked:
+    def __init__(self, model: Model, kind: str) -> None:
+        if model.kind != kind:
+            raise ModelError(f"a {model.kind} model was handed to the scorer of {kind} models")
+        self._model, self._hash = model, model.content_hash
+
+    @property
+    def model(self) -> Model:
+        return self._model
+
+    def _check(self, row: FeatureRow) -> None:
+        if row.pair != self._model.pair or len(row.values) != len(self._model.features):
+            raise ScoreError(
+                f"model {self._hash[:12]} reads {len(self._model.features)} features of {self._model.pair}, "
+                f"not {len(row.values)} of {row.pair}"
+            )
+
+
+class RidgeScorer(_Checked):
+    def __init__(self, model: Model) -> None:
+        super().__init__(model, "ridge")
+        fit = Ridge.from_params(model.params)
+        if set(fit.weights) != {BUY, SELL} or any(len(w) != len(model.features) for w in fit.weights.values()):
+            raise ModelError("a ridge model predicts the outcome of each side from every feature it names")
+        self._buy = _Linear(fit.intercepts[BUY], fit.weights[BUY])
+        self._sell = _Linear(fit.intercepts[SELL], fit.weights[SELL])
+
+    def score(self, row: FeatureRow) -> Decision | None:
+        self._check(row)
+        buy, sell = self._buy.at(row.values), self._sell.at(row.values)
+        if buy == sell or max(buy, sell) <= 0:
+            return None
+        return Decision(Side.BUY if buy > sell else Side.SELL, math.floor(max(buy, sell)), self._hash)
+
+
+class FlatScorer(_Checked):
+    """The baseline that never trades."""
+
+    def __init__(self, model: Model) -> None:
+        super().__init__(model, "flat")
+
+    def score(self, row: FeatureRow) -> Decision | None:
+        self._check(row)
+        return None
+
+
+class RandomScorer(_Checked):
+    """The baseline that takes a side by a seeded coin, and expects nothing of it."""
+
+    def __init__(self, model: Model) -> None:
+        super().__init__(model, "random")
+        seed = model.params.get("seed")
+        if type(seed) is not int:
+            raise ModelError("a random model's one parameter is its seed, a whole number")
+        self._seed = seed
+
+    def score(self, row: FeatureRow) -> Decision | None:
+        self._check(row)
+        return Decision(Side.BUY if number(self._seed, row.n, row.known_ns) & 1 else Side.SELL, 0, self._hash)
+
+
+def scorer_for(model: Model) -> Scorer:
+    """The scorer of a model, by its kind."""
+    made: Scorer
+    if model.kind == "ridge":
+        made = RidgeScorer(model)
+    elif model.kind == "flat":
+        made = FlatScorer(model)
+    else:
+        made = RandomScorer(model)
+    return made
+
+
+# ---- the same question and answer, as lines ------------------------------------------------------------------------
+
+
+def ask(row: FeatureRow) -> str:
+    """A row as a request line."""
+    return canonical({"pair": row.pair, "n": row.n, "known_ns": row.known_ns, "values": list(row.values)})
+
+
+def answer(scorer: Scorer, line: str) -> str:
+    """The reply line to a request line: what a scorer in its own process would write back."""
+    try:
+        asked = json.loads(line)
+        row = FeatureRow(asked["pair"], asked["n"], asked["known_ns"], tuple(asked["values"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ScoreError(f"not a request for a score: {exc!r}") from exc
+    if not all(type(value) is int for value in (row.n, row.known_ns, *row.values)):
+        raise ScoreError("a request holds whole numbers only")
+    found = scorer.score(row)
+    reply: dict[str, object] = {"model": scorer.model.content_hash, "side": None, "expected_micro": None}
+    if found is not None:
+        reply.update(side=found.side.value, expected_micro=found.expected_micro)
+    return canonical(reply)
+
+
+def heard(line: str) -> Decision | None:
+    """A reply line as the decision it carries."""
+    try:
+        reply = json.loads(line)
+        if reply["side"] is None:
+            return None
+        if type(reply["expected_micro"]) is not int or not isinstance(reply["model"], str):
+            raise ValueError("a decision names its model and a whole number of millionths")
+        return Decision(Side(reply["side"]), reply["expected_micro"], reply["model"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ScoreError(f"not a scorer's reply: {exc!r}") from exc

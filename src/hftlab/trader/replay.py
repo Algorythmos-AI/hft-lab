@@ -13,6 +13,9 @@ What must hold:
 
 A replay under other settings than the day ran with is refused, not compared: the tape holds a hash of the
 files the decisions depend on.
+
+A place whose scorer was a process of its own is scored in this process: the day's record of the rows the
+child did not score lies beside the tape, and the replay abstains on exactly those (hftlab.scoring.record).
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ from hftlab.calendar import Calendar
 from hftlab.journal import verify
 from hftlab.lineup import FILE as LINEUP
 from hftlab.risk import RiskConfig
+from hftlab.scoring.record import beside
 from hftlab.trader.config import Settings
 from hftlab.trader.session import STATE, UNVERIFIED, Silent, Trader
 from hftlab.trader.tape import ReplayEdge, TapeEnded, TapeError, read_tape
@@ -95,7 +99,7 @@ def replay_day(
         edge = ReplayEdge(rows, paper=risk is not None)
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=Silent(),
-            config_digest=config_digest, folder=folder, status=False,
+            config_digest=config_digest, folder=folder, status=False, abstained=beside(tape),
         )  # fmt: skip
         with contextlib.suppress(TapeEnded):  # the process was gone there; what the replay wrote so far is compared
             trader.run()

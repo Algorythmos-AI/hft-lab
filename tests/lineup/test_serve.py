@@ -79,8 +79,7 @@ def test_the_settings_name_places_and_each_place_once(kept):
         ([place("ml", "champion"), place("other", "champion")], "same place"),
         ([place("ml", "challenger-0")], "champion or challenger-N"),
         ([place("ml", "latest")], "champion or challenger-N"),
-        ([place("ml", "champion", scorer="thread")], "the scorer is in_process"),
-        ([place("ml", "champion", scorer="process")], "one in its own process is not built"),
+        ([place("ml", "champion", scorer="thread")], "the scorer is in_process or process"),
         ([place("ml", "champion", margin_micro=-1)], "two whole numbers"),
         ([{**place("ml", "champion"), "model": "a" * 64}], "exactly the keys"),
     ):

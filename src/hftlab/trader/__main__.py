@@ -9,6 +9,10 @@ Its runbook is docs/runbooks/trader.md.
     python -m hftlab.trader --demote SLEEVE off --operator NAME     ask it to take a sleeve down (off or shadow)
     python -m hftlab.trader --dry-run-seconds 60 --state-dir DIR    the same loop on the fake broker; no gateway
 
+A place whose settings say `scorer: process` is scored by a child of this process (ADR 0023, section 5). How
+long the child may take is `scorer:` in the learning settings (--learn), which are read for that and nothing
+else, and only when a place asks for a process.
+
 What it refuses to start on (exit code 2): a venue that is not the registered paper venue, a paper-only lock
 that does not pass, settings or risk limits that cannot be read, and a sleeve whose stage lets it place paper
 orders while the limits are not in force.
@@ -40,11 +44,15 @@ from typing import IO, Any
 from hftlab.calendar import Calendar, CalendarError, load_calendar
 from hftlab.core import Clock, Instrument, InstrumentKind, SimClock, WallClock
 from hftlab.journal import JournalError, read
+from hftlab.learn.config import LearnConfigError
+from hftlab.learn.config import load as load_learning
+from hftlab.lineup.serve import PROCESS
 from hftlab.ops import host
 from hftlab.ops.alerts import Alerts, sender_from
 from hftlab.risk import RiskConfig, RiskConfigError, RiskNotInForce, file_switches, load_risk_config
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.safety.venues import UnknownVenueError, venue
+from hftlab.scoring.client import Times
 from hftlab.shadow.__main__ import ConfigError
 from hftlab.trader.config import Settings, TraderConfigError, digest, load
 from hftlab.trader.replay import replay_day
@@ -59,6 +67,7 @@ SECOND = 1_000_000_000
 CONFIG = Path("config/trader.yaml")
 RISK = Path("config/risk.yaml")
 COSTS = Path("config/cost_model.yaml")
+LEARN = Path("config/learn.yaml")
 CALENDAR = Path("config/calendar")
 EXIT_OK, EXIT_FAILED, EXIT_REFUSED = 0, 1, 2
 
@@ -73,6 +82,17 @@ def limits(path: Path) -> RiskConfig | None:
         return load_risk_config(path)
     except RiskNotInForce:
         return None
+
+
+def scorer_times(path: Path, settings: Settings) -> Times | None:
+    """How long a scorer process may take, when a place asks for one; None when every place scores in process."""
+    if not any(entry.get("scorer") == PROCESS for entry in settings.sleeves):
+        return None
+    learning = load_learning(path)
+    return Times(
+        learning.scorer_timeout_ns, learning.scorer_start_ns, learning.scorer_restart_first_ns,
+        learning.scorer_restart_last_ns,
+    )  # fmt: skip
 
 
 def config_digest(args: argparse.Namespace) -> str:
@@ -101,13 +121,14 @@ def serve(
     notify: Notify,
     config_digest: str,
     should_stop: Callable[[], bool],
+    times: Times | None = None,
 ) -> int:
     """Session after session until told to stop. Each starts as a restart would: from the journals, blind."""
     sessions = 0
     while not should_stop():
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=notify,
-            config_digest=config_digest,
+            config_digest=config_digest, scorer_times=times,
         )  # fmt: skip
         sessions += 1
         say(f"session {trader.session} of {trader.label}; stages {json.dumps(trader.stages.all(), sort_keys=True)}")
@@ -143,6 +164,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
     if not venue(settings.venue).needs_paper_lock:
         raise TraderRefused(f"{settings.venue} is not a broker's paper account")
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
+    times = scorer_times(args.learn, settings)
     stopping: list[int] = []
     for number in (signal.SIGTERM, signal.SIGINT):
         signal.signal(number, lambda received, _frame: stopping.append(received))
@@ -194,7 +216,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         try:
             serve(
                 edge, settings, model=model, calendar=calendar, risk=risk, notify=notify,
-                config_digest=config_digest(args), should_stop=should_stop,
+                config_digest=config_digest(args), should_stop=should_stop, times=times,
             )  # fmt: skip
         finally:
             source.disconnect()
@@ -246,6 +268,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--risk", type=Path, default=RISK)
     parser.add_argument("--cost-model", type=Path, default=COSTS)
     parser.add_argument("--calendar", type=Path, default=CALENDAR, help="directory with holidays and macro events")
+    parser.add_argument("--learn", type=Path, default=LEARN, help="the learning settings: a scorer process's times")
     parser.add_argument("--state-dir", type=Path, help="where KILL and FLATTEN are looked for (default: the host's)")
     parser.add_argument("--journals", type=Path, help="the trader's own folder (default: the config's state_dir)")
     parser.add_argument("--host", default="127.0.0.1")
@@ -275,7 +298,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.replay:
             return run_replay(args, settings)
         return run_live(args, settings)
-    except (TraderRefused, TraderConfigError, ConfigError, RiskConfigError, CostModelError, CalendarError) as exc:
+    except (
+        TraderRefused, TraderConfigError, ConfigError, RiskConfigError, CostModelError, CalendarError, LearnConfigError,
+    ) as exc:  # fmt: skip
         say(f"refused: {exc}")
         return EXIT_REFUSED
     except UnknownVenueError as exc:

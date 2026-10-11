@@ -58,6 +58,8 @@ from hftlab.lineup.journal import LineupError
 from hftlab.lineup.serve import lineup_or_none, make
 from hftlab.record.format import Heartbeat, describe
 from hftlab.risk import Reason, RiskConfig, RiskGate
+from hftlab.scoring.client import READY, Scorers, Times
+from hftlab.scoring.record import SUFFIX as ABSTAINED
 from hftlab.shadow.__main__ import make_sleeves, minimum_sizes
 from hftlab.strategy import Action, Cancel, Event, Intent, Placed, Refused, Sleeve
 from hftlab.trader.config import Settings
@@ -178,6 +180,8 @@ class Trader:
         config_digest: str,
         folder: Path | None = None,
         status: bool = True,
+        scorer_times: Times | None = None,
+        abstained: Path | None = None,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -253,13 +257,21 @@ class Trader:
         sizes = minimum_sizes(list(self._instruments.values()), model)
         self._sizes = sizes
         lineup, problem = lineup_or_none(self._folder / LINEUP)
+        # A place whose scorer is a process (ADR 0023): the child is started here, with `scorer_times`. A replay
+        # is handed `abstained` instead, the day's record of the rows a child did not score, and starts none.
+        self._scorers = Scorers(
+            times=scorer_times, record=days / f"session-{tapes + 1:03d}{ABSTAINED}", replayed=abstained,
+            clock=self._clock, heard=self._abstained,
+        )  # fmt: skip
+        self._scoring: dict[str, str] = {}
         try:
             served = make(
                 settings.sleeves, lineup, registry=settings.registry, calendar=calendar,
                 others=lambda entry: make_sleeves([entry], sizes, costs=model, calendar=calendar)[0],
-                problem=problem,
+                problem=problem, scoring=self._scorers.make,
             )  # fmt: skip
         except LineupError as exc:
+            self._scorers.close()
             raise TraderRefused(str(exc)) from exc
         self._sleeves: list[Sleeve[Any]] = served.sleeves
         self._renew = False  # the lineup changed: this session ends and the next one reads it
@@ -392,6 +404,9 @@ class Trader:
             for item in (*self._news.pop(sleeve.name, ()), *market):
                 self._show(sleeve, item, now)
         self._news.clear()
+        self._scorers.tend()
+        if step.beat is not None:
+            self._watch_scorers()
         if step.beat is not None and self._status_path is not None:
             self._write_status(now, step.state)
         if now >= self._day:
@@ -727,6 +742,25 @@ class Trader:
 
     # ---- the sleeves ----------------------------------------------------------------------------------------------
 
+    def _abstained(self, name: str, row: int, known_ns: int, why: str) -> None:
+        """A scorer process did not score this row, and the sleeve abstains on it. A replay writes the same line."""
+        self._write("abstained", sleeve=name, row=row, known_ns=known_ns, why=why)
+
+    def _watch_scorers(self) -> None:
+        """On a beat: the owner is told when a scorer process stops answering, and when it answers again.
+
+        Not journalled: when a process comes back is not a function of the tape. The rows it missed are.
+        """
+        for name, health in self._scorers.health().items():
+            if health == self._scoring.get(name, READY):
+                continue
+            self._scoring[name] = health
+            if health == READY:
+                self._notify.resolve(_key("scorer", name), f"The scorer of {name} answers again", "It was restarted.")
+            else:
+                text = f"The scorer process of {name} is {health}. The sleeve abstains until it answers."
+                self._notify.fire(_key("scorer", name), f"The scorer of {name} is {health}", text, 4)
+
     def _view_book(self, name: str) -> Book:
         """The book a sleeve's position is read from: the broker's once it places paper orders, else the shadow's."""
         if self._manager is not None and name in self._names and self._stages.stage(name) in PAPER:
@@ -1021,6 +1055,7 @@ class Trader:
         self._shut()
 
     def _shut(self) -> None:
+        self._scorers.close()
         self._journal.close()
         self._shadow_journal.close()
         if self._manager is not None:

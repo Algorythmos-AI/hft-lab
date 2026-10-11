@@ -14,6 +14,7 @@ or there.
 | `trader/risk.jsonl`, `trader/reconcile.jsonl` | the latches, and what the reconciler found |
 | `trader/stages.jsonl` | each sleeve's stage and its clean days |
 | `trader/lineup.jsonl` | the lineup journal: which model is champion, and every change of it |
+| `trader/sleeves.jsonl` | the sleeves' saved states, one entry for each session that ended on purpose. Kept as a record; a copy brought back from here is never restored from, because the tape it names is not in the backup ([the trader runbook](trader.md), section 9) |
 | `trader/days/<day>/decisions.jsonl` | each trading day's decision journal |
 | `learn/models/`, `learn/reports/` | the model registry and the evaluation reports, each file named by its hash |
 | `learn/trials.jsonl`, `learn/last-run.json` | the trial ledger, and the word the last training run left |

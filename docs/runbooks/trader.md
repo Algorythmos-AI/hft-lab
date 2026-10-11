@@ -223,3 +223,35 @@ decision journals and the other journals are not counted: they are the record, a
   shown as `"ended": "killed"`, and it can report `"identical": false` with `replayed_bytes` smaller than
   `live_bytes`, because the tape ends up to a beat before the decision journal does. That is the power cut,
   not a defect in the trader. Every earlier session of the day still replays whole.
+
+## 9. Sleeve state, and "started cold"
+
+A sleeve remembers things: its warm-up, a model's feature history, why it holds what it holds. A session that
+ends on purpose (the day's close, a stop) writes them into `var/trader/sleeves.jsonl`, and the next start
+gives them back ([ADR 0026](../adr/0026-sleeve-state-across-a-restart.md)). Every start writes one
+`sleeve_state` line into the day's decision journal: the sleeves restored, and for each other one the reason.
+
+**Started cold** means a sleeve began from nothing, as every sleeve did before this file existed: it warms
+up again, and the trader closes what it was holding, at the market. **It is safe.** It is what the trader does
+whenever it cannot show that the saved state is still true, and a state that might be stale is never used.
+What it costs is the sleeve's warm-up, and on paper the spread on the position that is closed. You get one
+page, `hft:sleeve-state`, naming each sleeve and its reason; it resolves at the next start that restores.
+
+| Reason | What it means | What to do |
+|---|---|---|
+| `NONE` | No state was ever saved: a first start. No page | Nothing |
+| `JOURNALS` | Something was written to a journal after the state was saved. The ordinary case: the session before this one was killed, or lost power, and saved nothing | Nothing. Look for why it was killed |
+| `TAPE` | The tape of the session that saved the state is not the last tape, or is not as it was: a part was added, is missing, or was changed | Nothing, if you moved that session's tape away to make room (section 8). Otherwise say what happened to the folder in an issue |
+| `UNVERIFIED`, `NOT_A_STATE` | The file's chain is broken, or its last line is not a state of this version | Nothing by hand. The file is set aside as `sleeves.jsonl.unverified` at the next clean stop and a new one begins. Open an issue with the file that was set aside |
+| `IN_FLIGHT`, `STAGE`, `SETTINGS`, `ABSENT` | One sleeve only: it had an order on its way, its stage or its settings changed, or it is new | Nothing |
+
+Things that do **not** make a start cold: the housekeeping job compressing the tape's parts, the last part
+among them; moving older sessions' tapes to another disk; a start refused because the tapes are at their
+quota (no session began, and the state is still there for the start after room is made).
+
+Never edit, shorten or delete `sleeves.jsonl` to "fix" a cold start, and never copy one in from a backup to
+get a warm one: a restored file names a tape the backup does not hold, and is not believed.
+
+To tell whether the state was saved, the trader reads the whole tape of the session that just ended, once
+at the stop and once at the next start. On a large day that takes seconds. If a stop is cut off by the
+service manager before it finishes, no state was saved, and the next start is a cold one.

@@ -34,6 +34,8 @@ sleeves:
 
   # The ML places (ADR 0023). A place names no model: the lineup journal in the state directory says which
   # model stands in it, by hash, and an empty place runs idle. With nothing registered both run idle.
+  # `scorer` is where a row is scored: in_process, or process, a child of the trader behind a timeout (its
+  # times are `scorer:` in config/learn.yaml). in_process is the shipped value.
   - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}                 # PLACEHOLDER margin
   - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
 

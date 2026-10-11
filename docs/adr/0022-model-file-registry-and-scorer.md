@@ -116,3 +116,10 @@ The consequence above that gradient boosting is not built no longer holds.
 file, `gbm`. What this record expected of it changed in one respect: the float arithmetic does not stay inside
 the scorer, it stays out of it. The library's floats end where the trees are exported, and the scorer adds
 whole numbers. Neural networks are still not built.
+
+## Addendum, 2026-10-11: the scorer's own process is built
+
+The scorer can now run in a process of its own ([ADR 0023](0023-weekly-learning-loop.md), section 5). The
+request and the reply lines of section 5 above are what crosses the pipe, unchanged, and the caller did not
+change: a sleeve is handed a scorer and cannot tell which kind. In process is still the default and is what a
+replay uses.

@@ -79,8 +79,7 @@ def test_the_settings_name_places_and_each_place_once(kept):
         ([place("ml", "champion"), place("other", "champion")], "same place"),
         ([place("ml", "challenger-0")], "champion or challenger-N"),
         ([place("ml", "latest")], "champion or challenger-N"),
-        ([place("ml", "champion", scorer="thread")], "the scorer is in_process"),
-        ([place("ml", "champion", scorer="process")], "one in its own process is not built"),
+        ([place("ml", "champion", scorer="thread")], "the scorer is in_process or process"),
         ([place("ml", "champion", margin_micro=-1)], "two whole numbers"),
         ([{**place("ml", "champion"), "model": "a" * 64}], "exactly the keys"),
     ):
@@ -157,7 +156,7 @@ def test_a_place_whose_model_changed_loses_a_stage_that_places_orders(kept, tmp_
     (change,) = made.of("stage")
     assert (change["sleeve"], change["before"], change["cause"]) == (ML, "min_size", "MODEL")
     assert change["detail"] == b.model[:12]
-    assert f"stage.{ML}." in made.pages.fired[-1]
+    assert [key for key in made.pages.fired if key.startswith(f"stage.{ML}.")], "and the owner is told"
     again = desk(tmp_path, registry, paper=True, at_ns=first.clock.now_ns() + 1)
     assert again.of("stage") == [change] or len(again.of("stage")) == 1, "the same model again changes nothing"
 

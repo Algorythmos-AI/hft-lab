@@ -72,8 +72,8 @@ The repository is **public**. Assume every byte committed is read by strangers a
 
 ```
 src/hftlab/    core · safety · venues (port, guard, view, ibkr/, fake/, sim/) · calendar · record · replay ·
-               book · strategy · shadow · feasibility · registry · risk · exec · trader · journal
-               features · labels · models · learn (computation only: no venue, no order)
+               book · strategy · shadow · feasibility · review · registry · risk · exec · trader · journal
+               features · labels · models · learn · scoring (computation only: no venue, no order)
                history (reads tick files the owner exported; downloads nothing; a store of its own)
                ops (the host layer) · publish (the status snapshot)
 tools/         leakcheck.py and commitmsg.py, used by the hooks and CI

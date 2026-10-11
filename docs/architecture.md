@@ -64,13 +64,17 @@ strategy/     the sleeve interface, the idle and the control sleeve, and the ML 
               dl: not built)
 shadow/       the shadow runner and its hash-chained journal                                            F3
 feasibility/  the feasibility map: moves against the modelled cost, by pair and holding time            F3
+review/       reading a run back: round trips against the cost model, a sleeve's day beside its null    F3
 features/     causal, exact features of one pair's quote stream, the same offline and live             F5
 labels/       cost-aware outcomes and triple-barrier outcomes, each with the time its window ends      F5
 models/       the hashed model file, the registry, an exact ridge model, boosted trees as whole        F5
-              numbers, two baselines, the scorer (in-process today; neural networks are not built)
+              numbers, two baselines, the scorer (neural networks are not built)
+scoring/      the scorer in a process of its own: the message format, the child, the trader's side     F6
+              of the pipe and the record a replay abstains by (off as shipped; synthetic data only)
 risk/         the independent gate: limits, market guards, latches, switches                            F4
 exec/         the order manager: idempotent order ids, order state machine, write-ahead outbox          F4
-trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay          F4
+trader/       the loop that wires them: stages, two books, the tape of what it saw, the replay,         F4
+              and the sleeves' states kept across a restart
 journal       the hash-chained journal of the shadow runner, the outbox, the latches, the reconciler    F3
 learn/        datasets with a look-ahead check, walk-forward validation, the promotion decision        F6
               (foundations only: no training run, no weekly promotion, no process)
@@ -181,8 +185,9 @@ with an optional library and kept and scored as whole numbers
 ([ADR 0025](adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)), and the weekly loop as
 processes: the training run, the hash-chained lineup journal the trader reads its models from, the weekly
 decision with its rollback and drill, and the drift look ([ADR 0023](adr/0023-weekly-learning-loop.md)).
-Nothing has trained on a real recording, no promotion rule exists so nothing can be promoted, the scorer
-still runs in the trader's process, and no model has been fitted to real data.
+The scorer can run in a process of its own, behind a timeout, a restart with back-off and a record that lets
+a day replay without it; as shipped it runs in the trader's process. Nothing has trained on a real recording,
+no promotion rule exists so nothing can be promoted, and no model has been fitted to real data.
 
 ## How bugs are kept rare, loud and contained
 

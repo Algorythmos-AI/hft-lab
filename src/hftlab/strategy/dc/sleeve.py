@@ -43,12 +43,33 @@ from hftlab.calendar import Calendar, in_rollover_window, next_close
 from hftlab.core import Fill, OrderEvent, OrderState, Quote, Side
 from hftlab.core.ids import check_sleeve
 from hftlab.record.format import Heartbeat
-from hftlab.strategy.dc.detector import MID, UP, Detector, DetectorState, mid
-from hftlab.strategy.sleeve import ENTRY, EXIT, Action, Event, Intent, Placed, Refused
+from hftlab.strategy.dc.detector import MID, UP, Detector, DetectorError, DetectorState, mid
+from hftlab.strategy.sleeve import (
+    ENTRY,
+    EXIT,
+    Action,
+    Event,
+    Intent,
+    Placed,
+    Refused,
+    StateError,
+    flag,
+    one_of,
+    opened,
+    text_or_none,
+    whole,
+    whole_or_none,
+)
 
 TREND, CONTRARIAN = "trend", "contrarian"
 VARIANTS: Final = (TREND, CONTRARIAN)
 FLAT, ENTERING, HOLDING, EXITING = "flat", "entering", "holding", "exiting"
+PHASES: Final = (FLAT, ENTERING, HOLDING, EXITING)
+KIND, VERSION = "directional_change", 1  # of a saved state
+_SAVED: Final = (
+    "detector", "seen_ns", "open_until_ns", "current", "current_up", "tried", "attempts", "entered", "phase",
+    "order_id", "keyed_up", "since_ns", "leave", "trips", "exits", "tried_ns",
+)  # fmt: skip
 _DEAD = (OrderState.CANCELLED, OrderState.REJECTED, OrderState.EXPIRED)
 
 
@@ -142,6 +163,59 @@ class DcSleeve:
 
     def initial(self) -> DcState:
         return tuple(PairState(self._detector.initial()) for _ in self.sizes)
+
+    # ---- written down and read back (ADR 0026) --------------------------------------------------------------------
+
+    def save(self, state: DcState) -> dict[str, object]:
+        """The state as plain values: each pair's detector as the detector writes it, and what the pair is doing.
+
+        The calendar is not in the settings and so not in the check on the way back: it is a setting of the
+        whole run. `open_until_ns` was worked out from it, and a restart under another calendar reads the old
+        value until the moment it names.
+        """
+        pairs = [
+            {
+                "detector": self._detector.dump(mine.detector), "seen_ns": mine.seen_ns,
+                "open_until_ns": mine.open_until_ns, "current": mine.current, "current_up": int(mine.current_up),
+                "tried": mine.tried, "attempts": mine.attempts, "entered": mine.entered, "phase": mine.phase,
+                "order_id": mine.order_id, "keyed_up": int(mine.keyed_up), "since_ns": mine.since_ns,
+                "leave": int(mine.leave), "trips": mine.trips, "exits": mine.exits, "tried_ns": mine.tried_ns,
+            }
+            for mine in state
+        ]  # fmt: skip
+        return {"kind": KIND, "version": VERSION, "settings": self.settings(), "state": pairs}
+
+    def restore(self, saved: Mapping[str, object]) -> DcState:
+        rows = opened(saved, KIND, VERSION, self.settings())
+        if not isinstance(rows, list) or len(rows) != len(self.sizes):
+            raise StateError("the saved state does not hold one entry for each pair")
+        return tuple(self._pair_state(row) for row in rows)
+
+    def _pair_state(self, row: object) -> PairState:
+        if not isinstance(row, Mapping) or set(row) != set(_SAVED):
+            raise StateError("not a saved pair of the Directional Change sleeve")
+        try:
+            detector = self._detector.load(row["detector"])
+        except DetectorError as exc:
+            raise StateError(str(exc)) from exc
+        return PairState(
+            detector=detector,
+            seen_ns=whole_or_none(row["seen_ns"], "seen_ns"),
+            open_until_ns=whole(row["open_until_ns"], "open_until_ns"),
+            current=whole(row["current"], "current"),
+            current_up=flag(row["current_up"], "current_up"),
+            tried=whole(row["tried"], "tried"),
+            attempts=whole(row["attempts"], "attempts"),
+            entered=whole(row["entered"], "entered"),
+            phase=one_of(row["phase"], PHASES, "phase"),
+            order_id=text_or_none(row["order_id"], "order"),
+            keyed_up=flag(row["keyed_up"], "keyed_up"),
+            since_ns=whole(row["since_ns"], "since_ns"),
+            leave=flag(row["leave"], "leave"),
+            trips=whole(row["trips"], "trips"),
+            exits=whole(row["exits"], "exits"),
+            tried_ns=whole_or_none(row["tried_ns"], "tried_ns"),
+        )
 
     def decide(self, state: DcState, event: Event, now_ns: int, view: SleeveView) -> tuple[DcState, Sequence[Action]]:
         if isinstance(event, Quote | Heartbeat):

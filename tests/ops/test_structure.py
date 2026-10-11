@@ -16,6 +16,9 @@ NOT_ITS_BUSINESS = (
     "hftlab.venues", "hftlab.safety", "hftlab.strategy", "hftlab.book", "hftlab.risk", "hftlab.exec", "hftlab.replay",
     "hftlab.feasibility", "hftlab.registry",
 )  # fmt: skip
+# The modules of this layer that may start a program: the backup its tool; the deploy git, uv, systemctl and gh.
+# This is the one list of them. The scorer's structure test reads it too (tests/scoring/test_structure.py).
+STARTS_PROGRAMS = ("src/hftlab/ops/backup.py", "src/hftlab/ops/deploy.py")
 
 
 def layer() -> list[tuple[str, ast.Module]]:
@@ -60,8 +63,7 @@ def test_only_the_post_module_touches_the_http_client_and_only_the_backup_and_th
         names = {name for _, name in imports(tree, rel)}
         http = {name for name in names if name.startswith(("urllib.request", "urllib.error"))}
         assert bool(http) == (rel == "src/hftlab/ops/post.py"), f"{rel} imports {sorted(http)}"
-        starts_programs = ("src/hftlab/ops/backup.py", "src/hftlab/ops/deploy.py")  # the tool; git, uv, systemctl, gh
-        assert ("subprocess" in names) == (rel in starts_programs), rel
+        assert ("subprocess" in names) == (rel in STARTS_PROGRAMS), rel
 
 
 def test_the_pre_flight_gate_imports_the_standard_library_and_the_clock_and_nothing_else_of_ours():

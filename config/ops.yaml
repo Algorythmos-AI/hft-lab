@@ -42,8 +42,9 @@ learning:
 # F6 is `open`: the weekly loop's code is written and tested on synthetic data and against the fake broker
 # (weekend training, the lineup journal, challengers in shadow, the weekly decision with rollback and its
 # drill, the drift look, the two units). Its gate is not met: two full weekly cycles without manual help
-# and one rollback drill, on the host. Nothing has been trained on real data, no promotion rule exists, and
-# the scorer in its own process and a deep challenger are not built.
+# and one rollback drill, on the host. Nothing has been trained on real data and no promotion rule exists.
+# The scorer in its own process is built, off as shipped, and has never run on a host. A deep challenger is
+# not built.
 phases:
   F0: done
   F1: open

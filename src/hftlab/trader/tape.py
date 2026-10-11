@@ -57,9 +57,11 @@ from __future__ import annotations
 
 import contextlib
 import gzip
+import hashlib
 import json
 import os
 import re
+import zlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,6 +112,7 @@ HEAD: Final = ".tape.jsonl"  # what a session's head is called after its number;
 PART_BYTES: Final = 64_000_000  # ENGINEERING DEFAULT: a part is closed at the first turn after it has grown to this
 _PART: Final = re.compile(r"\.part-(?P<number>[0-9]{4,})\.(?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl(?P<gz>\.gz)?")
 _TAIL: Final = 1 << 12  # more than a `stop` line: where the end of a part is looked at
+_CHUNK: Final = 1 << 20  # a tape is read for its hash this much at a time, never whole
 
 Row = list[Any]
 
@@ -313,6 +316,58 @@ def parts(head: Path) -> list[Path]:
 def heads(day: Path) -> list[Path]:
     """The heads of a trading day's sessions, oldest first."""
     return sorted(day.glob(f"session-*{HEAD}"))
+
+
+def last_head(days: Path) -> Path | None:
+    """The head of the session that began last: the highest number in the newest day folder that holds one."""
+    folders = sorted((path for path in days.iterdir() if path.is_dir()), reverse=True) if days.is_dir() else []
+    for folder in folders:
+        found = heads(folder)
+        if found:
+            return found[-1]
+    return None
+
+
+def ending(head: Path) -> list[object]:
+    """Where a session's tape ends: its parts, its bytes, and the SHA-256 of them. `[.., .., ""]`: nowhere sure.
+
+    The bytes are the head's and then each part's in order, as one file would have held them, so the answer
+    is the same before and after the housekeeping job compresses a part, and wherever the parts were cut.
+    Nothing is parsed. Two answers that are equal and carry a hash are the same tape, line for line: no part
+    was added, taken away, written to or written again between them.
+
+    The hash is "" when the tape cannot stand for anything: there is no head, a part is missing from the run,
+    a file cannot be read or does not unpack, or one of them does not end with the end of a line (a line that
+    was being written, or a part that a kill left empty).
+
+    Every byte of the session's tape is read, the compressed parts unpacked: seconds for a day at the size
+    the shipped settings allow. That is paid once when a session ends on purpose and once at the next start.
+    """
+    for _ in range(2):  # the housekeeping job may replace a part with its compressed copy between the two looks
+        with contextlib.suppress(FileNotFoundError):
+            return _ending(head)
+    return [0, 0, ""]
+
+
+def _ending(head: Path) -> list[object]:
+    digest, size, count = hashlib.sha256(), 0, 0
+    try:
+        files = [head, *parts(head)]
+        count = len(files) - 1
+        for file in files:
+            last = b""
+            with gzip.open(file, "rb") if file.suffix == ".gz" else file.open("rb") as stream:
+                while chunk := stream.read(_CHUNK):
+                    digest.update(chunk)
+                    size += len(chunk)
+                    last = chunk[-1:]
+            if last != b"\n":
+                return [count, size, ""]
+    except FileNotFoundError:
+        raise
+    except (TapeError, OSError, EOFError, zlib.error):
+        return [count, size, ""]
+    return [count, size, digest.hexdigest()]
 
 
 def tape_bytes(days: Path) -> int:

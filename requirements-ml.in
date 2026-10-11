@@ -1,0 +1,7 @@
+# The optional ML set: gradient boosting, for the weekend training run only (ADR 0025). Recompile with `make lock`.
+# Nothing here is needed to record, to trade or to score: a trained model is exported into the repository's own
+# model file and scored by hftlab.models.trees, which imports none of it (tests/models/test_boundary.py).
+# Constrained by the other two locks, so the three files install into one environment without a conflict.
+-c requirements.lock.txt
+-c requirements-dev.lock.txt
+lightgbm==4.7.0

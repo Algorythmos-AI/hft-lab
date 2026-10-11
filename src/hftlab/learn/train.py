@@ -7,9 +7,10 @@
 For every configured pair and horizon, from the day folders of the recorder's store:
 
   1. the dataset is built, which refuses a feature that reads ahead (`hftlab.learn.dataset`);
-  2. the configuration is written into the trial ledger, and only then evaluated: walk-forward by week, a ridge
-     model fitted to each fold's training rows and scored on its test week, with the oracle and a seeded coin
-     on the same rows, the day-block interval and the deflated Sharpe ratio with the trials counted;
+  2. the configuration is written into the trial ledger, and only then evaluated: walk-forward by week, a model
+     of the configured kind fitted to each fold's training rows and scored on its test week, with the oracle
+     and a seeded coin on the same rows, the day-block interval and the deflated Sharpe ratio with the trials
+     counted;
   3. the candidate is fitted to every development week and kept in the model registry under its hash;
   4. the evaluation report is kept under its own hash, and the candidate is registered in the lineup journal.
 
@@ -17,9 +18,14 @@ The report is one line of canonical JSON holding integers and text only, so the 
 ledger give the same model hash and the same report, byte for byte. What differs from run to run (the time,
 the memory the process peaked at) is in a file of its own beside it, `last-run.json`.
 
+The kind of model is the settings' `model`: `ridge`, fitted exactly (ADR 0022), or `gbm`, gradient-boosted
+trees fitted by a library of the optional ML set and kept as whole numbers (ADR 0025). Everything else of a run
+is the same for both: the folds, the ledger, the report, the registry and the lineup.
+
 What it refuses (exit 2): to run while the market is open, unless it is a dry run; a store with too few weeks
-to make one fold; a hold-out this configuration has already read. The held-out weeks are in no fold, in no
-fit and in no summary, and are read only through `HoldOut.read`, which writes the read into the ledger first.
+to make one fold; a hold-out this configuration has already read; a `gbm` run without the ML set installed.
+The held-out weeks are in no fold, in no fit and in no summary, and are read only through `HoldOut.read`, which
+writes the read into the ledger first.
 It fails (exit 1) when the process peaked above its memory budget, and then registers nothing.
 
 Nothing here reaches a venue, and nothing here changes what the trader runs: a candidate serves nowhere until
@@ -47,7 +53,9 @@ from hftlab.feasibility.map import FeasibilityError, feasibility_map, load_setti
 from hftlab.feasibility.map import Settings as FeasibilitySettings
 from hftlab.features import FeatureRow, at_ns
 from hftlab.journal import JournalError, canonical
-from hftlab.learn.config import LearnConfigError, Settings, config_hash, load
+from hftlab.learn.boost import BoostError, LibraryMissing, TooFewRows, library
+from hftlab.learn.boost import fit as boost
+from hftlab.learn.config import GBM, Boosting, LearnConfigError, Settings, config_hash, load
 from hftlab.learn.dataset import Dataset, DatasetError, LeakError, build_for
 from hftlab.learn.drift import EXPECTED_KEY, by_column, summarise
 from hftlab.learn.validate import (
@@ -67,7 +75,7 @@ from hftlab.lineup import REGISTER, LineupError, Named, append
 from hftlab.lineup import read as read_lineup
 from hftlab.models.file import Model, ModelError, ModelRegistry
 from hftlab.models.ridge import RidgeError, fit
-from hftlab.models.scorer import BUY, SELL, RidgeScorer
+from hftlab.models.scorer import BUY, SELL, Scorer, scorer_for
 from hftlab.record.format import CorruptSegment, RecordedEvent
 from hftlab.record.store import days as store_days
 from hftlab.registry.ledger import TrialLedger, counted_trials
@@ -101,6 +109,29 @@ def ridge_model(dataset: Dataset, positions: Sequence[int], penalty: Fraction) -
     rows = [dataset.rows[position] for position in positions]
     targets = {BUY: [row.buy_micro for row in rows], SELL: [row.sell_micro for row in rows]}
     return _model(dataset, "ridge", fit([row.features for row in rows], targets, penalty).params())
+
+
+def gbm_model(dataset: Dataset, positions: Sequence[int], settings: Boosting) -> Model:
+    """Boosted trees of the outcome of each side, fitted to the rows at `positions` and kept as whole numbers."""
+    rows = [dataset.rows[position] for position in positions]
+    targets = {BUY: [row.buy_micro for row in rows], SELL: [row.sell_micro for row in rows]}
+    return _model(dataset, GBM, boost([row.features for row in rows], targets, settings).params())
+
+
+def fit_model(dataset: Dataset, positions: Sequence[int], settings: Settings) -> Model:
+    """A model of the kind the settings name, fitted to the rows at `positions`."""
+    if settings.model == GBM:
+        return gbm_model(dataset, positions, settings.boosting)
+    return ridge_model(dataset, positions, settings.penalty)
+
+
+def ready(settings: Settings) -> None:
+    """Refuse, before anything is counted or built, a kind of model this installation cannot fit."""
+    if settings.model == GBM:
+        try:
+            library()
+        except LibraryMissing as exc:
+            raise TrainRefused(str(exc)) from exc
 
 
 def flat_model(dataset: Dataset) -> Model:
@@ -157,7 +188,7 @@ def train_one(
     config = config_hash(frozen)
     plan, development = _walk(dataset, settings)
     fold_of = {dataset.rows[position].n: number for number, fold in enumerate(plan.folds) for position in fold.test}
-    scorers: dict[int, RidgeScorer | None] = {}
+    scorers: dict[int, Scorer | None] = {}
     expected: list[int] = []
     untrained: set[int] = set()
 
@@ -166,8 +197,8 @@ def train_one(
         number = fold_of[row.n]
         if number not in scorers:
             try:
-                scorers[number] = RidgeScorer(ridge_model(dataset, plan.folds[number].train, settings.penalty))
-            except RidgeError:
+                scorers[number] = scorer_for(fit_model(dataset, plan.folds[number].train, settings))
+            except (RidgeError, TooFewRows):
                 scorers[number] = None  # too few training rows left after the purge: the fold abstains
                 untrained.add(number)
         scorer = scorers[number]
@@ -189,7 +220,7 @@ def train_one(
         sharpe["trial_variance"] = "that of a ratio with no skill over the same periods: the trials' own were not kept"
     except ValidationError as exc:
         sharpe = {"ratio": None, "trials": trials, "why_not": str(exc)}
-    candidate = ridge_model(dataset, development, settings.penalty)
+    candidate = fit_model(dataset, development, settings)
     columns = by_column(dataset.features, [dataset.rows[position].features for position in development])
     if expected:
         columns[EXPECTED_KEY] = expected  # what the fold models expected of the trades they took
@@ -197,7 +228,7 @@ def train_one(
     held: dict[str, object] = {"weeks": len(plan.held_out), "read": 0}
     if hold_out and plan.held_out:
         rows = HoldOut(dataset, plan, ledger).read(config)  # written into the ledger before it is handed over
-        scorer = RidgeScorer(candidate)
+        scorer = scorer_for(candidate)
 
         def final(row: FeatureRow) -> Side | None:
             found = scorer.score(row)
@@ -262,6 +293,7 @@ def train_all(
     registry: Path | None = None, hold_out: bool = False,
 ) -> list[Trained]:  # fmt: skip
     """Every configured pair and horizon, in the order they are written. The stream is held once."""
+    ready(settings)
     out = []
     for pair in settings.pairs:
         made: list[Dataset] = []
@@ -354,6 +386,7 @@ def run(args: argparse.Namespace, settings: Settings, clock: Clock, measure: Cal
     within = peak <= settings.memory_budget_bytes
     said: dict[str, object] = {
         "at_ns": now, "ok": within, "dry_run": bool(args.dry_run), "days": days, "events": len(stream),
+        "model": settings.model,
         "rows": sum(json.loads(one.report)["dataset"]["rows"] for one in trained),
         "memory": {"peak_bytes": peak, "budget_bytes": settings.memory_budget_bytes, "within": within},
         "candidates": [
@@ -402,13 +435,17 @@ def main(
     args = parser.parse_args(argv)
     try:
         return run(args, load(args.config), clock or WallClock(), measure)
-    except (TrainRefused, HoldOutSpent, LearnConfigError, CostModelError, CalendarError, FeasibilityError) as exc:
+    except (
+        TrainRefused, LibraryMissing, HoldOutSpent, LearnConfigError, CostModelError, CalendarError, FeasibilityError
+    ) as exc:  # fmt: skip
         say(f"refused: {exc}")
         return EXIT_REFUSED
     except LeakError as exc:
         say(f"refused: the dataset was not made: {exc}")
         return EXIT_REFUSED
-    except (DatasetError, ValidationError, ModelError, LineupError, JournalError, CorruptSegment, OSError) as exc:
+    except (
+        DatasetError, ValidationError, ModelError, BoostError, LineupError, JournalError, CorruptSegment, OSError
+    ) as exc:  # fmt: skip
         say(f"FAILED: {exc}")
         return EXIT_FAILED
 

@@ -30,6 +30,36 @@ Every command below is run from `/home/hft/hft-lab` as the user `hft`, with `PYT
 installed interpreter: `sudo -u hft env PYTHONPATH=src MODE=paper .venv/bin/python -m hftlab.learn.promote ...`,
 written `promote ...` from here on, and `train ...` and `drift ...` in the same way.
 
+## 0. Which kind of model is trained
+
+`model:` in `config/learn.yaml` says which kind a training run fits: `ridge` (the shipped value) or `gbm`
+([ADR 0025](../adr/0025-gradient-boosting-optional-set-and-whole-number-trees.md)). One run fits one kind.
+Changing it, or any number under `boosting:`, is a change of configuration: it goes through a pull request,
+and the run that follows is counted as another trial.
+
+**A `gbm` run needs the optional ML set on the host. Nothing else does:** not the recorder, not the trader,
+not the weekly decision, and not the scoring of a gbm model that is already trained. Install it once
+([install runbook](install.md), "The optional ML set"):
+
+```
+sudo sh deploy/bin/hft-install --with-ml
+```
+
+| You see | Cause | What to do |
+|---|---|---|
+| `train: refused: a gbm model is trained with lightgbm, which is in the optional ML set and is not installed` | `model: gbm` and the set is not in the environment. Nothing was counted and nothing registered | Install it as above, or set `model: ridge` |
+| The same, with `libgomp` or `libomp` in the brackets | The library is installed and the system's OpenMP runtime is not | `sudo apt install libgomp1`, then run training again |
+| `train: FAILED: the exported trees and the library's part ways on training row N` | The whole-number copy of the fitted trees does not send a row where the library does. Nothing was registered | Do not retry. It is a defect: keep the message and the commit, and open an issue |
+
+To see what a `gbm` run would register without registering it: `train --dry-run`. It prints the report, and
+says the memory the process peaked at. A real run writes that peak to
+`var/learn/last-run.json` under `memory`, with the kind under `model`.
+
+**Two kinds in one week** (as `HFT-EXP-0004` asks) are two runs on the same Saturday: the timer's, and one
+more by hand with a settings file that differs in `model` alone, `train --config <that file>`. Each
+registers its own candidate, and the trader needs a place for each (`challenger-1`, `challenger-2` in
+`config/trader.yaml`).
+
 ## 1. Set the two times and enable the timers
 
 The install script refuses to enable either timer. They are yours to enable, once.

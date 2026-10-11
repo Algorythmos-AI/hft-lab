@@ -24,7 +24,22 @@ label:                          # how a trade that could not be closed at its ho
   exit_wait_seconds: 1800       # PLACEHOLDER: how long an exit that did not fill is tried again
   stuck_increments: 200         # PLACEHOLDER: past that wait, this many price increments against the position
 
-ridge_penalty: "1"              # PLACEHOLDER: a quoted fraction above zero (ADR 0022)
+model: ridge                    # the kind of model a run fits: ridge | gbm. One kind per run; ridge is the default
+ridge_penalty: "1"              # PLACEHOLDER: a quoted fraction above zero (ADR 0022). Read when model is ridge
+
+boosting:                       # gradient boosting (ADR 0025). Read when model is gbm, which needs the optional ML set
+                                # (`make ml`) to TRAIN and nothing to score. Every number is a PLACEHOLDER, chosen
+                                # small on purpose and tuned on nothing. They are fixed: no run searches them, and
+                                # a different number is a different configuration, counted as another trial
+  trees: 50                     # per side. The loader refuses more than 500
+  max_depth: 3                  # the loader refuses more than 6
+  leaves: 8                     # per tree, at most 2 to the power of max_depth
+  learning_rate_ppm: 50000      # how much of each tree is added, in millionths
+  min_leaf_rows: 200            # a leaf holds at least this many training rows
+  bins: 63                      # a feature's values are grouped into at most this many before a split is looked for
+  l2_ppm: 1000000               # the penalty on a leaf's value, in millionths
+  leaf_scale: 1000              # a leaf is kept as a whole number of thousandths of a millionth of the quote currency
+  seed: 1                       # nothing is subsampled, so nothing is drawn; fixed all the same
 
 validation:
   min_train_weeks: 1            # PLACEHOLDER: a fold trains on at least this many earlier weeks

@@ -23,7 +23,7 @@ from tests.support import ROOT, GitRepo
 SCRIPTS = ROOT / "deploy" / "bin"
 ORIGIN = "https://example.invalid/hft-lab.git"
 GATE_NEEDS = ("src/hftlab/__init__.py", "src/hftlab/core", "src/hftlab/ops/__init__.py", "src/hftlab/ops/preflight.py",
-              "config/preflight.json", "requirements.lock.txt", "deploy")  # fmt: skip
+              "config/preflight.json", "requirements.lock.txt", "requirements-ml.lock.txt", "deploy")  # fmt: skip
 
 
 @pytest.fixture
@@ -269,6 +269,31 @@ def test_only_what_has_changed_is_done_again(source, tmp_path):
     assert [step.split()[0] for step in steps] == ["runuser", "runuser", "runuser", "install", "systemctl"]
     assert " venv --quiet --clear --python 3.12 " in steps[0], "an environment that is there is replaced, not patched"
     assert steps[3].endswith(f"{root}/etc/systemd/system/hft.slice") and steps[4] == "systemctl daemon-reload"
+
+
+def test_the_optional_ml_set_is_installed_only_when_asked_for_by_hash_and_once(source, tmp_path):
+    fresh = tmp_path / "fresh"
+    without = install(source, "--dry-run", "--root", fresh, "--preflight", good_samples(tmp_path))
+    assert not [step for step in plan(without) if "requirements-ml" in step], "not unless it is asked for"
+    assert "the optional ML set is not asked for (--with-ml)" in without.stdout
+    asked = plan(install(source, "--dry-run", "--root", fresh, "--with-ml", "--preflight", good_samples(tmp_path)))
+    dest, uv = f"{fresh}/home/hft/hft-lab", shutil.which("uv") or "uv"
+    assert asked[6:8] == [
+        f"runuser -u hft -- {uv} pip install --quiet --require-hashes --python {dest}/.venv/bin/python "
+        f"-r {dest}/requirements-ml.lock.txt",
+        f'runuser -u hft -- sh -c cksum < "$1/requirements-ml.lock.txt" > "$1/.venv/.hft-lock-ml" sh {dest}',
+    ], "after the base environment, into the same one, every package checked against its hash"
+
+    root, path = installed(source, tmp_path)
+    steps = plan(install(source, "--dry-run", "--root", root, "--with-ml", path=path))
+    assert len(steps) == 2 and all("requirements-ml.lock.txt" in step for step in steps), "added; nothing is rebuilt"
+    with (source.root / "requirements-ml.lock.txt").open("rb") as lock:
+        stamp = subprocess.run(["cksum"], stdin=lock, capture_output=True, text=True, check=True).stdout
+    (root / "home" / "hft" / "hft-lab" / ".venv" / ".hft-lock-ml").write_text(stamp)
+    assert plan(install(source, "--dry-run", "--root", root, "--with-ml", path=path)) == [], "a second run adds nothing"
+    (root / "home" / "hft" / "hft-lab" / ".venv" / ".hft-lock").write_text("an older lock file\n")
+    again = plan(install(source, "--dry-run", "--root", root, "--with-ml", path=path))
+    assert " venv --quiet --clear " in again[0] and "requirements-ml.lock.txt" in again[3], "rebuilt: installed again"
 
 
 def test_the_environment_is_never_rebuilt_under_a_running_service(source, tmp_path):

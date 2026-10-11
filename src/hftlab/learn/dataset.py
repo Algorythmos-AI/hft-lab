@@ -26,6 +26,15 @@ worth exactly nothing; an exit that would not have filled at the horizon is pric
 the shadow venue would have filled it, within the label's wait; and past that wait at the label's stated
 worst case. The dataset counts each kind (`counted`), and so does every report made from it.
 
+A row may be a window: the last rows of the pair side by side, for a model that reads a sequence (ADR 0029).
+Then the rule holds for the window's EARLIEST row as for its latest, and the builder checks that too, trusting
+the source no more than before (`check_windows`): it makes the single rows itself and refuses a window that is
+not exactly the consecutive single rows ending on its own event, one that says it begins later than it does,
+one with an event of the pair between its rows that gave no row, or a connection change or a recorder restart,
+and one that reaches across a trading day's rollover. A dataset row of a window keeps when its earliest row
+was known (`first_ns`), and the splitter purges by it. The single rows that became no window are counted by
+reason beside the rows whose label never ended (`dropped`).
+
 A dataset is made per pair and horizon from day folders of the recorder's store. It records what it was made
 from: the feature keys, the label spec, the cost model's parameters with its placeholder flag, the source days
 and a hash of all of it and every row. Everything in it is an integer or text. Nothing here is committed: a
@@ -46,18 +55,19 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Final, Protocol
+from typing import Final, Protocol, runtime_checkable
 
 from hftlab.calendar import Calendar, last_rollover, next_close
 from hftlab.core import Instrument, Quote
-from hftlab.features import FeatureBuilder, FeatureConfig, FeatureRow
+from hftlab.features import FeatureConfig, FeatureRow
+from hftlab.features import source as feature_source
 from hftlab.journal import canonical
 from hftlab.labels import AT_HORIZON as AT_HORIZON
 from hftlab.labels import LATE_EXIT as LATE_EXIT
 from hftlab.labels import NO_ENTRY as NO_ENTRY
 from hftlab.labels import PENALISED as PENALISED
 from hftlab.labels import Labeller, LabelSpec, PairTape
-from hftlab.record.format import RecordedEvent
+from hftlab.record.format import Heartbeat, Marker, RecordedEvent
 from hftlab.record.origin import origin_of
 from hftlab.replay.reader import events as day_events
 from hftlab.replay.reader import instruments as day_instruments
@@ -89,6 +99,16 @@ class FeatureSource(Protocol):
     def keys(self) -> tuple[str, ...]: ...
 
     def rows(self, events: Iterable[RecordedEvent]) -> Iterable[FeatureRow]: ...
+
+
+@runtime_checkable
+class Windows(Protocol):
+    """A source whose rows are windows: the last rows of `single`, side by side, oldest first (ADR 0029)."""
+
+    @property
+    def single(self) -> FeatureSource: ...
+
+    def left_out(self, events: Iterable[RecordedEvent]) -> Mapping[str, int]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,11 +144,18 @@ class Row:
     sell_barrier: int | None = None
     buy_how: int = AT_HORIZON  # how the outcome was priced: AT_HORIZON, NO_ENTRY, LATE_EXIT or PENALISED
     sell_how: int = AT_HORIZON
+    first_ns: int = 0  # of a window of rows: when its earliest row was known; 0 for a single row
+
+    @property
+    def earliest_ns(self) -> int:
+        """When the earliest thing the row holds was known. A test week is purged against this, not `known_ns`."""
+        return self.first_ns or self.known_ns
 
     def plain(self) -> list[object]:
         head = [self.n, self.known_ns, self.end_ns, self.day_ns, self.week_ns]
         tail = [self.buy_barrier, self.sell_barrier, self.buy_how, self.sell_how]
-        return [*head, list(self.features), self.buy_micro, self.sell_micro, *tail]
+        window = [self.first_ns] if self.first_ns else []  # a single row is written as it always was
+        return [*head, list(self.features), self.buy_micro, self.sell_micro, *tail, *window]
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,6 +282,44 @@ def check_causal(
             )
 
 
+def check_windows(source: FeatureSource, events: Sequence[RecordedEvent], rows: Sequence[FeatureRow]) -> None:
+    """Refuse a window that is not exactly the consecutive single rows it says it is, or that spans a break.
+
+    Rows that claim no window are left alone, unless the source is one of windows: then every row must be one.
+    """
+    if not isinstance(source, Windows):
+        if any(row.first_n or row.first_ns for row in rows):
+            raise LeakError("a row says it is a window, and its source cannot show the rows it was made of")
+        return
+    single = source.single
+    made = list(single.rows(events))
+    check_causal(single, events, made, 0)  # each single row was known when its own event was received
+    place = {row.n: position for position, row in enumerate(made)}
+    width = len(single.keys)
+    breaks, count = [0], 0  # breaks[n]: the events up to n that end a window
+    for number, event in enumerate(events, start=1):
+        gave_none = isinstance(event, Quote | Heartbeat) and event.pair == source.pair and number not in place
+        count += isinstance(event, ConnectionEvent | Marker) or gave_none
+        breaks.append(count)
+    for row in rows:
+        size, rest = divmod(len(row.values), width)
+        last = place.get(row.n)
+        if rest or size < 2 or last is None or last + 1 < size:
+            raise LeakError(f"row {row.n} is not a window of whole single rows ending on its own event")
+        window = made[last + 1 - size : last + 1]
+        if row.values != tuple(value for one in window for value in one.values):
+            raise LeakError(f"row {row.n} is not the {size} single rows up to its own event, oldest first")
+        if (row.first_n, row.first_ns) != (window[0].n, window[0].known_ns):
+            raise LeakError(
+                f"row {row.n} says its window begins on event {row.first_n} at {row.first_ns}; it begins on event "
+                f"{window[0].n} at {window[0].known_ns}"
+            )
+        if breaks[row.n] != breaks[row.first_n]:
+            raise LeakError(f"the window of row {row.n} spans a gap, a closed market or a connection change")
+        if last_rollover(row.first_ns) != last_rollover(row.known_ns):
+            raise LeakError(f"the window of row {row.n} reaches across a trading day's rollover")
+
+
 def build(
     events: Sequence[RecordedEvent],
     source: FeatureSource,
@@ -279,14 +344,19 @@ def build(
     spans = tuple(sources) or (DaySource("", UNSTATED, len(events)),)
     found = list(source.rows(events))
     check_causal(source, events, found, checks)
+    check_windows(source, events, found)
     tape = PairTape(events, source.pair)
     dropped = {"window_not_ended": 0}
+    if isinstance(source, Windows):
+        dropped.update(source.left_out(events))  # single rows that became no window, by why
     counted = {HOW[how]: 0 for how in (NO_ENTRY, LATE_EXIT, PENALISED)}  # by side: a row has two outcomes
     rows: list[Row] = []
     for row in found:
         label = labeller.label(tape, row.n)
         if label.n != row.n or label.decided_ns < row.known_ns or label.end_ns < label.decided_ns:
             raise LeakError(f"the label of row {row.n} is for another decision, or ends before it starts")
+        if row.earliest_ns > row.known_ns:
+            raise LeakError(f"row {row.n} says its window begins after the row itself was known")
         if label.end_ns >= tape.last_ns:
             dropped["window_not_ended"] += 1  # the recording stops before the label can be known
         else:
@@ -300,7 +370,9 @@ def build(
                 if one != AT_HORIZON:
                     counted[HOW[one]] += 1
             outcomes = (label.buy_micro or 0, label.sell_micro or 0)
-            rows.append(Row(row.n, row.known_ns, label.end_ns, day, week, row.values, *outcomes, *hits, *how))
+            rows.append(
+                Row(row.n, row.known_ns, label.end_ns, day, week, row.values, *outcomes, *hits, *how, row.first_ns)
+            )
     body: dict[str, object] = {
         "kind": "dataset",
         "version": VERSION,
@@ -342,7 +414,7 @@ def build_for(
 ) -> Dataset:  # fmt: skip
     """The dataset of one pair and horizon from a stream already read, with the wait and the worst case written out."""
     spec = LabelSpec(horizon_ns, exit_wait_ns=exit_wait_ns, stuck_increments=stuck_increments)
-    source = FeatureBuilder(instrument.pair, config, calendar)
+    source = feature_source(instrument.pair, config, calendar)
     labeller = Labeller(spec, instrument, model, calendar)
     return build(events, source, labeller, days=days, sources=sources, checks=checks)
 
@@ -376,6 +448,6 @@ def build_from_days(
         before = len(stream)
         stream += day_events(folder)
         sources.append(day_source(folder, len(stream) - before))
-    source = FeatureBuilder(pair, config, calendar)
+    source = feature_source(pair, config, calendar)
     labeller = Labeller(spec, instrument, model, calendar)
     return build(stream, source, labeller, sources=sources, checks=checks)

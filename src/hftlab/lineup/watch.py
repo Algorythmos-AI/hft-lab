@@ -33,6 +33,7 @@ from typing import Any, Final, Protocol
 from hftlab.calendar import Calendar, CalendarError, load_calendar
 from hftlab.core import Clock, Quote, WallClock
 from hftlab.features import FeatureBuilder, FeatureConfig
+from hftlab.features import source as feature_source
 from hftlab.journal import JournalError, canonical
 from hftlab.learn.config import Drift, LearnConfigError, Settings, load
 from hftlab.learn.drift import EXPECTED_KEY, SPREAD_KEY, DriftError, Watch, calibration, feature_shift, spread_regime
@@ -138,7 +139,7 @@ def look(desk: Desk, lineup: Lineup, week: Week, evidence: Evidence) -> tuple[li
         try:
             model, report, _ = load_model(named, desk.registry)
             config, _ = windows(report)
-            builder = FeatureBuilder(model.pair, config, desk.calendar)
+            builder = feature_source(model.pair, config, desk.calendar)
             summary = report.get("summary")
             if builder.keys != model.features or not isinstance(summary, dict):
                 raise DriftError("the report keeps no summary of the features its model reads")

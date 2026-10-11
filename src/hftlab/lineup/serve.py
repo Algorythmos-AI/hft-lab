@@ -30,7 +30,8 @@ from pathlib import Path
 from typing import Any, Final
 
 from hftlab.calendar import Calendar
-from hftlab.features import FeatureBuilder, FeatureConfig
+from hftlab.features import FeatureConfig
+from hftlab.features import source as feature_source
 from hftlab.lineup.journal import Lineup, LineupError, Named, read
 from hftlab.models import Model, ModelError, Scorer, parse, scorer_for
 from hftlab.scoring.client import ScorerRefused
@@ -115,7 +116,7 @@ def windows(report: Mapping[str, Any]) -> tuple[FeatureConfig, Mapping[str, obje
     try:
         config = FeatureConfig(
             tuple(features["lookbacks_ns"]), features["rate_window_ns"], features["range_window_ns"],
-            features["stale_after_ns"],
+            features["stale_after_ns"], features.get("window_rows", 1),
         )  # fmt: skip
     except (KeyError, TypeError, ValueError) as exc:
         raise LineupError(f"the report does not say how its model is served: {exc!r}") from exc
@@ -162,7 +163,7 @@ def _one(
     scorer = _scorer(entry, model, registry, scoring)
     try:
         return MlSleeve(
-            name, scorer=scorer, features=FeatureBuilder(model.pair, config, calendar),
+            name, scorer=scorer, features=feature_source(model.pair, config, calendar),
             feasibility=feasibility, margin_micro=entry["margin_micro"], retry_ns=entry["retry_seconds"] * SECOND,
         )  # fmt: skip
     except (ValueError, KeyError, TypeError) as exc:

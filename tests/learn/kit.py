@@ -8,7 +8,7 @@ import yaml
 
 from hftlab.calendar import Calendar
 from hftlab.core import Quote
-from hftlab.features import FeatureBuilder, FeatureConfig
+from hftlab.features import FeatureBuilder, FeatureConfig, source
 from hftlab.labels import Labeller, LabelSpec
 from hftlab.learn.dataset import Dataset, build
 from hftlab.record import format as fmt
@@ -50,7 +50,7 @@ def planted(seed: int, blocks: int, *, effect: bool = True, start_ns: int = T0, 
 
 
 def features(config: FeatureConfig = CONFIG, calendar: Calendar | None = None) -> FeatureBuilder:
-    return FeatureBuilder("EUR.USD", config, calendar or Calendar())
+    return source("EUR.USD", config, calendar or Calendar())
 
 
 def labels(horizon_ns: int = HORIZON, costs=None, **barriers) -> Labeller:

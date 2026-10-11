@@ -58,6 +58,13 @@ class FeatureRow:
     n: int
     known_ns: int
     values: tuple[int, ...]
+    first_n: int = 0  # of a window of rows (ADR 0029): the event its earliest row was made on; 0 for one row
+    first_ns: int = 0  # and when that row was known
+
+    @property
+    def earliest_ns(self) -> int:
+        """When the earliest thing in the row was known: the row itself, or the first row of its window."""
+        return self.first_ns or self.known_ns
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +90,8 @@ class FeatureBuilder:
 
     def __init__(self, pair: str, config: FeatureConfig, calendar: Calendar) -> None:
         self.pair = _checks.pair(pair)
+        if config.window_rows != 1 and type(self) is FeatureBuilder:
+            raise ValueError("rows of a window are made by hftlab.features.window.WindowBuilder: see features.source")
         self.config = config
         self.specs: tuple[FeatureSpec, ...] = config.specs()
         self._calendar = calendar

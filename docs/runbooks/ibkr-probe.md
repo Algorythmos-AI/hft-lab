@@ -66,7 +66,13 @@ MODE=paper PYTHONPATH=src .venv/bin/python -m hftlab.venues.ibkr.probe \
 ```
 
 It takes a little over a minute per pair. It prints the report and writes it to
-`var/probe/ibkr-<UTC date>.json`, which git ignores. It places no order.
+`var/probe/ibkr-<UTC date>T<UTC time>Z.json`, for example `ibkr-2026-10-11T213440Z.json`, which git ignores.
+It places no order.
+
+**Every run keeps its own report.** The name carries the second the run started, so a second run on the same
+day does not replace the first. If a file of that name is already there, the probe prints the report, leaves
+the file alone, says so and exits with status 2. That can only happen to a dry run (section 4), whose clock
+always starts at the same instant: delete the old dry-run file, or pass another `--out-dir`.
 
 | Option | Default | |
 |---|---|---|
@@ -124,7 +130,9 @@ Turn Read-Only API back on afterwards.
 
 ## 8. Afterwards
 
-1. Keep `var/probe/ibkr-<date>.json`. It is the probe report the F1 exit gate asks for.
+1. Keep every `var/probe/ibkr-<date>T<time>Z.json`, the runs that failed included: together they are the
+   record of what the gateway did. The reports of runs that measured something are what the F1 exit gate
+   asks for.
 2. Record the two decisions it feeds as research decisions (`HFT-DEC-NNNN`): the access route
    ([ADR 0010](../adr/0010-access-route.md)) and the instrument form, spot or CFD.
 3. When the numbers look right, run the probe once more with `--write-config` and open a pull request with

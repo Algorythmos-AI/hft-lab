@@ -3,7 +3,8 @@
     python -m hftlab.venues.ibkr.probe --pairs EUR.USD,USD.JPY --window-seconds 30
 
 It connects to a gateway on this machine, in paper mode or not at all: the connection goes through the same
-paper-only lock as everything else. It then measures, and writes to stdout and to var/probe/ibkr-<UTC date>.json:
+paper-only lock as everything else. It then measures, and writes to stdout and to a file of its own,
+var/probe/ibkr-<UTC date>T<UTC time>Z.json (for example ibkr-2026-10-11T213440Z.json):
 
   * the managed accounts, masked;
   * the gateway's clock against ours;
@@ -20,8 +21,12 @@ in status messages. The probe reads those from the moment it connects (`hftlab.v
 and when a lookup fails while the latest of them says the link is down, the pair gets that one plain reason,
 the report says `upstream_link_down`, no order is placed, and the command exits with status 3.
 
-Exit status: 0 done; 1 an order of the probe's is still working or a position changed; 2 refused, or the venue
-could not be probed at all; 3 the gateway was cut off from the broker, so the report measures nothing.
+A report is never overwritten. Its name carries the second the probe started, and if a file of that name is
+already there the probe prints the report, leaves the file alone and says so.
+
+Exit status: 0 done; 1 an order of the probe's is still working or a position changed; 2 refused, the venue
+could not be probed at all, or the report could not be kept because its file already exists; 3 the gateway
+was cut off from the broker, so the report measures nothing.
 
 It never overwrites config/venues/ibkr.yaml unless told to with --write-config. Every number in the report is
 an integer or decimal text: durations in microseconds, prices in the instrument's own units.
@@ -139,6 +144,21 @@ def utc_date(ts_ns: int) -> str:
 
 def utc_stamp(ts_ns: int) -> str:
     return datetime.fromtimestamp(ts_ns // SECOND, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def report_name(prefix: str, probed_at: str) -> str:
+    """The report's file name: the venue and the second the probe started, with nothing a file system refuses."""
+    return f"{prefix}-{probed_at.replace(':', '')}.json"
+
+
+def keep(path: Path, text: str) -> bool:
+    """Write a new report. False, and nothing written, if a file of that name exists: a report is never replaced."""
+    try:
+        with path.open("x", encoding="utf-8") as out:
+            out.write(text)
+    except FileExistsError:
+        return False
+    return True
 
 
 def far_below(bid: int, instrument: Instrument) -> int:
@@ -562,12 +582,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     prefix = "ibkr" if venue.name == "ibkr_paper" else venue.name
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    out = args.out_dir / f"{prefix}-{report['probed_at'][:10]}.json"
+    out = args.out_dir / report_name(prefix, report["probed_at"])
     text = json.dumps(report, indent=2)
-    out.write_text(text + "\n", encoding="utf-8")
     print(text)
-    print(f"probe: report written to {out}", file=sys.stderr)
-    if args.write_config and report["upstream_link_down"]:
+    kept = keep(out, text + "\n")
+    if kept:
+        print(f"probe: report written to {out}", file=sys.stderr)
+    else:
+        print(f"probe: {out} already exists and is left as it is; this report is on stdout only", file=sys.stderr)
+    if args.write_config and not kept:
+        print(f"probe: {args.config_path} left as it is: the report it would cite was not kept", file=sys.stderr)
+    elif args.write_config and report["upstream_link_down"]:
         print(f"probe: {args.config_path} left as it is: nothing was measured", file=sys.stderr)
     elif args.write_config:
         if args.fake and args.config_path == CONFIG_PATH:
@@ -582,7 +607,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if report["upstream_link_down"]:
         print(f"probe: {DOWN_REASON}. This report measures nothing; see the runbook.", file=sys.stderr)
         return EXIT_UPSTREAM_DOWN
-    return 0
+    return 0 if kept else EXIT_REFUSED
 
 
 if __name__ == "__main__":

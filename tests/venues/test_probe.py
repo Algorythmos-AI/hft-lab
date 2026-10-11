@@ -429,7 +429,7 @@ def test_the_command_runs_a_dry_run_and_writes_the_report(tmp_path, capsys):
     captured = capsys.readouterr()
     assert code == 0
     report = json.loads(captured.out)
-    written = tmp_path / "fake-2025-10-09.json"
+    written = tmp_path / "fake-2025-10-09T085320Z.json"
     assert json.loads(written.read_text()) == report and f"report written to {written}" in captured.err
     assert report["venue"] == "fake" and report["orders"] is None and list(report["pairs"]) == ["EUR.USD"]
 
@@ -443,11 +443,14 @@ def test_the_command_with_orders_against_the_fake(tmp_path, capsys):
 def test_the_capability_file_is_written_only_when_asked_and_never_the_real_one_from_a_dry_run(tmp_path, capsys):
     real = (probe.CONFIG_PATH).read_text()
     target = tmp_path / "ibkr.yaml"
-    base = ["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path)]
-    assert probe.main(base) == 0 and not target.exists()
-    assert probe.main([*base, "--write-config"]) == 2, "a dry run may not overwrite the real file"
+
+    def base(run: str) -> list[str]:  # each run keeps its report in a directory of its own
+        return ["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path / run)]
+
+    assert probe.main(base("first")) == 0 and not target.exists()
+    assert probe.main([*base("second"), "--write-config"]) == 2, "a dry run may not overwrite the real file"
     assert probe.CONFIG_PATH.read_text() == real
-    assert probe.main([*base, "--write-config", "--config-path", str(target)]) == 0
+    assert probe.main([*base("third"), "--write-config", "--config-path", str(target)]) == 0
     capsys.readouterr()
     proposed = yaml.safe_load(target.read_text())
     assert (proposed["venue"], proposed["status"], proposed["probed_at"]) == ("ibkr_paper", "probed", "2025-10-09")
@@ -455,6 +458,51 @@ def test_the_capability_file_is_written_only_when_asked_and_never_the_real_one_f
     assert [p["pair"] for p in proposed["pairs"]] == ["EUR.USD", "USD.JPY"]
     assert proposed["pairs"][0]["forms"] == ["cash", "cfd"] and proposed["pairs"][1]["forms"] == ["cash"]
     assert target.read_text().startswith("# Capability file")
+
+
+def test_the_reports_name_carries_the_date_and_the_time_to_the_second():
+    assert probe.report_name("ibkr", "2026-10-11T21:34:40Z") == "ibkr-2026-10-11T213440Z.json"
+    assert probe.report_name("ibkr", "2026-10-11T21:34:41Z") != probe.report_name("ibkr", "2026-10-11T21:34:40Z")
+
+
+def test_two_runs_on_the_same_day_keep_two_reports(tmp_path, capsys, monkeypatch):
+    def a_fake_started_at(start_ns):
+        def venue(pairs, window_ns):
+            clock, broker = a_venue()
+            clock.advance_to(start_ns)
+            return broker, clock
+
+        return venue
+
+    arguments = ["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path)]
+    for start_ns in (T0 + SECOND, T0 + 3_600 * SECOND):
+        monkeypatch.setattr(probe, "_fake_venue", a_fake_started_at(start_ns))
+        assert probe.main(arguments) == 0
+    capsys.readouterr()
+    names = sorted(p.name for p in tmp_path.iterdir())
+    assert names == ["fake-2025-10-09T085321Z.json", "fake-2025-10-09T095320Z.json"]
+
+
+def test_a_report_whose_name_exists_is_refused_not_overwritten(tmp_path, capsys):
+    arguments = ["--fake", "--window-seconds", "1", "--pairs", "EUR.USD", "--out-dir", str(tmp_path)]
+    assert probe.main(arguments) == 0
+    (written,) = tmp_path.iterdir()
+    first = written.read_text()
+    written.write_text("the earlier report\n")
+    capsys.readouterr()
+    target = tmp_path / "ibkr.yaml"
+    assert probe.main([*arguments, "--write-config", "--config-path", str(target)]) == 2
+    captured = capsys.readouterr()
+    assert written.read_text() == "the earlier report\n" and [p.name for p in tmp_path.iterdir()] == [written.name]
+    assert "already exists and is left as it is" in captured.err and "report written" not in captured.err
+    assert captured.out == first, "the refused report is still printed, so the run is not lost"
+    assert not target.exists(), "and no capability file is written from a report that was not kept"
+
+
+def test_a_report_is_written_whole_or_not_at_all(tmp_path):
+    path = tmp_path / "ibkr-x.json"
+    assert probe.keep(path, "one\n") is True and probe.keep(path, "two\n") is False
+    assert path.read_text() == "one\n"
 
 
 @pytest.mark.parametrize("arguments", [["--pairs", "EURUSD"], ["--pairs", ""], ["--window-seconds", "0"]])

@@ -1,13 +1,15 @@
 """The kind of model is a setting: ridge unless the file says gbm, each a trial of its own, and gbm small by rule."""
 from __future__ import annotations
 
+import ast
+
 import pytest
 import yaml
 
 from hftlab.learn.config import MOST_DEPTH, MOST_TREES, Boosting, LearnConfigError, config_hash, load
 from hftlab.models import trees
 from tests.learn.kit import learn_settings
-from tests.support import ROOT
+from tests.support import ROOT, sources
 
 COSTS = {"placeholder": True}
 
@@ -65,3 +67,13 @@ def test_boosting_is_a_required_block_with_exactly_its_keys_and_nothing_to_searc
         load(path)
     assert not [key for key in Boosting.__dataclass_fields__ if "search" in key or "grid" in key or "candidates" in key]
     assert MOST_TREES <= trees.MOST_TREES and 2**MOST_DEPTH <= trees.MOST_LEAVES, "a file holds what they allow"
+
+
+def test_nothing_that_serves_weighs_or_watches_a_model_asks_what_kind_it_is():
+    """No special case: the lineup, the decision and the drift look never read a model's kind."""
+    for rel, tree in sources():
+        if rel.startswith("src/hftlab/lineup/") or rel in ("src/hftlab/learn/promote.py", "src/hftlab/learn/drift.py"):
+            words = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)}
+            assert not words & {"gbm", "ridge"}, rel
+            assert not [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "kind"
+                        and isinstance(node.value, ast.Name) and node.value.id == "model"], rel  # fmt: skip

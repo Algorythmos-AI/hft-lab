@@ -6,8 +6,6 @@ optional ML set (`make ml`) and are skipped without it.
 """
 from __future__ import annotations
 
-import ast
-
 import pytest
 
 pytest.importorskip(
@@ -21,7 +19,6 @@ from hftlab.models import TreeScorer, scorer_for
 from tests.learn.kit import WIN
 from tests.lineup import test_decide, test_watch
 from tests.lineup.kit import CHALLENGER, MARGIN, ML, desk, effect, put, register
-from tests.support import sources
 
 
 def test_a_gbm_challenger_trades_the_effect_in_shadow_beside_a_ridge_champion_and_the_day_replays(tmp_path):
@@ -90,13 +87,3 @@ def test_the_drift_look_reads_a_gbm_models_week_as_it_reads_a_ridge_models(tmp_p
     assert monitors == {finding.monitor for finding in found[0].findings} >= {"feature_shift", "spread_regime"}
     calibration = [f for f in found[1].findings if f.monitor == "calibration_decay" and f.value is not None]
     assert calibration, "what the trees expected of their trades is journalled and compared with what they made"
-
-
-def test_nothing_that_serves_weighs_or_watches_a_model_asks_what_kind_it_is():
-    """No special case: the lineup, the decision and the drift look never read a model's kind."""
-    for rel, tree in sources():
-        if rel.startswith("src/hftlab/lineup/") or rel in ("src/hftlab/learn/promote.py", "src/hftlab/learn/drift.py"):
-            words = {node.value for node in ast.walk(tree) if isinstance(node, ast.Constant)}
-            assert not words & {"gbm", "ridge"}, rel
-            assert not [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr == "kind"
-                        and isinstance(node.value, ast.Name) and node.value.id == "model"], rel  # fmt: skip

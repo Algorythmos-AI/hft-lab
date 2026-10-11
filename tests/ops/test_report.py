@@ -208,6 +208,18 @@ def test_a_time_the_journals_say_nothing_about_has_no_recording_part_and_a_shut_
     assert [(pair.open_ns, pair.recorded_ns) for pair in monday.pairs] == [(85_500 * S, 85_500 * S)] * 2
 
 
+def test_a_run_whose_start_is_no_longer_in_the_journals_is_counted_from_the_oldest_line_that_is():
+    """The day a long run began in has gone to the offload: the hourly lines it wrote since are what is left."""
+    hourly = [{"type": "carry", "hour": hour, "at_ns": utc(14, hour, 0, 1)} for hour in range(0, 22)]
+    described = {"type": "instruments", "instruments": [{"pair": "EUR.USD"}]}
+    found = report.recording([hourly[0], described, *hourly[1:]], Calendar(), TUESDAY)
+    (eur,) = found.pairs  # from 00:00:01 to 21:00:00 of a window that began at 21:00 the evening before
+    assert (eur.open_ns, eur.recorded_ns) == (86_400 * S, (21 * 3_600 - 1) * S)
+    stopped = [*hourly[:11], {"type": "stop", "reason": "requested", "at_ns": utc(14, 10, 30)}, described]
+    (eur,) = report.recording(stopped, Calendar(), TUESDAY).pairs
+    assert eur.recorded_ns == (10 * 3_600 + 30 * 60 - 1) * S, "and it ends where the run said it stopped"
+
+
 def test_the_daily_summary_of_a_day_with_two_sessions_a_latch_a_break_and_a_step_down(tmp_path):
     places = a_week(tmp_path)
     found = daily(gather(places, ["2025-10-14"]), places.calendar, TUESDAY)

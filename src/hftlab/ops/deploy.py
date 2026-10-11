@@ -69,7 +69,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
+import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -743,7 +743,7 @@ def run_smoke(release: Path, python: Path | None = None) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="hft-smoke-") as scratch:
         os.chmod(scratch, 0o755)  # the platform's user must be able to enter it when this command is root
         env = {
-            "PATH": os.environ.get("PATH", ""), "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1", "MODE": "paper",
+            "PATH": os.environ.get("PATH", ""), "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1",
             "HFT_STATE_DIR": scratch, "TZ": "UTC",
         }  # fmt: skip
         for words in smoke_commands():
@@ -768,18 +768,26 @@ class Systemctl:
             raise DeployRefused(f"systemctl restart {unit} failed")
 
 
+def wait(seconds: float) -> None:
+    """Let this long pass. It reads no clock: nothing here decides anything by the time."""
+    threading.Event().wait(seconds)
+
+
 class StatusHealth:
     """The platform's own status check, before and after: a problem it calls bad that was not there before fails."""
 
     def __init__(
-        self, layout: Layout, manager: Units, *, settle_s: int = SETTLE_S, sleep: Callable[[float], None] = time.sleep
+        self, layout: Layout, manager: Units, *, settle_s: int = SETTLE_S, sleep: Callable[[float], None] = wait
     ) -> None:
         self._layout, self._units, self._settle_s, self._sleep = layout, manager, settle_s, sleep
         self._before: set[str] = set()
 
     def _bad(self) -> set[str] | None:
         python = str(self._layout.root / ".venv" / "bin" / "python")
-        env = {**os.environ, "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1"}
+        env = {
+            "PATH": os.environ.get("PATH", ""), "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1", "TZ": "UTC",
+            **{name: value for name, value in host.settings().items() if value},
+        }  # fmt: skip
         _, said = _program([python, "-m", "hftlab.ops.status", "--json"], cwd=self._layout.root, env=env)
         try:
             return {str(p["code"]) for p in json.loads(said[said.index("{"):])["problems"] if p["level"] == "bad"}

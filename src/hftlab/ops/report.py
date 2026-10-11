@@ -212,13 +212,15 @@ def recording(lines: Sequence[Line], calendar: Calendar, window: Span) -> Record
 
     `lines` are the store's journal lines, oldest first, from as far back as there are any. The recorder was
     up from each `start` to the `stop` or the `start` that follows it; the last run, when it never said it
-    stopped, is counted up to the last line it wrote (it writes one an hour at least). From that is taken
-    every gap whose reason is not a closed market. None when no journal line says anything about the window:
-    the part is absent.
+    stopped, is counted up to the last line it wrote (it writes one an hour at least). When the oldest line
+    is not a `start`, because the journal of the day the run began in has been handed to the offload, the run
+    is counted from that oldest line. From that is taken every gap whose reason is not a closed market. None
+    when no journal line says anything about the window: the part is absent.
     """
     runs: list[tuple[int, int]] = []
     since: int | None = None
     last_word = 0
+    timed = False  # a line with a time of its own has been seen
     starts = stops = 0
     pairs: set[str] = set()
     gaps: list[tuple[str, int, int, str]] = []
@@ -235,7 +237,9 @@ def recording(lines: Sequence[Line], calendar: Calendar, window: Span) -> Record
             pairs |= {name(one.get("pair")) for one in _list(line.get("instruments")) if isinstance(one, dict)}
         if type(at) is not int:
             continue
-        last_word = max(last_word, at)
+        if not timed and kind != "start":
+            since = at  # the recorder wrote this line: it was running, and its `start` is no longer here
+        timed, last_word = True, max(last_word, at)
         if kind in ("start", "stop"):
             if since is not None:
                 runs.append((since, at))

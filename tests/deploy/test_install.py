@@ -182,6 +182,7 @@ def test_with_enable_it_enables_exactly_the_named_units_and_starts_them_only_wit
      (["--enable", "wt-paper-b.service"], "wt-paper-b.service cannot be enabled"),
      (["--enable", "ssh.service"], "ssh.service cannot be enabled"),
      (["--enable", "hft-train.timer"], "hft-train.timer is the owner's to enable by hand"),
+     (["--enable", "hft-report.timer"], "hft-report.timer is the owner's to enable by hand"),
      (["--enable", "hft-recorder.service", "--enable", "hft-promote.timer"], "hft-promote.timer is the owner's"),
      (["--start"], "--start starts the units named with --enable"),
      (["--force"], "unknown option --force")],

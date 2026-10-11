@@ -1,91 +1,80 @@
-# Runbook: a deploy, and going back
+# Runbook: going back
 
-For the owner, on the host. A deploy moves the installed code to another commit of `main`. Going back is the
-same steps with the commit you came from.
+For the owner, on the host. Going back puts the code that was in service before the last deploy in service
+again. It is one command, and it asks the same gate a deploy asks
+([deploy runbook](deploy.md), [ADR 0027](../adr/0027-deploy-gate-and-reports.md)).
 
-The shorthand, once per session:
+**Nothing on this page has been followed on the host.**
 
 ```
-hftrun() { sudo -u hft sh -c 'cd /home/hft/hft-lab && PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 exec .venv/bin/python "$@"' sh "$@"; }
+hftdeploy() { ( cd /home/hft/hft-lab && sudo env PYTHONPATH=src PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m hftlab.ops.deploy "$@" ); }
 ```
 
-## Rules
+## It may already have happened
 
-| Rule | Why |
-|---|---|
-| Only a commit on `main` whose checks (`test`, `leakcheck`) are green | It is the only code that was reviewed. The install script refuses anything else |
-| At the weekend when you can choose | The recorder is stopped for about a minute, and that minute is a hole in the recording |
-| Only when flat | Today nothing trades. From paper trading on: no open position and no working order |
-| One step at a time, reading each result | A deploy that is half done is still a working platform at every step below |
+A deploy checks the platform's status after it has restarted the units. If it finds a problem that was not
+there before, or a unit that did not come up, it goes back by itself: you get one page, `hft:deploy`, the
+command ends with exit code 1, and the old code is in service. There is nothing to do but read why.
 
-## Steps
+## Going back by hand
 
-1. **Write down where you are.** This is what you go back to.
+Use this when a deploy passed its check and you want the old code back all the same.
+
+1. Look.
 
    ```
-   sudo -u hft git -C /home/hft/hft-lab rev-parse HEAD
+   hftdeploy back --dry-run
+   ```
+
+   **You should see** `swap /home/hft/hft-lab back from <new> to <old>` and one `restart` for each unit
+   that is running, each ending `(dry run: not done)`.
+   **If it says `no deploy is on record here`,** or `there is nothing to go back to`, the code in service
+   is not the one the last deploy put there. To reach an older commit, deploy it: step 3.
+
+2. Go back.
+
+   ```
+   hftdeploy back
    sudo hft-status
    ```
 
-2. **Fetch, and choose the commit.**
+   **You should see** `deploy: <old> is in service again`, and the recorder running with a run number one
+   higher. The recording continues: the new run starts after the last record on disk, whichever code wrote
+   it.
+
+   **If it says `REFUSED`,** the gate is shut, for one of the reasons a deploy is refused for: the broker
+   book is not flat, the trader is running with the market open, or the recorder would be restarted within
+   30 minutes of 17:00 New York. Nothing was changed. The checks of the old commit are not asked again: it
+   passed them when it was deployed.
+
+   **If it says `the status check FAILED`,** the old code is in service and something is still wrong. The
+   command does nothing more by itself: it will not swing back and forth. `sudo hft-status` says what.
+
+3. Further back than one step. `back` goes back once. An older commit of `main` is deployed like any other:
 
    ```
-   sudo -u hft git -C /home/hft/hft-lab fetch origin
-   sudo -u hft git -C /home/hft/hft-lab log --oneline -5 origin/main
+   hftdeploy run --commit <older hash>
    ```
 
-   **You should see** the commit you mean to deploy. Check on GitHub that its two checks are green.
+   Its checkout is still on the host, under `/home/hft/hft-lab.d/releases/`, and its environment under
+   `envs/`, so nothing is built.
 
-3. **Stop what runs.**
+## The trader
 
-   ```
-   sudo systemctl stop hft-shadow.service hft-recorder.service
-   ```
+Going back never restarts, starts or stops `hft-trader.service`. If it is running, which the gate allows
+only with the market shut and every sleeve flat, it keeps running the code it was started on, and the
+command says so. Restart it yourself ([trader](trader.md)).
 
-   **You should see**, with `sudo hft-status`, `recorder   stopped` and `saying "stopped"`.
+## What going back cannot undo
 
-4. **Move the code.**
-
-   ```
-   sudo -u hft git -C /home/hft/hft-lab checkout --detach <commit>
-   ```
-
-5. **Bring the environment and the units in line.** First look, then do. The environment is rebuilt only if
-   the locked requirements changed, and only the unit files that differ are written again.
-
-   ```
-   sudo sh /home/hft/hft-lab/deploy/bin/hft-install --dry-run
-   sudo sh /home/hft/hft-lab/deploy/bin/hft-install
-   ```
-
-   **You should see** `already at` and the commit in step 3 of its output, and `hft-install: done.`
-   **If it says REFUSED,** nothing was changed. `is not on origin/main` means the commit of step 4 is not a
-   commit of `main`.
-
-6. **Start again.**
-
-   ```
-   sudo systemctl start hft-recorder.service
-   sudo hft-status
-   hftrun -m hftlab.ops.units diff
-   ```
-
-   **You should see** `recorder   running`, a run number one higher, and
-   `units: the installed units match the code`. Start `hft-shadow.service` too if it was running.
-
-7. **Look again after an hour,** and at the day's check the next morning
-   ([the recorder runbook](recorder.md)).
-
-## Going back
-
-Do steps 3 to 6 with the commit you wrote down in step 1.
-
-**You should see** the same results. The recording continues: the new run starts after the last record on
-disk, whichever code wrote it.
-
-**Do not go back across a change of the recording format.** A reader refuses a format version it does not
-know, by design. If the commit you are leaving introduced a new version (its pull request says so), ask the
-maintainers before you go back: what it recorded has to stay readable.
+- **A change of the recording format.** A reader refuses a format version it does not know, by design. If
+  the commit you are leaving introduced a new version (its pull request says so), ask the maintainers before
+  you go back: what it recorded has to stay readable.
+- **What the newer code wrote into the journals.** They are only ever appended to. Older code reads the
+  lines it knows.
+- **Unit files.** If you installed new unit files for the deploy ([deploy](deploy.md), "When the unit files
+  changed"), put the old ones back the same way, from the old commit's folder under `releases/`, before you
+  go back: the gate compares them.
 
 **If the platform does not start on either commit,** leave it stopped and say so. A stopped recorder costs
 data; a recorder started in a state nobody understands costs more.

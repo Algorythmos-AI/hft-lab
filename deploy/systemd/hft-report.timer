@@ -1,0 +1,11 @@
+[Unit]
+Description=Start HFT Lab report: each trading day, ten minutes after the 17:00 rollover
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 17:10:00 America/New_York
+AccuracySec=10s
+Persistent=true
+Unit=hft-report.service
+
+[Install]
+WantedBy=timers.target

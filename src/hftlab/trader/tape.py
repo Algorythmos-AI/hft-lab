@@ -18,14 +18,48 @@ Live, `LiveEdge` writes the tape. `ReplayEdge` reads one back and stands in for 
 makes the same decisions (hftlab.trader.replay). A tape is a recording of a private account's day: it stays
 in the state directory, which git ignores.
 
+On disk a session's tape is a small head and a run of parts, in the folder of its trading day:
+
+    session-001.tape.jsonl                      the head: the `open` and `marks` lines, written once, never again
+    session-001.part-0001.2026-10-14.jsonl      the turns, until the UTC day ends or the part is full
+    session-001.part-0002.2026-10-15.jsonl.gz   a closed part, compressed by the housekeeping job
+
+  * A part ends, and the next begins, only between two turns: when the UTC day of a turn is not the day of
+    the part, or the part has reached its size. So a part holds whole turns, and the lines of all the parts,
+    read in order after the head, are the tape exactly as one file would have held it. A replay does not know
+    where the parts were cut.
+  * A kill at the moment a part is changed loses nothing and writes nothing twice: the old part is closed
+    before the new one is made, and the turn's line is written into the new one only then. What a kill can
+    leave is an empty last part, which reads as no lines.
+  * The tapes are counted against a quota (`tape.quota_bytes` in the trader's settings), like the recorder's
+    store. A session is not begun at or past it. One that reaches it takes no further turn: it ends as a
+    session told to stop does, and the next start is refused until room is made. A full disk would take the
+    other desks on the host down with it.
+  * Closed parts are compressed by `python -m hftlab.trader --housekeep`, which the hourly housekeeping unit
+    runs before its own work. A part is closed when it is not the last part of the last session of the
+    newest day, or ends with its session's `stop`. Nothing is ever deleted here.
+
+What a kill and what a power cut can lose. Every line is handed to the operating system as it is written, so
+a kill of the process loses no line. The disk is another matter:
+
+  * the head, and every part that has been closed, are synced before the next file is opened, and with
+    `fsync` on the name of each new file is synced into its folder: a power cut loses none of them;
+  * with `fsync` on, the part being written is synced on every beat. A power cut can lose the lines since
+    the last beat, at most one beat's worth of turns (a second as shipped) and the turn in progress, and
+    nothing before them. With `fsync` off it can lose everything in the part being written;
+  * recovery never reads the tape: a restart goes from the journals and asks the broker. What the lost lines
+    cost is the replay of that one session, which then ends up to a beat before the decision journal does.
+
 Neither edge can send an order. The live one holds the venue's questions and its market data; the venue itself
 goes to the order manager, which is the only caller of its order methods.
 """
 from __future__ import annotations
 
 import contextlib
+import gzip
 import json
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +81,7 @@ from hftlab.core import (
 )
 from hftlab.exec.manager import FAILED, LOCKED, REFUSED, SENT, UNCERTAIN, Asked
 from hftlab.record.format import describe, instrument_of
+from hftlab.record.store import compress, day_of
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.venues.guard import GuardedVenue
 from hftlab.venues.port import (
@@ -71,12 +106,20 @@ MS: Final = 1_000_000
 URGENT_NS: Final = 250 * MS  # while a connection is being made safe, a turn is taken at least this often
 UP: Final = (ConnectionState.RECONCILING, ConnectionState.READY)
 REQUESTS: Final = "requests"  # in the trader's state directory: one small file per thing an operator asked for
+HEAD: Final = ".tape.jsonl"  # what a session's head is called after its number; the session counts these
+PART_BYTES: Final = 64_000_000  # ENGINEERING DEFAULT: a part is closed at the first turn after it has grown to this
+_PART: Final = re.compile(r"\.part-(?P<number>[0-9]{4,})\.(?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl(?P<gz>\.gz)?")
+_TAIL: Final = 1 << 12  # more than a `stop` line: where the end of a part is looked at
 
 Row = list[Any]
 
 
 class TapeError(Exception):
     """The tape cannot be read, or a replay asked for something the recording does not hold at that point."""
+
+
+class TapeFull(TapeError):
+    """The tapes are at their quota. No session is begun until room is made; nothing was written."""
 
 
 class TapeEnded(BaseException):
@@ -235,6 +278,96 @@ _ERRORS: Final[dict[str, type[VenueError]]] = {
 }  # fmt: skip
 
 
+# ---- the files of a tape: a head, and parts by UTC day and by size ---------------------------------------------------
+
+
+def _stem(head: Path) -> str:
+    return head.name.removesuffix(HEAD)
+
+
+def part_path(head: Path, number: int, day: str) -> Path:
+    """Where part `number` of the session with this head goes: numbered through the session, named by its UTC day."""
+    return head.with_name(f"{_stem(head)}.part-{number:04d}.{day}.jsonl")
+
+
+def _listed(head: Path) -> dict[int, Path]:
+    """The parts beside a head, by number. Where a part is there both plain and compressed, the plain one is taken:
+    the housekeeping job was stopped between writing the one and removing the other, and they hold the same."""
+    found: dict[int, Path] = {}
+    stem = _stem(head)
+    for path in sorted(head.parent.glob(f"{stem}.part-*")):
+        match = _PART.fullmatch(path.name.removeprefix(stem))
+        if match and (int(match["number"]) not in found or not match["gz"]):
+            found[int(match["number"])] = path
+    return found
+
+
+def parts(head: Path) -> list[Path]:
+    """The parts of a session in the order they were written. A part that is missing from the run is an error."""
+    found = _listed(head)
+    if sorted(found) != list(range(1, len(found) + 1)):
+        raise TapeError(f"{head.name}: its parts are numbered {sorted(found)}; one is missing, and the tape has a hole")
+    return [found[number] for number in sorted(found)]
+
+
+def heads(day: Path) -> list[Path]:
+    """The heads of a trading day's sessions, oldest first."""
+    return sorted(day.glob(f"session-*{HEAD}"))
+
+
+def tape_bytes(days: Path) -> int:
+    """The bytes of every tape file under the folder of day folders: what is counted against the quota."""
+    total = 0
+    for path in days.glob("*/session-*"):
+        with contextlib.suppress(FileNotFoundError):  # housekeeping replaces a part with its compressed copy
+            total += path.stat().st_size
+    return total
+
+
+def _sync_folder(folder: Path) -> None:
+    """Make the names in a folder durable: a file whose name was never synced can vanish in a power cut."""
+    handle = os.open(folder, os.O_RDONLY)
+    try:
+        os.fsync(handle)
+    finally:
+        os.close(handle)
+
+
+def _ends_stopped(part: Path) -> bool:
+    with part.open("rb") as stream:
+        size = stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, size - _TAIL))
+        tail = stream.read()
+    return tail.endswith(b"\n") and tail[:-1].rpartition(b"\n")[2].startswith(b'["stop",')
+
+
+def being_written(days: Path) -> Path | None:
+    """The one part a running trader may still append to, or None.
+
+    It is the last part of the last session of the newest day, unless it is compressed already or ends with
+    its session's `stop`. Every other part is closed: a new session writes new files and never an old one.
+    """
+    folders = sorted(path for path in days.iterdir() if path.is_dir()) if days.is_dir() else []
+    last_heads = heads(folders[-1]) if folders else []
+    found = _listed(last_heads[-1]) if last_heads else {}
+    if not found:
+        return None
+    last = found[max(found)]
+    return None if last.suffix == ".gz" or _ends_stopped(last) else last
+
+
+def housekeep(days: Path) -> int:
+    """Compress every closed part that is not compressed yet. Returns how many. Nothing is deleted but the
+    plain copy of a part whose compressed copy has been read back and found the same."""
+    open_now = being_written(days)
+    done = 0
+    for path in sorted(days.glob("*/session-*.part-*.jsonl")):
+        if path != open_now:
+            compress(path)
+            done += 1
+    return done
+
+
 # ---- live: the venue, the clock and the switch files, written down as they are read ------------------------------
 
 
@@ -310,14 +443,21 @@ class LiveEdge:
         venue: Venue | None = None,
         poll_ns: int = 50 * MS,
         beat_ns: int = 1_000 * MS,
+        part_bytes: int = PART_BYTES,
+        quota_bytes: int | None = None,
+        fsync: bool = False,
     ) -> None:
         if venue is not None and not isinstance(venue, GuardedVenue):
             raise TypeError("the trader sends orders through a guarded venue and through nothing else")
         self._source, self._clock, self._pairs, self._venue = source, clock, tuple(pairs), venue
         self._switches, self._requests, self._should_stop = switches, requests, should_stop
         self._poll_ns, self._beat_ns = poll_ns, beat_ns
+        self._part_bytes, self._quota, self._fsync = part_bytes, quota_bytes, fsync
         self._asks = _Recorded(venue, self) if venue is not None else None
         self._stream: IO[bytes] | None = None
+        self._file: Path | None = None  # the head of the session being taped; None between sessions
+        self._number, self._day, self._size, self._used = 0, "", 0, 0
+        self.full = False  # the tapes reached their quota: this session takes no further turn
         self._head: list[Row] = []
         self._last = 0
         self._beat_at = 0
@@ -350,20 +490,67 @@ class LiveEdge:
         return Opened(self._last, self._source.name, instruments, self._state)
 
     def begin(self, path: Path, marks: Mapping[str, object]) -> None:
+        """Write the head of a new session's tape. Refused, with nothing written, when the tapes are at their quota."""
         path.parent.mkdir(parents=True, exist_ok=True)
+        self._used = tape_bytes(path.parent.parent)
+        if self._quota is not None and self._used >= self._quota:
+            raise TapeFull(
+                f"the tapes hold {self._used} of {self._quota} bytes: no session is begun until room is made "
+                "(the trader runbook, \"The tapes and their quota\")"
+            )
         self._stream = path.open("xb")  # a tape is written once; a name that is taken is a mistake, not a retry
+        self._file, self._number, self._day, self._size, self.full = path, 0, "", 0, False
         for row in (*self._head, ["marks", dict(marks)]):
             self.write(row)
+        self._shut_part()  # the head is on the disk, and is never written again; the turns go into parts
+        if self._fsync:
+            _sync_folder(path.parent)
 
     def write(self, row: Row) -> None:
-        """One line, handed to the operating system at once: a kill of this process loses none of it."""
-        if self._stream is None:
+        """One line, handed to the operating system at once: a kill of this process loses none of it.
+
+        A turn's first line is its `step`. Before one is written, the part is changed when the turn's UTC day
+        is not the part's or the part is full, so that a part holds whole turns.
+        """
+        if self._file is None:
             raise TapeError("the tape is not open")
-        self._stream.write(json.dumps(row, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n")
+        timed = row[0] in ("step", "stop") and type(row[1]) is int
+        day = day_of(row[1]) if timed else self._day or day_of(self._last)
+        if self._number or self._stream is None:  # past the head
+            due = row[0] == "step" and (day != self._day or self._size >= self._part_bytes)
+            if self._stream is None or due:
+                self._shut_part()
+                self._open_part(day)
+        assert self._stream is not None
+        line = json.dumps(row, separators=(",", ":"), ensure_ascii=True).encode("ascii") + b"\n"
+        self._stream.write(line)
         self._stream.flush()
+        self._size += len(line)
+        self._used += len(line)
+        if self._quota is not None and self._used >= self._quota:
+            self.full = True
+
+    def _shut_part(self) -> None:
+        """Close the file being written, synced: a closed file of a tape is on the disk."""
+        if self._stream is not None:
+            self._stream.flush()
+            os.fsync(self._stream.fileno())
+            self._stream.close()
+            self._stream = None
+
+    def _open_part(self, day: str) -> None:
+        """Begin the next part. Its name is new, and with `fsync` on it is synced into its folder."""
+        assert self._file is not None
+        self._number, self._day, self._size = self._number + 1, day, 0
+        path = part_path(self._file, self._number, day)
+        self._stream = path.open("xb")
+        if self._fsync:
+            _sync_folder(path.parent)
+        if self._quota is not None:
+            self._used = tape_bytes(path.parent.parent)  # housekeeping may have made room since the last look
 
     def next(self, *, urgent: bool) -> Step | None:
-        while not self._should_stop():
+        while not (self._should_stop() or self.full):
             events = [event for event in self._source.poll(self._poll_ns) if encode(event) is not None]
             now = max(self._last + 1, self._clock.now_ns())  # a turn has a time of its own, later than the last
             state = self._source.state
@@ -375,6 +562,8 @@ class LiveEdge:
             if beat is not None:
                 self._beat_at = now
             self.write(["step", now, state.value, [encode(event) for event in events], _beat_row(beat)])
+            if beat is not None and self._fsync and self._stream is not None:
+                os.fsync(self._stream.fileno())  # what a power cut can lose is what was written since this
             return Step(now, state, tuple(events), beat)
         return None
 
@@ -394,28 +583,39 @@ class LiveEdge:
         self.write(["sent", verb, client_order_id, outcome, self._source.state.value])
 
     def stop(self, at_ns: int) -> None:
-        if self._stream is not None:
+        if self._file is not None:
             self.write(["stop", at_ns])
-            os.fsync(self._stream.fileno())
-            self._stream.close()
-            self._stream = None
+            self._shut_part()
+            self._file = None
 
 
 # ---- replay: the recording stands in for the venue -----------------------------------------------------------------
 
 
+def _content(path: Path) -> bytes:
+    return gzip.decompress(path.read_bytes()) if path.suffix == ".gz" else path.read_bytes()
+
+
 def read_tape(path: Path) -> list[Row]:
-    """Every whole line of a tape. A last line that was being written when the process died is left out."""
+    """Every whole line of a session's tape: its head, then its parts in order, compressed or not.
+
+    A last line that was being written when the process died is left out. Only the last file can end so: a
+    part that ends in the middle of a line and has a part after it is damaged, and is an error.
+    """
     rows = []
-    lines = path.read_bytes().split(b"\n")
-    for number, raw in enumerate(lines[:-1]):
-        try:
-            row = json.loads(raw)
-        except ValueError as exc:
-            raise TapeError(f"{path.name} line {number + 1} is not a tape line") from exc
-        if not isinstance(row, list) or not row or not isinstance(row[0], str):
-            raise TapeError(f"{path.name} line {number + 1} is not a tape line")
-        rows.append(row)
+    files = [path, *parts(path)]
+    for file in files:
+        lines = _content(file).split(b"\n")
+        if lines[-1] and file is not files[-1]:
+            raise TapeError(f"{file.name} ends in the middle of a line, and a later part follows it")
+        for number, raw in enumerate(lines[:-1]):
+            try:
+                row = json.loads(raw)
+            except ValueError as exc:
+                raise TapeError(f"{file.name} line {number + 1} is not a tape line") from exc
+            if not isinstance(row, list) or not row or not isinstance(row[0], str):
+                raise TapeError(f"{file.name} line {number + 1} is not a tape line")
+            rows.append(row)
     if len(rows) < 2 or rows[0][0] != "open" or rows[1][0] != "marks":
         raise TapeError(f"{path.name} does not begin as a tape does")
     return rows

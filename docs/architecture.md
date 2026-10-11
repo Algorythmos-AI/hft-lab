@@ -34,10 +34,11 @@ On the host everything runs as the Unix user `hft`, in units prefixed `hft-`, in
 | `hft-train`, `hft-promote` | Weekend learning and the weekly promotion decision |
 | `hft-report`, `hft-backup` | Summaries; journal and model backups |
 
-Seven of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
+Eight of these are rendered as unit files today, from code ([ADR 0017](adr/0017-host-layer.md)): the gateway
 as a placeholder that cannot be enabled, the recorder with its hourly `hft-housekeep`, `hft-shadow`,
 `hft-trader` (which has no install section: the owner starts it, nothing enables it), `hft-publish` (the
-status check, the pages and the status snapshot) and `hft-backup`. None is installed on any host. The others
+status check, the pages and the status snapshot), `hft-backup` and `hft-report` (the daily summary and the
+weekly scorecard; its timer is the owner's to enable). None is installed on any host. The others
 arrive with their phases.
 
 ## Package map
@@ -74,6 +75,7 @@ journal       the hash-chained journal of the shadow runner, the outbox, the lat
 learn/        datasets with a look-ahead check, walk-forward validation, the promotion decision        F6
               (foundations only: no training run, no weekly promotion, no process)
 ops/          the host layer: its names, units, pre-flight gate, status and dead-man rule, alerts, backup    F2
+              and the daily and weekly reports and the deploy gate (ADR 0027)
 publish/      the status snapshot: built from the status reading, checked, signed and sent                 F2
 ```
 

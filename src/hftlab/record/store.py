@@ -193,6 +193,28 @@ def measure(root: Path) -> int:
     return total
 
 
+def compress(path: Path) -> Path:
+    """Replace a closed file with its gzip, after checking the copy holds the same bytes. Returns the new path.
+
+    Killed half way it leaves the original, whole, and at most a `.partial` beside it; killed between the two
+    last steps it leaves both, identical, and the next pass does the same work again.
+    """
+    target = path.with_name(path.name + ".gz")
+    partial = target.with_name(target.name + ".partial")
+    with path.open("rb") as read, gzip.open(partial, "wb", compresslevel=6) as write:
+        shutil.copyfileobj(read, write)
+    digest = hashlib.sha256()
+    with gzip.open(partial, "rb") as check:
+        for chunk in iter(lambda: check.read(1 << 20), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != file_sha256(path):
+        partial.unlink()
+        raise OSError(f"the compressed copy of {path} does not read back the same; the original is kept")
+    os.replace(partial, target)
+    path.unlink()
+    return target
+
+
 @dataclass(frozen=True, slots=True)
 class StoreSettings:
     quota_bytes: int
@@ -441,21 +463,7 @@ class Housekeeper:
 
     @staticmethod
     def _compress(path: Path) -> Path:
-        """Replace a closed segment with its gzip, after checking the copy holds the same bytes."""
-        target = path.with_name(path.name + ".gz")
-        partial = target.with_name(target.name + ".partial")
-        with path.open("rb") as read, gzip.open(partial, "wb", compresslevel=6) as write:
-            shutil.copyfileobj(read, write)
-        digest = hashlib.sha256()
-        with gzip.open(partial, "rb") as check:
-            for chunk in iter(lambda: check.read(1 << 20), b""):
-                digest.update(chunk)
-        if digest.hexdigest() != file_sha256(path):
-            partial.unlink()
-            raise OSError(f"the compressed copy of {path} does not read back the same; the original is kept")
-        os.replace(partial, target)
-        path.unlink()
-        return target
+        return compress(path)
 
     def _hand_over(self, path: Path, name: str, report: HousekeepingReport) -> None:
         assert self._offload is not None

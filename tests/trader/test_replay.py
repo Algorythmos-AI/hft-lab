@@ -11,7 +11,7 @@ from hftlab.calendar import Calendar
 from hftlab.journal import JournalError, verify
 from hftlab.trader import TapeError
 from hftlab.trader.replay import replay_day
-from hftlab.trader.tape import read_tape
+from hftlab.trader.tape import parts, read_tape
 from hftlab.venues.fake import FakeConfig
 from tests.trader.kit import DIGEST, MS, SECOND, T0, Desk, put_stage
 
@@ -93,9 +93,10 @@ def test_a_tape_cut_off_in_the_middle_of_a_turn_ends_the_replay_there_and_not_in
     desk.run(20)
     desk.trader.abandon()
     tape = desk.day() / "session-001.tape.jsonl"
-    rows = tape.read_bytes().split(b"\n")
+    (part,) = parts(tape)  # the turns are in the session's one part; the head holds how it began
+    rows = part.read_bytes().split(b"\n")
     last_ask = max(n for n, row in enumerate(rows) if row.startswith(b'["sent"'))
-    tape.write_bytes(b"\n".join(rows[:last_ask]) + b'\n["sen')  # the process died before it could say how a send went
+    part.write_bytes(b"\n".join(rows[:last_ask]) + b'\n["sen')  # the process died before it could say how a send went
     assert read_tape(tape)[-1][0] != "sent"
     (found,) = desk.replay(tmp_path / "scratch")
     assert not found.stopped and found.replayed_bytes > 0

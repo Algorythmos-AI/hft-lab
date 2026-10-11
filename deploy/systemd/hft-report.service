@@ -1,0 +1,48 @@
+[Unit]
+Description=HFT Lab report: the daily summary after the rollover and, after the Friday close, the weekly scorecard: written to a file and sent as a page. It reads the journals and changes nothing else
+Documentation=file:///home/hft/hft-lab/docs/runbooks/README.md
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=oneshot
+User=hft
+Group=hft
+Slice=hft.slice
+WorkingDirectory=/home/hft/hft-lab
+Environment=MODE=paper
+Environment=PYTHONPATH=src
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TZ=UTC
+Environment=HFT_STATE_DIR=/home/hft/hft-lab/var
+EnvironmentFile=-/etc/hft/secrets.env
+ExecStart=/home/hft/hft-lab/.venv/bin/python -m hftlab.ops.report due --send
+TimeoutStartSec=600
+Nice=15
+IOSchedulingClass=idle
+MemoryMax=200M
+OOMScoreAdjust=500
+ReadWritePaths=/home/hft/hft-lab/var
+InaccessiblePaths=-/home/wt
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitCORE=0
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK

@@ -175,11 +175,14 @@ sent.
 - **A restart cancels working orders**, at every session start, the rollover included.
 - **The shadow book is not the book of the sleeve's intents.** It is the book of the orders that were sent,
   less what the alignment closes. An entry the gate refused never happened in either book.
-- **The tape is large and unrotated.** One line a quote, in text. Nothing compresses or removes it yet, and
-  the host's disk budget has not been measured with a trader running.
-- **The tape survives a kill, not a power cut.** Its lines reach the operating system at once and the disk
-  when the session stops. After a power cut the outbox, which is synced before every send, can hold more
-  than the tape, and that tail cannot be replayed.
+- **The tape is large.** One line a quote, in text. Since this record was written it is cut into parts by UTC
+  day and by size, its closed parts are compressed by the housekeeping job and all tapes are held under a
+  quota (`hftlab.trader.tape`, the trader runbook). Nothing removes a tape, the backup does not hold them,
+  and the host's disk budget has not been measured with a trader running.
+- **The tape survives a kill, and all but its last beat survives a power cut.** Its lines reach the operating
+  system at once. A closed part is synced before the next is opened, and with `fsync` on the part being
+  written is synced on every beat. After a power cut the outbox, which is synced before every send, can
+  hold up to a beat more than the tape, and that tail cannot be replayed.
 - **A replay needs the day's journals as they were.** It copies their beginnings by a mark. An outbox that
   was replaced or rotated since cannot be replayed from.
 - **Clean days are counted, not judged.** The rule counts days without a latch or a break. Whether the

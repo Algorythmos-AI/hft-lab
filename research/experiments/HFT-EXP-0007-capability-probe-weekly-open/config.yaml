@@ -1,0 +1,16 @@
+# HFT-EXP-0007: what the capability probe was run with. RUN ON 2026-10-11. The results are in report.md.
+#
+# This is a record of a run that has happened, not a registration: nothing here was fixed in advance, and no
+# hypothesis is tested. Running the probe again, at another time or with other settings, is a new experiment
+# with a new id that names this one.
+command: python -m hftlab.venues.ibkr.probe
+venue: ibkr_paper                 # the broker's paper account, through its gateway on the owner's own machine
+read_only: true                   # the gateway's Read-Only API was on, and --orders was not given
+orders_placed: 0
+pairs: [EUR.USD, USD.JPY, AUD.USD, GBP.USD]
+window_seconds: 60                # quotes sampled per pair, one pair after the other
+depth_levels_asked: 5
+depth_window_seconds: 5
+history_ticks_asked: 100
+started_utc: "2026-10-11T21:34:40Z"
+started_new_york: "Sunday 17:34"  # about twenty minutes after the weekly open

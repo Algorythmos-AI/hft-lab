@@ -162,12 +162,31 @@ def test_the_placeholders_say_they_are_not_in_force():
     risk = yaml.safe_load(read("config/risk.yaml"))
     assert risk["status"] == "placeholder" and risk["in_force"] is False
     assert "NOT YET IN FORCE" in read("config/risk.yaml")
-    venue = yaml.safe_load(read("config/venues/ibkr.yaml"))
-    assert venue["venue"] == "ibkr_paper" and venue["status"] == "placeholder" and venue["pairs"] == []
-    assert venue["probed_at"] is None and venue["access_route"] is None and venue["instrument_form"] is None
-    for field in ("forms", "update_interval_ms", "depth_levels", "min_order_size", "commission", "order_round_trip_ms"):
-        assert field in read("config/venues/ibkr.yaml"), f"the capability file does not list {field}"
-    assert set(venue["weekly_login"]) == {"required", "observed_behaviour"}
+    costs = yaml.safe_load(read("config/cost_model.yaml"))
+    assert costs["status"] == "placeholder" and "HFT-EXP-0007" in read("config/cost_model.yaml")
+
+
+def test_the_capability_file_claims_only_what_was_measured():
+    """The probe's one real run was read-only and at the weekly open: no cost, no timing, no proof of tradability."""
+    from hftlab.venues.ibkr.probe import CONFIG_STATUSES
+
+    text = read("config/venues/ibkr.yaml")
+    venue = yaml.safe_load(text)
+    assert CONFIG_STATUSES == ("placeholder", "partly_measured", "probed") and venue["status"] in CONFIG_STATUSES
+    assert venue["venue"] == "ibkr_paper" and venue["status"] == "partly_measured"
+    assert (venue["probed_at"], venue["probe_record"]) == ("2026-10-11", "HFT-EXP-0007")
+    assert list((ROOT / "research" / "experiments").glob("HFT-EXP-0007-*")), "the record it names exists"
+    assert venue["access_route"] is None and venue["instrument_form"] is None, "no decision record exists yet"
+    assert venue["weekly_login"] == {"required": None, "observed_behaviour": None}
+    assert [pair["pair"] for pair in venue["pairs"]] == ["EUR.USD", "USD.JPY", "AUD.USD", "GBP.USD"]
+    for pair in venue["pairs"]:
+        assert pair["resolves"] == ["cash", "cfd"] and "forms" not in pair and "tradable" not in pair
+        assert pair["depth_levels"] == 5 and pair["min_order_size"] == 1 and pair["size_increment"] == 1
+        assert set(pair["price_increment"]) == {"cash", "cfd"} and pair["price_scale"] in (3, 5)
+        assert pair["update_interval_ms"] is None, "the weekly open is not a sample of the update rate"
+        assert pair["commission"] == {"rate_bps": None, "minimum": None, "currency": None}
+        assert pair["order_round_trip_ms"] == {"median": None, "p99": None}
+    assert "NOT the size from which its pricing is" in text and "Not the forms the account may trade" in text
 
 
 def test_no_tracked_file_names_an_assistant_or_tool():

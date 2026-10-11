@@ -40,7 +40,7 @@ few milliseconds. It does not mean microsecond races or co-location.
 
 ## What exists today
 
-Code, and tests of it. **Nothing here has met the real market yet.**
+Code, and tests of it. **One read-only run of the capability probe aside, nothing here has met the real market.**
 
 | Piece | Where |
 |---|---|
@@ -69,7 +69,7 @@ Code, and tests of it. **Nothing here has met the real market yet.**
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
 | Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
-| The research registry: its lint, the trial count, 6 hypotheses and 6 experiments, registered and not run, and 0 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 1 record of a measurement (the capability probe's first real run), and 0 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
 | The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate with its pruning of old checkouts (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
@@ -80,9 +80,14 @@ What that does and does not mean:
 
 - **Proven against:** a deterministic fake broker, a stub of the broker library, synthetic quote streams, and
   recordings the tests make themselves.
-- **Not done:** the capability probe has connected to the real paper gateway once, at a weekend, when there
-  are no quotes, and that is all that has touched anything real. Nothing has been recorded from the real
-  feed, and no experiment has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
+- **Measured, and how little:** the capability probe has run against the real paper gateway, read-only, on
+  2026-10-11 in the minutes after the weekly open
+  ([`HFT-EXP-0007`](research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)). EUR.USD,
+  USD.JPY, AUD.USD and GBP.USD each resolve as spot and as a CFD, with five levels of market depth. Nothing
+  about costs, tradability or order timing is measured: no order was placed, and the spreads of those minutes
+  are not inputs to anything.
+- **Not done:** that run is all that has touched anything real. Nothing has been recorded from the real
+  feed, and no experiment on a strategy has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
   place a broker order. The trader can only once the risk limits are in force and a sleeve has earned a
   stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. The capability probe can,
   on the paper account, when the owner runs it with `--orders`.
@@ -91,9 +96,10 @@ What that does and does not mean:
   any host, no unit has been loaded by a service manager, and nothing has been published. Recording starts
   only after the owner has run the capability probe, the pre-flight day and the install
   ([runbook](docs/runbooks/install.md)).
-- **F1 is open** until the owner runs the capability probe against the real paper account with the market
-  open ([runbook](docs/runbooks/ibkr-probe.md)): its report needs quotes, and the one connection so far was
-  at a weekend.
+- **F1 is open.** Its gate needs a second read-only run of the capability probe in liquid hours, a run with
+  orders for the round trip and for what the account may trade, and then the two decision records on the
+  access route and the instrument form ([runbook](docs/runbooks/ibkr-probe.md),
+  [roadmap](docs/roadmap.md)). None of those exists.
 - **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days. The command that
   compares the control run with its recording trip by trip, which the registered experiment names, is
   written (`python -m hftlab.review.trip_costs`,

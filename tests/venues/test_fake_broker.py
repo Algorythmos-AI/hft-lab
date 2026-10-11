@@ -18,7 +18,16 @@ from hftlab.core import (
     WallClock,
 )
 from hftlab.venues.fake import FakeConfig, FakeMarket, build
-from hftlab.venues.port import CommissionEvent, DepthSnapshot, UnknownInstrument, UnknownOrder, Unsupported
+from hftlab.venues.port import (
+    CommissionEvent,
+    ConnectionState,
+    DepthSnapshot,
+    UnknownInstrument,
+    UnknownOrder,
+    Unsupported,
+    VenueNotice,
+    VenueUnavailable,
+)
 from hftlab.venues.supervisor import Backoff
 from tests.venues.kit import ASK, BID, EURUSD, INSTRUMENTS, MS, SECOND, T0, a_broker, after, an_order, brief, of
 
@@ -411,6 +420,39 @@ def test_an_order_still_working_after_an_outage_is_visible_and_can_be_cancelled_
     broker.cancel(resting.client_order_id)  # allowed while RECONCILING
     assert brief(after(clock, broker, 10 * MS)) == [("order", "CANCELLED", 0)]
     broker.mark_reconciled()
+
+
+def test_the_gateways_status_messages_are_notices_said_at_the_handshake_and_when_their_time_comes():
+    said = ((T0 + 5 * MS, 2104, "there:farm-a"), (T0 + 5 * MS, 2103, "cut:farm-a"), (T0, 2110, "cut"))
+    clock, broker = a_broker(FakeConfig(gateway_messages=said), ready=False, quote=False)
+    assert broker.poll() == [], "nothing is said to a caller that is not connected"
+    broker.connect()
+    assert brief(broker.poll()) == [("connection", "CONNECTING"), ("notice", "ib:2110"), ("connection", "RECONCILING")]
+    assert broker.poll() == []
+    notices = of(after(clock, broker, 5 * MS), VenueNotice)
+    assert [(n.code, n.message) for n in notices] == [("ib:2104", "there:farm-a"), ("ib:2103", "cut:farm-a")]
+    assert after(clock, broker, SECOND) == [], "each is said once, in time order and then in the order given"
+
+
+def test_a_lookup_in_a_cut_off_span_waits_out_its_timeout_and_fails_and_is_answered_outside_it():
+    config = FakeConfig(unanswered_lookups=((T0, T0 + 30 * SECOND),), gateway_messages=((T0 + SECOND, 2157, "cut"),))
+    clock, broker = a_broker(config, ready=False, quote=False, auto_advance=True)
+    broker.connect()
+    with pytest.raises(VenueUnavailable, match="did not answer: TimeoutError"):
+        broker.instrument("EUR.USD", InstrumentKind.CASH)
+    assert clock.now_ns() == T0 + config.lookup_timeout_ns and broker.state is ConnectionState.RECONCILING
+    assert ("notice", "ib:2157") in brief(broker.poll()), "said while the request waited"
+    clock.advance_to(T0 + 30 * SECOND)
+    assert broker.instrument("EUR.USD", InstrumentKind.CASH) == EURUSD
+
+
+def test_with_auto_advance_a_poll_stops_at_the_next_status_message():
+    clock, broker = a_broker(
+        FakeConfig(gateway_messages=((T0 + 300 * MS, 2110, "cut"),)), ready=False, quote=False, auto_advance=True
+    )
+    broker.connect()
+    broker.poll()
+    assert brief(broker.poll(SECOND)) == [("notice", "ib:2110")] and clock.now_ns() == T0 + 300 * MS
 
 
 def test_executions_can_be_asked_for_since_a_time():

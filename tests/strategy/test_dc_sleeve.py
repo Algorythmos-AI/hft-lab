@@ -203,9 +203,9 @@ def test_a_heartbeat_keeps_a_quiet_book_from_being_a_gap():
     _, wanted = shown(sleeve, [*stream[:441], *pause, *late])
     assert wanted[0][0] == 382, "entered, and the book in these runs never fills"
     state, _ = shown(sleeve, [*stream[:441], *pause, *late[:70]])
-    assert state[0].live == 4, "ten seconds without a quote, confirmed alive twice: event 4 counts"
+    assert state[0].current == 4, "ten seconds without a quote, confirmed alive twice: event 4 counts"
     state, _ = shown(sleeve, [*stream[:441], *late[:70]])
-    assert state[0].live == 0, "and without the heartbeats it is a gap, and event 4 is flagged"
+    assert state[0].current == 0, "and without the heartbeats it is a gap, and event 4 is flagged"
 
 
 def test_it_leaves_after_the_maximum_holding_time_and_that_event_is_good_for_no_second_position(tmp_path):
@@ -268,7 +268,7 @@ def test_it_does_not_enter_in_the_widened_or_the_no_fill_window_and_is_never_kep
     cancelled = [e for e in entries if e["type"] == "order_event" and e["state"] == "CANCELLED"]
     assert len(cancelled) == 5 and filled(entries)[1][0] == "BUY", "five came to nothing, the sixth got it out"
     assert {e["reason"] for e in cancelled} == {"inside the rollover window or the market is shut"}
-    # Flat from then on. Events 4 and 5 are live in turn and neither is entered on inside the widened window,
+    # Flat from then on. Events 4 and 5 are current in turn and neither is entered on inside the widened window,
     # which ends 240 s after the rollover, that second included. Event 5 is entered on the second after.
     assert found[7] == (241 * SECOND, "entry", 0)
     assert not [f for f in found if f[1] == "entry" and -3 * MINUTE <= f[0] <= 4 * MINUTE]
@@ -284,7 +284,7 @@ def test_it_does_not_enter_while_the_market_is_shut_and_what_follows_a_closure_i
     _, wanted = shown(always, stream)
     assert wanted[0][0] == 142, "with no flagged events and an open market it enters on the first event"
     state, wanted = shown(shut, stream[:200])
-    assert wanted == [] and state[0].live == 0, "the same event falls on the first shut tick: nothing"
+    assert wanted == [] and state[0].current == 0, "the same event falls on the first shut tick: nothing"
     assert state[0].detector.machines[0].events == 0, "a shut market is a gap at every tick: no event confirms in it"
 
     weekend = Calendar((Closure("holiday", at(450), at(500)),))
@@ -296,7 +296,7 @@ def test_it_does_not_enter_while_the_market_is_shut_and_what_follows_a_closure_i
     ]  # fmt: skip
     plain = shown(dc(), stream)[0][0]
     crossed = shown(dc(calendar=Calendar((Closure("holiday", at(300) + 1, at(301) - 1),))), stream[:383])
-    assert plain.live == 6 and crossed[1] == [], "shut for a moment between two ticks: a gap, though no tick saw it"
+    assert plain.current == 6 and crossed[1] == [], "shut for a moment between two ticks: a gap, though no tick saw it"
     assert crossed[0][0].detector.machines[0].warm_left == 1, "event 3 was the first after it, and was flagged"
 
 
@@ -377,7 +377,7 @@ def test_a_round_trip_step_by_step():
         assert not actions and not state[0].leave
     state, (leave,) = sleeve.decide(state, stream[502], at(502), short)
     assert (leave.side, leave.quantity, leave.leg, leave.attempt) == (Side.BUY, SIZE, "exit", 0)
-    assert (state[0].phase, state[0].live, state[0].live_up) == (EXITING, 4, True)
+    assert (state[0].phase, state[0].current, state[0].current_up) == (EXITING, 4, True)
     state, _ = sleeve.decide(state, Placed(leave, an_id(2)), at(502), short)
     out = Fill("S.2", an_id(2), "EUR.USD", Side.BUY, SIZE, 108_115, at(503), venue_ts_ns=at(502) + 5 * MS)
     state, actions = sleeve.decide(state, out, at(503), view())
@@ -394,10 +394,10 @@ def test_the_exit_is_for_what_the_book_says_it_holds_and_a_heartbeat_can_leave_b
     _, (leave,) = sleeve.decide((due,), beat, beat.recv_ts_ns, view(EUR_USD=-37_000))
     assert (leave.side, leave.quantity, leave.leg) == (Side.BUY, 37_000, "exit")
     state, _ = shown(sleeve, quotes(ZIGZAG[:382]))
-    live = dataclasses.replace(state[0], live=2, live_up=True)  # as if event 2 had counted and were still to enter on
+    ready = dataclasses.replace(state[0], current=2, current_up=True)  # as if event 2 had counted, not yet entered on
     late = Heartbeat("EUR.USD", at(382), at(382), 0)
-    assert sleeve.decide((live,), late, at(382), view())[1] == (), "a heartbeat is no price to enter on"
-    _, (entry,) = sleeve.decide((live,), quotes([ZIGZAG[381]], start_ns=at(382))[0], at(382), view())
+    assert sleeve.decide((ready,), late, at(382), view())[1] == (), "a heartbeat is no price to enter on"
+    _, (entry,) = sleeve.decide((ready,), quotes([ZIGZAG[381]], start_ns=at(382))[0], at(382), view())
     assert (entry.side, entry.leg) == (Side.BUY, "entry"), "a quote is, even one that moves nothing"
 
 

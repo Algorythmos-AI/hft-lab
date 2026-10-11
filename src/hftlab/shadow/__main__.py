@@ -18,12 +18,14 @@ import json
 import signal
 import sys
 from collections.abc import Iterator, Mapping, Sequence
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from hftlab.calendar import CalendarError, load_calendar
+from hftlab.calendar import Calendar, CalendarError, load_calendar
 from hftlab.core import Instrument, InstrumentKind, WallClock
 from hftlab.core._checks import pair as check_pair
 from hftlab.record.format import CorruptSegment, RecordedEvent
@@ -33,6 +35,7 @@ from hftlab.safety.venues import UnknownVenueError, venue
 from hftlab.shadow.journal import Journal, JournalError, verify
 from hftlab.shadow.runner import MS, Shadow, ShadowError, live_events, open_live, run
 from hftlab.strategy import ControlSleeve, IdleSleeve, Sleeve
+from hftlab.strategy.dc import CONTRARIAN, DcSleeve, from_percent
 from hftlab.venues.port import VenueError
 from hftlab.venues.sim import CostModel, CostModelError, load_cost_model
 
@@ -76,7 +79,69 @@ def minimum_sizes(traded: Sequence[Instrument], model: CostModel) -> dict[str, i
     return {instrument.pair: model.minimum_size(instrument) for instrument in traded}
 
 
-def make_sleeves(entries: Sequence[object], sizes: Mapping[str, int]) -> list[Sleeve[Any]]:
+DIRECTIONAL_CHANGE = "directional_change"
+_DC_KEYS = frozenset(
+    {
+        "variant", "price", "threshold_percent", "overshoot_multiple", "max_hold_seconds", "min_spread_ratio",
+        "warm_up_events", "gap_seconds", "retry_seconds", "max_attempts",
+    }
+)  # fmt: skip
+_DC_WHOLE = ("max_hold_seconds", "warm_up_events", "gap_seconds", "retry_seconds", "max_attempts")
+
+
+def _exact(value: object, what: str) -> Fraction:
+    """A quoted decimal such as "1.5" as an exact rational. A bare number in the file is a float, and refused."""
+    if not isinstance(value, str):
+        raise ConfigError(f"{what} must be a quoted decimal such as '1.5', not {value!r}")
+    try:
+        return Fraction(Decimal(value))
+    except (InvalidOperation, ValueError, OverflowError) as exc:
+        raise ConfigError(f"{what} {value!r} is not a decimal") from exc
+
+
+def directional_change(
+    name: str, rest: Mapping[str, Any], sizes: Mapping[str, int], costs: CostModel | None, calendar: Calendar | None
+) -> DcSleeve:
+    """A Directional Change sleeve from its settings (ADR 0024). The threshold is written in percent of the price."""
+    if set(rest) != _DC_KEYS:
+        raise ConfigError(f"sleeve {name}: a {DIRECTIONAL_CHANGE} sleeve has exactly the keys {sorted(_DC_KEYS)}")
+    if costs is None or calendar is None:
+        raise ConfigError(f"sleeve {name}: a {DIRECTIONAL_CHANGE} sleeve needs the cost model and the calendar")
+    if any(type(rest[key]) is not int for key in _DC_WHOLE):
+        raise ConfigError(f"sleeve {name}: {', '.join(_DC_WHOLE)} must be whole numbers")
+    multiple = rest["overshoot_multiple"]
+    if (rest["variant"] == CONTRARIAN) != (multiple is not None):
+        raise ConfigError(f"sleeve {name}: overshoot_multiple is set for the contrarian variant and null for the other")
+    return DcSleeve(
+        name,
+        sizes=sizes,
+        variant=rest["variant"],
+        threshold=from_percent(rest["threshold_percent"]),
+        overshoot_multiple=None if multiple is None else _exact(multiple, "overshoot_multiple"),
+        max_hold_ns=rest["max_hold_seconds"] * SECOND,
+        min_spread_ratio=_exact(rest["min_spread_ratio"], "min_spread_ratio"),
+        warm_up=rest["warm_up_events"],
+        gap_ns=rest["gap_seconds"] * SECOND,
+        retry_ns=rest["retry_seconds"] * SECOND,
+        max_attempts=rest["max_attempts"],
+        calendar=calendar,
+        # No entry in either of the cost model's windows around the rollover: the no-fill one and the widened one.
+        rollover=(
+            (costs.no_fill_before_ns, costs.no_fill_after_ns),
+            (costs.widen_before_ns, costs.widen_after_ns),
+        ),
+        price=rest["price"],
+    )
+
+
+def make_sleeves(
+    entries: Sequence[object],
+    sizes: Mapping[str, int],
+    *,
+    costs: CostModel | None = None,
+    calendar: Calendar | None = None,
+) -> list[Sleeve[Any]]:
+    """The sleeves a config lists. `costs` and `calendar` are needed by the kinds that read them, and by no other."""
     out: list[Sleeve[Any]] = []
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
@@ -98,6 +163,8 @@ def make_sleeves(entries: Sequence[object], sizes: Mapping[str, int]) -> list[Sl
                         retry_ns=rest["retry_seconds"] * SECOND,
                     )
                 )
+            elif kind == DIRECTIONAL_CHANGE:
+                out.append(directional_change(entry["name"], rest, sizes, costs, calendar))
             else:
                 raise ConfigError(f"sleeve {entry['name']}: unknown kind or settings for kind {kind!r}: {sorted(rest)}")
         except ValueError as exc:
@@ -154,7 +221,11 @@ def run_shadow(args: argparse.Namespace, config: dict[str, Any]) -> int:
         stream = live_events(source, clock, names, lambda: bool(stopping), heartbeat_ns=config["heartbeat_ms"] * MS)
         path = args.journal or journal_dir / "live.jsonl"
         label = f"venue:{args.venue}"
-    sleeves = make_sleeves(config["sleeves"], minimum_sizes(traded, model))
+    sleeves = make_sleeves(config["sleeves"], minimum_sizes(traded, model), costs=model, calendar=calendar)
+    for sleeve in sleeves:
+        if isinstance(sleeve, DcSleeve):  # what its events are detected with, the price series among it
+            said = json.dumps(sleeve.settings(), sort_keys=True)
+            print(f"shadow: sleeve {sleeve.name} settings {said}", file=sys.stderr)
     shadow = Shadow(traded, model, sleeves, Journal(path), calendar=calendar, seed=config["seed"], source=label)
     if model.placeholder:
         print("shadow: the cost model is a PLACEHOLDER; no result of this run measures anything", file=sys.stderr)

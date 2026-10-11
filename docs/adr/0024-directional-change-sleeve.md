@@ -88,8 +88,8 @@ Both variants read only confirmed events that are not warm-up, and the provision
   restart is not a gap by itself; the time it took may be.
 
 They are baselines because the published method gives no rule to trade by. These two are the plainest things
-one can do with an event, written down before anything is measured. The expected outcome is no advantage
-over the control sleeve after costs.
+one can do with an event, written down before anything is measured. The expected outcome, registered as
+`HFT-HYP-0004`, is no advantage over the control sleeve after costs.
 
 ### 3. Every result is read against a random walk of the same volatility
 
@@ -131,5 +131,8 @@ same days. A result inside the distribution has shown nothing.
   of the trader. The detector can be restored; carrying a sleeve's state across sessions is not built.
 - The command that runs the null on recorded days is not built. The helper takes the function that runs a
   sleeve over a stream, and the tests hand it the shadow runner.
-- Every number in the configuration of this sleeve is a placeholder. Its first shadow run is registered in
-  `research/` before it is made, with both variants and every threshold it tests.
+- The sleeve is the kind `directional_change` in the shadow runner's and the trader's settings. Every number
+  of it in `config/shadow.yaml` and `config/trader.yaml` is a placeholder, and its stage is `shadow` with no
+  rule that could be met.
+- Its first shadow run is registered as `HFT-EXP-0004`, with both variants at three thresholds, gross and net
+  of cost for each. It has not been run.

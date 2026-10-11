@@ -57,8 +57,8 @@ class PairState:
     detector: DetectorState
     seen_ns: int | None = None  # when the book was last confirmed: a quote or a heartbeat
     open_until_ns: int = 0  # the market is open from the last tick until here; 0 when that is not known
-    live: int = 0  # the number of the last confirmed event, while it may be traded on; else 0
-    live_up: bool = False  # and whether it was an event upwards
+    current: int = 0  # the number of the last confirmed event, while it may be traded on; else 0
+    current_up: bool = False  # and whether it was an event upwards
     tried: int = 0  # the event the last entry order was sent for
     attempts: int = 0  # entry orders sent for that event
     entered: int = 0  # the last event an entry filled for: it is good for no second position
@@ -175,13 +175,13 @@ class DcSleeve:
 
     def _read(self, mine: PairState, event: Quote | Heartbeat, now_ns: int) -> PairState:
         """Bring what is known of the pair up to this event: the gap rule, then the detector, then its event."""
-        known, live, until = mine.detector, mine.live, mine.open_until_ns
+        known, number, until = mine.detector, mine.current, mine.open_until_ns
         quiet = mine.seen_ns is not None and now_ns - mine.seen_ns > self.gap_ns
         if quiet or now_ns >= until:
             # Unconfirmed for too long, or the market was shut at some moment since the tick before (or is now).
-            known, live = self._detector.gap(known), 0
+            known, number = self._detector.gap(known), 0
             until = self._open_until(now_ns) if now_ns >= until else until
-        mine = replace(mine, detector=known, seen_ns=now_ns, open_until_ns=until, live=live)
+        mine = replace(mine, detector=known, seen_ns=now_ns, open_until_ns=until, current=number)
         if not isinstance(event, Quote):
             return mine
         known, confirmed = self._detector.step(known, mid(event), now_ns)
@@ -191,7 +191,7 @@ class DcSleeve:
                 continue  # not traded on, either way
             rising = found.direction == UP
             ends = mine.phase != FLAT and rising != mine.keyed_up
-            mine = replace(mine, live=found.number, live_up=rising, leave=mine.leave or ends)
+            mine = replace(mine, current=found.number, current_up=rising, leave=mine.leave or ends)
         return mine
 
     def _act(
@@ -205,15 +205,15 @@ class DcSleeve:
             return Intent(event.pair, side, abs(held), EXIT, attempt=mine.exits), waiting
         if mine.phase != FLAT or held != 0 or not isinstance(event, Quote):
             return None, mine
-        number = mine.live
+        number = mine.current
         attempt = mine.attempts if number == mine.tried else 0
         if number == 0 or number <= mine.entered or attempt >= self.max_attempts:
             return None, mine  # no event to trade on, or this one has had its position or its orders
         if not self._signalled(mine) or not self._may_enter(event, now_ns):
             return None, mine
-        buying = mine.live_up if self.variant == TREND else not mine.live_up
+        buying = mine.current_up if self.variant == TREND else not mine.current_up
         waiting = replace(
-            mine, phase=ENTERING, order_id=None, keyed_up=mine.live_up, leave=False, tried=number,
+            mine, phase=ENTERING, order_id=None, keyed_up=mine.current_up, leave=False, tried=number,
             attempts=attempt + 1, tried_ns=now_ns,
         )  # fmt: skip
         side = Side.BUY if buying else Side.SELL
@@ -223,14 +223,14 @@ class DcSleeve:
         """Is the last event one to enter on now? Always for the trend variant; for the other, far enough on."""
         if self.overshoot_multiple is None:
             return True
-        # Asked only while an event is live, so the overshoot in hand is that event's, and it is not warm-up.
+        # Asked only while an event is current, so the overshoot in hand is that event's, and it is not warm-up.
         so_far = self._detector.provisional(mine.detector)
         return so_far is not None and so_far.overshoot >= self.overshoot_multiple * self.threshold
 
     def _may_enter(self, quote: Quote, now_ns: int) -> bool:
         """The reasons not to enter that are the quote's and the hour's: the spread and the rollover.
 
-        A shut market needs no test here: `_read` has made it a gap, and after a gap no event is live.
+        A shut market needs no test here: `_read` has made it a gap, and after a gap no event is current.
         """
         if quote.spread < 0 or self.threshold * mid(quote) < self.min_spread_ratio * quote.spread:
             return False

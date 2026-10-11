@@ -1,0 +1,52 @@
+# HFT-HYP-0004. A hypothesis record (research/README.md). Written before any result it concerns exists.
+id: HFT-HYP-0004
+title: The two Directional Change baselines show no advantage over the control sleeve after costs
+status: registered            # registered | supported | refuted. Changed only by a decision record
+registered: "2026-10-11"
+phase: F5                     # the first shadow run of the Directional Change sleeve on recorded data
+
+statement: >
+  Neither variant of the Directional Change sleeve (ADR 0024), at any of the three thresholds of
+  HFT-EXP-0004, beats the control sleeve after costs in the shadow book. For every one of the six sleeves:
+  (a) the lower bound of the day-block bootstrap interval of its mean result per round trip, after the
+  modelled costs, is not above zero;
+  (b) the lower bound of the same interval for its mean result per round trip less the control sleeve's,
+  in the same pair over the same trading days, is not above zero;
+  (c) its net result on the recorded days does not stand out of its random-walk null: among the walks of
+  matched volatility at least one in twenty does as well or better.
+  This is the outcome we expect. It is stated as the hypothesis so that a run that seems to show an edge
+  has to refute something written down beforehand.
+
+why: >
+  The published method this sleeve is built on describes events and gives no rule to trade them by and no
+  profit figure. The two rules are ours and are the plainest there are: go with a confirmed event, or go
+  against it once it has run on. The regularity the method is known for, a confirmed turn followed on
+  average by as much again, is also what a driftless random walk does, so finding it in a recording is no
+  sign of anything to earn. A round trip pays a spread and two commissions, and a fill-or-kill market
+  order arrives after the quote it was decided on. On synthetic walks both variants lose exactly the cost
+  of their round trips, as the control sleeve does. Nothing known to us says a recording will differ.
+  Six sleeves are looked at together, so one of them looking good by luck is likely; that is why (c) is
+  asked of each beside (a) and (b), and why all six count as trials.
+
+what_would_show_it_is_wrong:
+  - For one sleeve, both lower bounds above zero and a place among its null of one in a hundred, with at
+    least the round trips and the trading days HFT-EXP-0004 asks for, on a cost model that is not a
+    placeholder. That refutes the hypothesis for that variant, threshold, pair and stretch of days. It
+    promotes nothing (see below).
+  - A run that does not replay to the decisions it took (ADR 0005). Then it measured nothing, and says
+    nothing either way.
+
+what_it_does_not_say: >
+  Nothing about other thresholds, another pair, another price series or a rule that is not one of these
+  two. Nothing about a live account: every result is the shadow book's. And it is not a promotion rule.
+  No rule is in force and HFT-EXP-0004 chooses none: a refuted hypothesis here is a reason to register a
+  longer experiment on days this one did not see, with these six configurations counted as trials, never
+  a reason to move a sleeve out of shadow.
+
+tested_by:
+  - HFT-EXP-0004              # registered, NOT RUN
+
+evidence: >
+  None. Nothing has been recorded from the real feed and the sleeve has seen no real data. HFT-EXP-0004
+  has not been run. The detector, the sleeve and the null run on synthetic streams in tests/strategy/.
+  Those tests check the code; they are not this experiment and are not evidence for this hypothesis.

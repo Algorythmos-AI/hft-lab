@@ -34,7 +34,7 @@ themselves. That is all it has been run against:
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
 - Nothing has been recorded from the real feed. There is no recorded trading day.
-- No experiment has been run on real data. The research registry holds three hypotheses and three
+- No experiment has been run on real data. The research registry holds four hypotheses and four
   experiments, all registered and none run.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
 - **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
@@ -53,8 +53,8 @@ themselves. That is all it has been run against:
 
 ## Where F5 and F6 stand
 
-**F5: foundations only. F6: the weekly loop is written, and its gate is open.** What follows needs no new
-dependency and no strategy idea. It has run on synthetic streams the tests make themselves, some with an
+**F5: foundations and one baseline sleeve, in shadow. F6: the weekly loop is written, and its gate is open.**
+What follows needs no new dependency. It has run on synthetic streams the tests make themselves, some with an
 effect planted in them on purpose so that the answer is known, and against the fake broker. **There is no
 real data, no model has been trained on real data, and nothing here is evidence of an edge.** In
 `config/ops.yaml` F5 stays `not_started` and F6 is `open`: its code is written and its gate is not met.
@@ -69,7 +69,7 @@ real data, no model has been trained on real data, and nothing here is evidence 
 | ML sleeve | A skeleton: `src/hftlab/strategy/ml.py`. It trades a cell the feasibility map marks viable when the model expects more than its margin, leaves at the label's horizon, and reports that it may not leave shadow while its model or its map rests on placeholder costs. In the trader, on a synthetic stream with a planted effect, it earns what the effect is worth and replays byte for byte; without the effect it pays the control sleeve's cost. **That checks the plumbing and says nothing about any market.** The shipped trader settings name two places for it, a champion's and one challenger's, and both run idle: no model is registered |
 | Lineup | Written: `src/hftlab/lineup/` ([ADR 0023](adr/0023-weekly-learning-loop.md)). A hash-chained journal says which model stands in which place. The trader loads a model and its report by hash and by nothing else, journals what each session served, and steps a place down when its model changes. A journal that does not verify serves nothing. **No lineup journal exists on any host** |
 | Weekend training | Written: `python -m hftlab.learn.train`. A walk-forward report as bytes, a ridge candidate in the registry under its hash, a memory budget that fails the run. **It has trained on synthetic weeks only** |
-| Directional Change sleeve | **Not started.** It waits for its published method to be read into the knowledge base, so that it is built from the source |
+| Directional Change sleeve | Written: `src/hftlab/strategy/dc/` ([ADR 0024](adr/0024-directional-change-sleeve.md)). A detector that books each event at the tick that crossed and keeps the provisional and the completed overshoot apart as two types; a rule-based baseline sleeve in two variants, trend and contrarian, that refuses a threshold small against the spread; and a random-walk null of matched volatility. Tested on synthetic streams: a zig-zag worked out by hand, driftless walks on which it pays the control sleeve's cost, a planted pattern against its null. **It has seen no real data and is not a claimed edge.** Configured as `directional_change` with every number a placeholder, at stage `shadow`. Its first shadow run is registered as `HFT-EXP-0004`, expected to show no advantage, **not run**. Not built: the command that runs the null on a recording, and carrying a sleeve's state across sessions |
 | Promotion and rollback | Written: `python -m hftlab.learn.promote`. It reads the week's shadow round trips from the trader's journals, applies the rule through the pure function, and writes the lineup: promote, keep or roll back, with a page and the hash of the report it rests on. A promotion needs the rule in force, its decision record with the owner's approval, the risk limits in force and a week with no reconciliation break. A champion that trips its loss latch is rolled back without a rule; `--drill` proves that path on a copy. **As shipped it says `keep: rule not in force`: no rule exists.** The cycle has run with the trader on the fake broker only |
 | Drift | Written: `python -m hftlab.learn.drift`. Feature shift, calibration and the spread regime against the summary kept at training; a breach asks the trader to take the sleeve down to shadow. **Every threshold is null**, so it reports and steps nothing down |
 | Units, status, runbook | `hft-train` and `hft-promote` are rendered, at placeholder times that are the owner's to set, and the install script enables neither. The status screen and the snapshot show the lineup once something is registered. [Runbook](runbooks/learning.md). **Nothing is installed, and the page has not been followed on the host** |
@@ -169,6 +169,6 @@ not check offline is listed at the end of the runbook.
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
 | Registry | Done: lint and trial count. The first two records came with F3, the next two with F4 |
-| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, and the weekly loop 0023 |
+| ADRs | Done: 0001 to 0008. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, the weekly loop 0023, and the Directional Change sleeve 0024 |
 | Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). Twenty-three of the first file's 31 are verified by tests they name and the other 8 are open. Six of the second file's 68 are verified, all of them by tests on synthetic streams; the other 62 are open |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

@@ -10,8 +10,10 @@ An entry is written when a session ends on purpose: at the day's close and at a 
 sleeve that can save its state (`hftlab.strategy.Saves`), what the sleeve wrote, and what the entry is tied to:
 
   * where every journal the books and the stages are built from stood once the session had closed them;
-  * the session's tape: its day, its name, its length, and the hash of its last line, which is the session's
-    last word (`["stop", at]`). The line is never read as anything; it is compared as bytes.
+  * the session's tape: its day, the name of its head, and where it ends (`hftlab.trader.tape.ending`): how
+    many parts it has, the bytes of the head and the parts together, and the hash of those bytes. Its last
+    line is the session's last word (`["stop", at]`). Nothing of it is read as anything; it is compared as
+    bytes, as they are once unpacked, so a part the housekeeping job compressed since is the same part.
 
 At the next start the last entry is restored from ONLY when all of this still holds:
 
@@ -19,8 +21,15 @@ At the next start the last entry is restored from ONLY when all of this still ho
      is `NONE`);
   2. every one of those journals stands exactly where the entry says: nothing was written since, by a
      session that died or by anything else (`JOURNALS`);
-  3. the tape the entry names is the last tape there is, and it ends as the entry says (`TAPE`): the saved
-     state's last event is the tape's last event.
+  3. the tape the entry names is the last tape there is, and it ends where the entry says (`TAPE`): the saved
+     state's last event is the tape's last event. What fails here, each on purpose:
+       - a later session left a head, in this day's folder or a later one, whether or not it took a turn;
+       - the tape has a part more than the entry counts (it rolled after the entry), or a part fewer;
+       - a part is missing from the run, cannot be read, or does not unpack;
+       - a line was added to the last part, or taken from it, or any part or the head was written again;
+       - the last part ends in the middle of a line.
+     What does not fail: closed parts compressed since, the last one among them, or a part left both plain
+     and compressed by a housekeeping run that was stopped.
 
 Otherwise every sleeve starts cold, warm-up flags and all, and the reason is journalled and paged. A session
 that was killed wrote no entry, so the entry before it fails 2 and 3 and is never read as current. Then, for
@@ -41,18 +50,17 @@ into the head of its own tape (`resumed`), and a replay is handed that instead o
 """
 from __future__ import annotations
 
-import hashlib
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
 from hftlab.journal import Journal, JournalError, read, verify
+from hftlab.trader.tape import ending, last_head
 
 FILE: Final = "sleeves.jsonl"
 KIND: Final = "sleeves"
-VERSION: Final = 1
-TAPES: Final = "session-*.tape.jsonl"
+VERSION: Final = 2  # 1 tied an entry to a tape that was one file; a tape is a head and parts now
 SET_ASIDE: Final = ".unverified"
 NOT_VERIFIED: Final = -1  # in a mark, where the number of entries would be
 # Why nothing is restored from the file ...
@@ -66,36 +74,6 @@ _FIELDS: Final = frozenset(
         "in_flight",
     }
 )  # fmt: skip
-_TAIL: Final = 1 << 16
-
-
-def tape_end(path: Path) -> list[object]:
-    """How a tape ends: its length in bytes and the SHA-256 of its last whole line. `[0, ""]` when it has none.
-
-    The line is not parsed. What a tape's lines mean is the tape's own business (hftlab.trader.tape).
-    """
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as stream:
-            stream.seek(max(0, size - _TAIL))
-            tail = stream.read()
-    except OSError:
-        return [0, ""]
-    lines = tail.split(b"\n")
-    if len(lines) < 2 or lines[-1] or (len(lines) < 3 and size > _TAIL):
-        return [size, ""]  # no whole last line: nothing, a torn one, or one longer than a tape's last word is
-    return [size, hashlib.sha256(lines[-2]).hexdigest()]
-
-
-def latest_tape(days: Path) -> Path | None:
-    """The tape of the session that began last: the highest number in the latest day folder that holds one."""
-    if not days.is_dir():
-        return None
-    for day in sorted((path for path in days.iterdir() if path.is_dir()), reverse=True):
-        tapes = sorted(day.glob(TAPES))
-        if tapes:
-            return tapes[-1]
-    return None
 
 
 def standing(path: Path) -> list[object]:
@@ -150,12 +128,17 @@ def journals_stand(entry: Mapping[str, Any], marks: Mapping[str, object], day: s
 
 
 def tape_stands(entry: Mapping[str, Any], days: Path) -> bool:
-    """Is the tape the entry names the last one there is, and does it end as the entry says?"""
-    found = latest_tape(days)
+    """Is the tape the entry names the last one there is, and does it end where the entry says?
+
+    Where a tape ends, and which files it is made of, is the tape's own business (`hftlab.trader.tape.ending`).
+    An end without a hash is no end to compare: the entry of a session whose tape could not be read when it
+    ended is never believed, and neither is any entry while the tape cannot be read now.
+    """
+    found = last_head(days)
     if found is None or (found.parent.name, found.name) != (entry["day"], entry["tape"]):
         return False
-    ended = tape_end(found)
-    return bool(ended[1]) and bool(ended == entry["tape_end"])
+    ended = ending(found)
+    return bool(ended[2]) and bool(ended == entry["tape_end"])
 
 
 def write(
@@ -185,7 +168,7 @@ def write(
         journal = Journal(path, fsync=fsync)
         journal.open()
     journal.write(
-        KIND, version=VERSION, day=day, session=session, tape=tape.name, tape_end=tape_end(tape), n=n, at_ns=at_ns,
+        KIND, version=VERSION, day=day, session=session, tape=tape.name, tape_end=ending(tape), n=n, at_ns=at_ns,
         marks=dict(marks), states=dict(states), stages=dict(stages), in_flight=sorted(in_flight),
     )  # fmt: skip
     journal.close()

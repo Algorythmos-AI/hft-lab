@@ -6,6 +6,7 @@ test, so a run that was cut and a run that was not are shown the same quotes.
 """
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 
@@ -14,14 +15,17 @@ import pytest
 from hftlab.calendar import rollover_near
 from hftlab.journal import Journal, read, verify
 from hftlab.lineup import Lineup
-from hftlab.trader import resume
+from hftlab.trader import resume, tape
 from hftlab.trader.session import mark
+from hftlab.trader.tape import TapeFull, ending, housekeep, last_head, parts, read_tape, tape_bytes
 from tests.lineup.kit import CHALLENGER, ML, effect, put, register
 from tests.lineup.kit import desk as lineup_desk
 from tests.trader.kit import NEVER, SECOND, T0, Desk, put_stage, raw_settings
 
 HOUR = 3_600 * SECOND
 WHOLE = 120  # seconds of market in a test that compares a cut run with an uncut one
+HEAD = "session-001.tape.jsonl"
+SMALL = {"part_bytes": 3_000}  # a part every two or three seconds of this market
 
 
 def settings(control: dict | None = None, **dc) -> dict:
@@ -74,11 +78,13 @@ def test_a_session_that_ends_on_purpose_writes_each_sleeves_state_tied_to_its_jo
     made.run(30, quotes=False)
     made.stop()
     (entry,) = entries(tmp_path)
-    tape = made.day() / "session-001.tape.jsonl"
-    last_line = tape.read_bytes().split(b"\n")[-2]
-    assert json.loads(last_line) == ["stop", entry["at_ns"]], "the tape's last word, and the state's last moment"
-    assert (entry["day"], entry["session"], entry["tape"]) == (made.trader.label, 1, tape.name)
-    assert entry["tape_end"] == [tape.stat().st_size, hashlib.sha256(last_line).hexdigest()]
+    head = made.day() / HEAD
+    (part,) = parts(head)
+    whole = head.read_bytes() + part.read_bytes()  # the tape as one file would have held it
+    assert json.loads(whole.split(b"\n")[-2]) == ["stop", entry["at_ns"]], "its last word, the state's last moment"
+    assert (entry["day"], entry["session"], entry["tape"]) == (made.trader.label, 1, head.name)
+    assert entry["tape_end"] == [1, len(whole), hashlib.sha256(whole).hexdigest()] == ending(head)
+    assert entry["version"] == resume.VERSION == 2, "an entry tied to a tape of one file is of another version"
     names = ("decisions", "outbox", "risk", "reconcile", "stages", "shadow")
     assert set(entry["marks"]) == set(names)
     for name in names:
@@ -143,6 +149,80 @@ def test_a_trader_stopped_and_started_again_decides_for_a_restored_sleeve_exactl
     assert all(one.identical for one in made.replay(tmp_path / "scratch")), "and both sessions replay byte for byte"
 
 
+@pytest.mark.parametrize("paper", [False, True], ids=["shadow only", "limits in force"])
+def test_cut_on_either_side_of_a_part_of_the_tape_and_restored_it_decides_as_one_never_stopped(tmp_path, uncut, paper):
+    cutting = {"part_bytes": 60_000}  # two cuts of the tape in the two minutes
+    whole = a_desk(tmp_path / "whole", paper=paper, edge=cutting)
+    whole.run(WHOLE, quotes=False)
+    whole.stop()
+    cut_into = parts(whole.day() / HEAD)
+    assert len(cut_into) == 3 and decided(whole) == uncut[paper], "where the tape is cut decides nothing"
+    turned = (json.loads(cut_into[1].read_bytes().split(b"\n")[0])[1] - T0) // SECOND  # when the second part began
+    assert 20 < turned < 100
+    counts = {}
+    for cut in (7, turned - 1, turned, turned + 1, turned + 2, 110):
+        for packed in (False, True):
+            folder = tmp_path / f"{cut}-{packed}"
+            made = a_desk(folder, paper=paper, edge=cutting)
+            made.run(cut, quotes=False)
+            before = made.trader._states["dc"]
+            made.stop()
+            head = made.day() / HEAD
+            counts[cut] = len(parts(head))
+            if packed:  # the housekeeping job came by between the stop and the start: every part is closed
+                assert housekeep(folder / "days") == counts[cut] and parts(head)[-1].suffix == ".gz"
+            made.start()
+            assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}, (cut, packed)
+            assert made.trader._states["dc"] == before
+            made.run(WHOLE - cut, quotes=False)
+            made.stop()
+            assert decided(made) == uncut[paper], (cut, packed)
+            assert made.of("inherited") == []
+            assert all(one.identical and one.stopped for one in made.replay(folder / "scratch")), (cut, packed)
+    assert counts[turned - 1] == 1 and counts[turned + 1] == 2, "a state saved before the tape was cut, and one after"
+    assert counts[7] == 1 and counts[110] == 3
+
+
+def test_a_restart_after_the_tape_went_on_to_new_parts_restores_and_so_does_one_after_all_were_compressed(tmp_path):
+    made = a_desk(tmp_path, edge=SMALL)
+    made.run(23, quotes=False)
+    made.stop()
+    days, head = tmp_path / "days", made.day() / HEAD
+    count, saved = len(parts(head)), entries(tmp_path)[-1]["tape_end"]
+    assert count > 5 and saved[0] == count and saved == ending(head)
+    made.start()
+    assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}, "the last word is in the last part"
+    made.run(23, quotes=False)
+    made.stop()
+    second = made.day() / "session-002.tape.jsonl"
+    saved = entries(tmp_path)[-1]["tape_end"]
+    assert housekeep(days) == count + len(parts(second)), "both sessions said they stopped: every part is closed"
+    assert parts(second)[-1].suffix == ".gz" and ending(second) == saved, "the same tape, to the byte, once unpacked"
+    made.start()
+    assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}, "compressed since, and nothing was written"
+    made.run(5, quotes=False)
+    made.stop()
+    assert [one.identical for one in made.replay(tmp_path / "scratch")] == [True, True, True]
+
+
+def test_a_session_the_quota_ended_saves_its_state_and_it_is_restored_once_room_is_made_and_nothing_moved(tmp_path):
+    made = a_desk(tmp_path, edge={**SMALL, "quota_bytes": 20_000})
+    assert made.run(60, quotes=False) is False and made.edge.full
+    made.stop()  # it ends as a session told to stop does: its last word, then its entry
+    days, head = tmp_path / "days", made.day() / HEAD
+    assert read_tape(head)[-1][0] == "stop" and entries(tmp_path)[-1]["tape_end"] == ending(head)
+    kept = {path.name: path.read_bytes() for path in tmp_path.glob("*.jsonl")}
+    with pytest.raises(TapeFull):
+        made.session()
+    assert kept == {path.name: path.read_bytes() for path in tmp_path.glob("*.jsonl")}, "refused: no journal moved"
+    housekeep(days)  # room is made by compressing; the tape is the same tape
+    assert tape_bytes(days) < 20_000
+    made.start()
+    assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}
+    made.stop()
+    assert all(one.identical for one in made.replay(tmp_path / "scratch"))
+
+
 @pytest.mark.parametrize("cut", [23, 61])
 def test_a_trader_that_was_killed_starts_every_sleeve_cold_and_closes_what_they_held_as_before(tmp_path, uncut, cut):
     made = a_desk(tmp_path)
@@ -202,30 +282,127 @@ def test_a_state_left_behind_by_a_session_that_was_killed_later_is_stale_and_is_
     assert all(one.identical for one in made.replay(tmp_path / "scratch"))
 
 
-def stopped(tmp_path) -> Desk:
-    made = a_desk(tmp_path)
+def stopped(tmp_path, **options) -> Desk:
+    made = a_desk(tmp_path, **options)
     made.run(23, quotes=False)
     made.stop()
     return made
 
 
-def test_a_state_whose_tape_is_not_the_last_tape_or_does_not_end_as_it_did_is_not_restored(tmp_path):
+def add(path, more: bytes) -> None:
+    path.write_bytes(path.read_bytes() + more)
+
+
+def pack(path, *, keep: bool = False, damage: bool = False) -> None:
+    """Compress one part as the housekeeping job does; `keep` leaves the plain one beside it, as a stopped job does."""
+    packed = gzip.compress(path.read_bytes())
+    path.with_name(path.name + ".gz").write_bytes(packed[: len(packed) // 2] if damage else packed)
+    if not keep:
+        path.unlink()
+
+
+def flip(path) -> None:
+    """Write a part again: the same length, the same last line, one character of one earlier line another."""
+    whole = bytearray(path.read_bytes())
+    whole[10] ^= 1
+    path.write_bytes(bytes(whole))
+
+
+OPENED = b'["open",1,"x",[]]\n'
+NOT_BELIEVED = {
+    "a later session's head": lambda day, head, found: (day / "session-002.tape.jsonl").write_bytes(OPENED),
+    "a head in a later day's folder": lambda day, head, found: (
+        (day.parent / "2099-01-01").mkdir() or (day.parent / "2099-01-01" / HEAD).write_bytes(OPENED)
+    ),
+    "a line more in the last part": lambda day, head, found: add(found[-1], b'["step",1,"READY",[],null]\n'),
+    "a part more: the tape went on": lambda day, head, found: (
+        day / f"session-001.part-{len(found) + 1:04d}.2025-10-09.jsonl"
+    ).write_bytes(b'["step",1,"READY",[],null]\n'),
+    "a part more, and it is empty": lambda day, head, found: (
+        day / f"session-001.part-{len(found) + 1:04d}.2025-10-09.jsonl"
+    ).write_bytes(b""),
+    "the last part cut short": lambda day, head, found: found[-1].write_bytes(found[-1].read_bytes()[:-12]),
+    "the last part without its last line": lambda day, head, found: found[-1].write_bytes(
+        found[-1].read_bytes().rsplit(b"\n", 2)[0] + b"\n"
+    ),
+    "the last part gone": lambda day, head, found: found[-1].unlink(),
+    "an older part gone": lambda day, head, found: found[1].unlink(),
+    "the first part gone": lambda day, head, found: found[0].unlink(),
+    "an older part written again": lambda day, head, found: flip(found[1]),
+    "an older part written again, then compressed": lambda day, head, found: (flip(found[1]), pack(found[1])),
+    "an older part cut short": lambda day, head, found: found[1].write_bytes(found[1].read_bytes()[:-5]),
+    "a compressed part that does not unpack": lambda day, head, found: pack(found[1], damage=True),
+    "two parts changed places": lambda day, head, found: (
+        found[1].rename(day / "x"), found[2].rename(found[1]), (day / "x").rename(found[2])
+    ),
+    "the head written again": lambda day, head, found: head.write_bytes(head.read_bytes().replace(b"open", b"OPEN", 1)),
+    "no head": lambda day, head, found: head.unlink(),
+    "no tape at all": lambda day, head, found: [path.unlink() for path in day.glob("session-*")],
+}  # fmt: skip
+BELIEVED = {
+    "nothing done to it": lambda days, found: None,
+    "every part compressed, the last among them": lambda days, found: housekeep(days),
+    "only the last part compressed": lambda days, found: pack(found[-1]),
+    "only the older parts compressed": lambda days, found: [pack(path) for path in found[:-1]],
+    "a part there both plain and compressed": lambda days, found: pack(found[1], keep=True),
+    "a compressed copy half written beside its part": lambda days, found: (
+        found[-1].with_name(found[-1].name + ".gz.partial").write_bytes(b"half")
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("case", sorted(NOT_BELIEVED))
+def test_a_state_whose_tape_went_on_lost_a_part_or_was_written_again_is_not_restored(tmp_path, case):
+    made = stopped(tmp_path, edge=SMALL)
+    head = made.day() / HEAD
+    assert len(parts(head)) > 5
+    NOT_BELIEVED[case](made.day(), head, parts(head))
+    made.start()
+    assert state_of(made) == {"restored": [], "cold": {"control": "TAPE", "dc": "TAPE"}}, case
+    assert made.pages.fired[-1] == "sleeve-state", "and the owner is told"
+    assert made.trader._states["dc"] == made.trader._sleeves[2].initial()
+
+
+@pytest.mark.parametrize("case", sorted(BELIEVED))
+def test_a_state_whose_tape_only_changed_how_it_is_kept_is_restored(tmp_path, case):
+    made = stopped(tmp_path, edge=SMALL)
+    head = made.day() / HEAD
+    saved = ending(head)
+    BELIEVED[case](tmp_path / "days", parts(head))
+    assert ending(head) == saved == entries(tmp_path)[-1]["tape_end"], "the same bytes, however they are kept"
+    made.start()
+    assert state_of(made) == {"restored": ["control", "dc"], "cold": {}}, case
+    made.stop()
+    assert all(one.identical for one in made.replay(tmp_path / "scratch"))
+
+
+def test_a_state_of_a_tape_in_one_part_is_judged_the_same_way(tmp_path):
     for case, damage in (
-        ("a later tape", lambda day, tape: (day / "session-002.tape.jsonl").write_bytes(b'["open",1,"x",[]]\n')),
-        ("a tape with more on it", lambda day, tape: tape.write_bytes(tape.read_bytes() + b'["step",1,"READY"]\n')),
-        ("a tape cut short", lambda day, tape: tape.write_bytes(tape.read_bytes()[:-12])),
-        ("no tape", lambda day, tape: tape.unlink()),
-        ("a tape of a later day", lambda day, tape: tape.rename(
-            (day.parent / "2099-01-01").mkdir() or day.parent / "2099-01-01" / tape.name)),
+        ("a later tape", lambda day, part: (day / "session-002.tape.jsonl").write_bytes(b'["open",1,"x",[]]\n')),
+        ("a tape with more on it", lambda day, part: add(part, b'["step",1,"READY"]\n')),
+        ("a tape cut short", lambda day, part: part.write_bytes(part.read_bytes()[:-12])),
+        ("no part", lambda day, part: part.unlink()),
     ):  # fmt: skip
         made = stopped(tmp_path / case.replace(" ", "-"))
-        damage(made.day(), made.day() / "session-001.tape.jsonl")
+        damage(made.day(), parts(made.day() / HEAD)[0])
         made.start()
         assert state_of(made) == {"restored": [], "cold": {"control": "TAPE", "dc": "TAPE"}}, case
         assert "sleeve-state" in made.pages.fired
     untouched = stopped(tmp_path / "untouched")
     untouched.start()
     assert state_of(untouched)["restored"] == ["control", "dc"], "the same day, with nothing done to it"
+
+
+def test_an_entry_of_the_version_that_knew_one_file_is_no_state_of_this_one(tmp_path):
+    made = stopped(tmp_path)
+    (entry,) = entries(tmp_path)
+    old = {key: value for key, value in entry.items() if key not in ("type", "i", "prev")} | {"version": 1}
+    journal = Journal(tmp_path / resume.FILE)
+    journal.open()
+    journal.write(resume.KIND, **old)
+    journal.close()
+    made.start()
+    assert state_of(made)["cold"] == {"control": "NOT_A_STATE", "dc": "NOT_A_STATE"}
 
 
 def test_a_state_whose_journals_moved_on_is_not_restored_whichever_journal_it_was(tmp_path):
@@ -375,31 +552,64 @@ def test_an_ml_place_is_restored_with_its_model_and_starts_cold_when_the_lineup_
     assert all(one.identical for one in made.replay(tmp_path / "scratch"))
 
 
-# ---- the tape's end, read as bytes -----------------------------------------------------------------------------------
+# ---- where a tape ends, read as bytes --------------------------------------------------------------------------------
 
 
-def test_how_a_tape_ends_is_its_length_and_the_hash_of_its_last_whole_line_and_nothing_is_parsed(tmp_path):
-    tape = tmp_path / "session-001.tape.jsonl"
-    assert resume.tape_end(tape) == [0, ""], "no tape"
-    tape.write_bytes(b"")
-    assert resume.tape_end(tape) == [0, ""]
-    tape.write_bytes(b"not json\nnor this\n")
-    assert resume.tape_end(tape) == [18, hashlib.sha256(b"nor this").hexdigest()]
-    tape.write_bytes(b"one\ntorn")
-    assert resume.tape_end(tape) == [8, ""], "a last line that was being written is no last word"
-    tape.write_bytes(b"x" * 100_000 + b"\n")
-    assert resume.tape_end(tape) == [100_001, ""], "nor is a line longer than any last word of a tape"
-    tape.write_bytes(b"x" * 100_000 + b"\nend\n")
-    assert resume.tape_end(tape) == [100_005, hashlib.sha256(b"end").hexdigest()]
+def test_where_a_tape_ends_is_its_parts_its_bytes_and_their_hash_however_they_are_kept_and_nothing_is_parsed(tmp_path):
+    head = tmp_path / HEAD
+    assert ending(head) == [0, 0, ""], "no tape"
+    head.write_bytes(b"")
+    assert ending(head) == [0, 0, ""], "an empty head ends nowhere"
+    head.write_bytes(b"not json\n")
+    assert ending(head) == [0, 9, hashlib.sha256(b"not json\n").hexdigest()], "a head and no part yet"
+    one, two = tmp_path / "session-001.part-0001.2026-10-14.jsonl", tmp_path / "session-001.part-0002.2026-10-15.jsonl"
+    one.write_bytes(b"nor this\n" * 3)
+    two.write_bytes(b"x" * 3_000_000 + b"\nend\n")
+    whole = head.read_bytes() + one.read_bytes() + two.read_bytes()
+    as_saved = ending(head)
+    assert as_saved == [2, len(whole), hashlib.sha256(whole).hexdigest()], "more than one read's worth, no line read"
+    (tmp_path / "session-002.part-0001.2026-10-14.jsonl").write_bytes(b"another session's\n")
+    (tmp_path / "decisions.jsonl").write_bytes(b"not a tape\n")
+    assert ending(head) == as_saved, "its own files and no others"
+    pack(one)
+    assert ending(head) == as_saved, "a compressed part is the same part"
+    pack(two, keep=True)
+    assert ending(head) == as_saved, "and so is one that is there twice"
+    two.unlink()
+    assert ending(head) == as_saved
+    (tmp_path / "session-001.part-0003.2026-10-15.jsonl").write_bytes(b"one\ntorn")
+    assert ending(head) == [3, len(whole) + 8, ""], "a last line that was being written is no end"
+    (tmp_path / "session-001.part-0003.2026-10-15.jsonl").write_bytes(b"")
+    assert ending(head) == [3, len(whole), ""], "nor is a part a kill left empty"
+    (tmp_path / "session-001.part-0003.2026-10-15.jsonl").rename(tmp_path / "session-001.part-0004.2026-10-15.jsonl")
+    assert ending(head)[2] == "", "a part missing from the run: a hole"
 
 
-def test_the_last_tape_is_the_highest_number_of_the_latest_day_that_has_one(tmp_path):
-    assert resume.latest_tape(tmp_path / "days") is None
+def test_the_housekeeping_job_taking_a_part_away_while_the_tape_is_read_is_looked_at_again(tmp_path, monkeypatch):
+    made = stopped(tmp_path, edge=SMALL)
+    head = made.day() / HEAD
+    saved, listed = ending(head), tape.parts
+    calls = []
+
+    def and_then_compressed(of):
+        found = listed(of)
+        if not calls:  # between the listing and the reading, the part is replaced by its compressed copy
+            pack(found[1])
+        calls.append(1)
+        return found
+
+    monkeypatch.setattr(tape, "parts", and_then_compressed)
+    assert ending(head) == saved and len(calls) == 2
+
+
+def test_the_last_head_is_the_highest_number_of_the_latest_day_that_has_one(tmp_path):
+    assert last_head(tmp_path / "days") is None
     for day, names in (("2026-10-13", ["session-001.tape.jsonl", "session-002.tape.jsonl"]), ("2026-10-14", [])):
         (tmp_path / "days" / day).mkdir(parents=True)
         for name in names:
             (tmp_path / "days" / day / name).write_bytes(b"")
+    (tmp_path / "days" / "2026-10-13" / "session-003.part-0001.2026-10-13.jsonl").write_bytes(b"")
     (tmp_path / "days" / "2026-10-14" / "decisions.jsonl").write_bytes(b"")
-    assert resume.latest_tape(tmp_path / "days") == tmp_path / "days" / "2026-10-13" / "session-002.tape.jsonl"
+    assert last_head(tmp_path / "days") == tmp_path / "days" / "2026-10-13" / "session-002.tape.jsonl"
     (tmp_path / "days" / "2026-10-14" / "session-001.tape.jsonl").write_bytes(b"")
-    assert resume.latest_tape(tmp_path / "days").parent.name == "2026-10-14"
+    assert last_head(tmp_path / "days").parent.name == "2026-10-14"

@@ -1,7 +1,8 @@
 # ADR 0026: Sleeve state across a restart, and the two commands the registered experiments name
 
 - **Status:** accepted, 2026-10-11. Built and tested on synthetic streams and against the fake broker only.
-  Nothing here has run on the host, and no state has been saved from or restored on a real feed.
+  Nothing here has run on the host, and no state has been saved from or restored on a real feed. Changed the
+  same day, before it was merged: an entry is tied to a tape that is a head and parts (point 3).
 - **Context:** F3, F5 and F6. [ADR 0019](0019-trader-loop-and-staged-rollout.md) left the first open: "a
   sleeve that means to hold across the rollover needs its state kept". `HFT-EXP-0001` and `HFT-EXP-0005` each
   name a command that did not exist.
@@ -57,8 +58,10 @@ sleeves.
 
    - where each journal the books and the stages are built from stood: the outbox, the risk, reconciliation,
      stage and shadow journals, and the day's decision journal;
-   - the session's tape: its day, its name, its length and the hash of its last line. The line is compared
-     as bytes and never read as anything.
+   - the session's tape: its day, the name of its head, and where it ends. A tape is a head and a run of
+     parts ([ADR 0027](0027-deploy-gate-and-reports.md), section 2), so its end is three things: how many
+     parts it has, the bytes of the head and the parts together, and the SHA-256 of those bytes in order.
+     The bytes are compared as they are once unpacked and are never read as anything.
 
 3. **At a start the last entry is restored from only when nothing moved since.** All of these, or every
    sleeve starts cold:
@@ -69,10 +72,35 @@ sleeves.
    | `UNVERIFIED` | The file's chain does not verify |
    | `NOT_A_STATE` | The last whole line is not an entry of this kind and version |
    | `JOURNALS` | A journal does not stand where the entry left it: something was written since |
-   | `TAPE` | The entry's tape is not the last tape there is, or does not end as the entry says |
+   | `TAPE` | The entry's tape is not the last tape there is, or does not end where the entry says |
 
    A session that was killed wrote no entry. The entry before it then fails on the journals and on the tape,
    so it is never read as current: stale is the ordinary case this rule is for.
+
+   **The tape in parts.** This record first tied an entry to one file: its name, its length and the hash of
+   its last line. A session's tape is several files now, the older ones may be compressed, and the last
+   line is in the last part. `resume` does not work the file names out again: it asks the tape module two
+   things, which head is the last one there is (`tape.last_head`) and where that session's tape ends
+   (`tape.ending`), and compares the answer with the one the entry keeps. An entry of the first form is of
+   another version and is `NOT_A_STATE`.
+
+   | What happened to the tape since the entry | What the start does |
+   |---|---|
+   | Nothing | Restores |
+   | The housekeeping job compressed closed parts, the last one among them (a session that said `stop` has no open part) | Restores: the bytes are compared unpacked |
+   | A part is there both plain and compressed, or a half-written compressed copy lies beside it (the job was stopped) | Restores: the plain one is read, once |
+   | A later session left a head, in this day's folder or a later one, with or without a turn | Cold, `TAPE` |
+   | The tape has a part more than the entry counts: it went on after the entry. An empty one counts | Cold, `TAPE` |
+   | A line was added to the last part, or the last part is cut short, lost a line, or is gone | Cold, `TAPE` |
+   | An older part is missing (a hole), cannot be read, or does not unpack | Cold, `TAPE` |
+   | A part or the head was written again, even to the same length and the same last line | Cold, `TAPE` |
+   | The tapes are at their quota | No session is begun, so nothing is restored or journalled. The entry is left as it is, and is believed at the start after room was made if nothing above happened |
+   | The session was ended by the quota | It ended as a stop does: its last word, then its entry. As the row above |
+   | Room was made by moving the last session's own tape away | Cold, `TAPE`. Moving older sessions' tapes changes nothing |
+
+   A state "saved before a part rolled" is the fourth and fifth rows. The entry is written after the tape's
+   last word, so a session that ended on purpose cannot leave one; what looks like one is a tape something
+   else wrote to, and it is not believed.
 
 4. **Then each sleeve, on its own:**
 
@@ -154,6 +182,10 @@ back. It may import the shadow runner and the sleeves; nothing imports it. No im
   does not, and closes what its sleeves held (`tests/trader/test_resume.py`).
 - A stale entry, a broken chain, a tape that is not the last or ends otherwise, and a line written to any
   journal since: each starts every sleeve cold and is reported (`tests/trader/test_resume.py`).
+- With the tape in parts: every row of the table in point 3, one test case each. A trader cut just before
+  and just after its tape went on to a new part, with every part compressed between the stop and the start
+  and without, decides exactly as the trader that was never stopped, and every session replays byte for
+  byte. A session the quota ended is restored from once room is made (`tests/trader/test_resume.py`).
 - A saved state damaged in any one place is refused or is exactly another state; one written under any
   other setting is refused (`tests/strategy/test_saved_state.py`).
 - Every session of those tests replays byte for byte, the ones that restored and the one that found the
@@ -190,7 +222,21 @@ back. It may import the shadow runner and the sleeves; nothing imports it. No im
   ([ADR 0007](0007-shared-host-isolation.md)).
 - **The file grows by one entry a session** and is not rotated. An entry holds every feature history in
   full.
-- **The backup does not hold it,** like the other journals of the trader. A lost disk is a cold start.
+- **The backup holds the file and not the tapes.** The trader's folder is taken whole
+  ([ADR 0027](0027-deploy-gate-and-reports.md), section 1), `sleeves.jsonl` and a chain that was set aside
+  with it; the tapes are left out. So a state file brought back from a backup names a tape that is not
+  there and is not believed: a lost disk is a cold start, by the rule and not by luck.
+- **Where a tape ends costs a read of the whole of it.** Every byte of the session's tape is hashed, the
+  compressed parts unpacked, once when a session ends on purpose and once at the next start: nothing less
+  shows that an older part was not written again. On the fake broker's market that is nothing. On a real
+  day it is as long as the day's tape is large, and it has not been measured. A clean stop that the service
+  manager cuts off for taking too long (30 seconds as shipped) has written no entry, and the next start is
+  a cold one: slower is never wrong.
+- **The housekeeping job can pass while the tape is read.** A part it replaces with its compressed copy
+  between the listing and the read is looked for once more. Anything else that goes wrong while reading is
+  an end without a hash, which is never believed.
+- **One reason is journalled for all of it.** `TAPE` does not say which row of the table it was; the files
+  in the day's folder do.
 - **The null is slow, and nobody knows how slow.** Each sleeve is run through the shadow runner once for
   the day and once for each walk, in one process, in exact arithmetic: six sleeves and 99 walks are 600 passes
   over a day's quotes. The time that takes on a real day has not been measured.

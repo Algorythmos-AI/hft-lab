@@ -118,6 +118,25 @@ commit whose checks are not green.
    **If a step fails,** the script stops there. Nothing is half-enabled, because nothing is ever enabled.
    Fix the cause and run the same command again: what is done is skipped.
 
+   **The optional ML set.** Leave it out unless this host is to train a gradient-boosted model
+   (`model: gbm` in `config/learn.yaml`; the shipped value is `ridge`). Only `hft-train.service` uses it.
+   The recorder, the trader and the weekly decision never import it, and a gbm model that is already
+   trained is scored without it. To add it, give `--with-ml`, at the first install or at any later time:
+
+   ```
+   sudo sh deploy/bin/hft-install --with-ml
+   ```
+
+   **You should see** under step 4 one more `uv pip install` line, with `requirements-ml.lock.txt`, the
+   line that stamps it, and nothing else done again. It installs LightGBM and what it needs, every package checked against its hash.
+   It takes about 80 MB of disk as measured on a Mac; on this host expect somewhat more, and check with
+   `du -sh /home/hft/hft-lab/.venv` before and after. No service has to be stopped for it.
+   It needs the system's OpenMP runtime: `dpkg -s libgomp1` should say `install ok installed`; if not,
+   `sudo apt install libgomp1`.
+   **Give `--with-ml` on every later run of the script too.** An environment that is rebuilt because the
+   locked requirements changed comes back without the set, and the next gbm training run is then refused
+   with a message that says so.
+
 3. Look at the result.
 
    ```

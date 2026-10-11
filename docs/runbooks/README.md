@@ -17,12 +17,14 @@ and is exercised once as a drill.
 | [Trader](trader.md) | Starting it in shadow, reading the stages, kill and flatten with a trader running, a reconciliation break, resetting a latch, replaying a day, the tapes and their quota |
 | [Backup](backup.md) | Handing the journals, the trader's folder and the model registry away every night, what is left out and why, and checking that a backup can be read back |
 | [Reports](reports.md) | The daily summary and the weekly scorecard: what each says, making one by hand, and the timer that sends them |
-| [Rollback](rollback.md) | A deploy to another commit of `main`, and going back to the one before |
+| [Deploy](deploy.md) | Putting another commit of `main` in service through the deploy gate: adopting the layout once, the dry run, the deploy, what each ending means, and what to do when the unit files changed |
+| [Rollback](rollback.md) | Going back to the code that was in service before the last deploy, by the same command and the same gate |
 | [Publish](publish.md) | Sending the status snapshot and the pages, and the two decisions that are still the owner's |
 | [Learning](learning.md) | The weekly cycle: setting the two times, reading a report, what `keep: rule not in force` means, how a rule comes into force, a rollback and the rollback drill, the drift look, and what to do when training fails |
 | [IBKR capability probe](ibkr-probe.md) | Measuring what the paper account can do: installing the gateway, the paper login, the command, reading the report |
 
-None of the host runbooks has been followed on the host yet: nothing is installed. Each says so where it
+None of the host runbooks has been followed on the host yet: nothing is installed. The deploy gate, the
+reports, the tape's quota and the wider backup are written and tested off the host only. Each says so where it
 matters, and each is corrected in the pull request that follows its first use.
 
 Rules for every runbook:

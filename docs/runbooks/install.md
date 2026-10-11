@@ -228,6 +228,20 @@ The status would then refuse to call the store the market's (`recorder_not_on_pa
 
 From here on, [the recorder runbook](recorder.md).
 
+## After the install
+
+Three things are written and tested off the host, and are **not** done by the install script. Nothing below
+has been done on any host.
+
+| What | It is | Where |
+|---|---|---|
+| The deploy gate | From the first deploy on, the code moves through `python -m hftlab.ops.deploy` and no longer through this script. It needs the install root turned into a link once, with everything stopped (`adopt`). Until you have done that, a deploy is refused and says so | [deploy](deploy.md), [rollback](rollback.md) |
+| The reports | `hft-report.timer` is installed with the other units and is enabled by nobody. This script refuses `--enable hft-report.timer`: a page every trading day is yours to ask for | [reports](reports.md) |
+| The tapes | The hourly housekeeping also compresses the closed parts of the trader's tapes, once a trader has run. The tape quota in `config/trader.yaml` is a placeholder until this host's disk has been measured with a trader running | [trader](trader.md), section 8 |
+
+The nightly backup takes the trader's folder and the learning folder as well, once they exist
+([backup](backup.md)).
+
 ## What this run confirms
 
 The host layer was written without the host. Each line is something it assumes. Tell the maintainers which,

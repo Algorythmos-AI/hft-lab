@@ -103,7 +103,7 @@ def replay_day(
         if kept is not None and kept[0] == UNVERIFIED:
             # It did not verify then, and may have been set aside since. What the session saw is a file of that
             # length that does not verify, and that is what it is given.
-            (folder / resume.FILE).write_bytes(b"?" * (int(kept[2]) - 1) + b"\n")
+            (folder / resume.FILE).write_bytes(b"?" * max(0, int(kept[2]) - 1) + b"\n")
         elif kept is not None:
             _prefix(state_dir / resume.FILE, folder / resume.FILE, kept)
         copy = folder / "days" / day.name / "decisions.jsonl"

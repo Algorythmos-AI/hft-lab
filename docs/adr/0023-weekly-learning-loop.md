@@ -257,6 +257,9 @@ that pages.
   child. Under load on a shared host that can happen, and each time it costs the rows of a back-off.
 - **Rows are lost while a child starts.** A start takes tens of milliseconds, and every row of that time is
   an abstention. They are in the record, so the day still replays.
+- **An outage writes a line a row,** into the record and into the decision journal, for as long as it lasts.
+  A place that is refused for the rest of a session writes one for every row its sleeve would have asked
+  about.
 - **None of it has run on the host,** and on real data the likeliest outcome of the first challenger's week
   is no advantage over the control sleeve after costs (`HFT-HYP-0003`).
 

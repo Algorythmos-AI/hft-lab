@@ -92,8 +92,10 @@ sleeves.
 7. **Every start says what it did.** One line of the decision journal names the sleeves restored and the
    reason for each one that was not, and any reason but `NONE` pages the owner.
 
-8. **Nothing is repaired.** A file whose chain is broken is set aside under another name when the next entry
-   is due, as it was found, and a new chain begins.
+8. **Nothing is repaired, and nothing depends on the file.** A file whose chain is broken is set aside under
+   another name when the next entry is due, as it was found, and a new chain begins. A file that cannot be
+   read does not stop a start, and an entry that cannot be written does not fail a clean stop: the owner is
+   paged, and the next start is a cold one.
 
 9. **A replay restores what the day restored.** The state file is copied by its mark like the other
    journals. A scratch folder has no tapes to look at, so the session writes whether the entry was believed

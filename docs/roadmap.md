@@ -34,13 +34,17 @@ themselves. That is all it has been run against:
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
 - Nothing has been recorded from the real feed. There is no recorded trading day.
-- No experiment has been run on real data. The research registry holds four hypotheses and four
+- No experiment has been run on real data. The research registry holds five hypotheses and five
   experiments, all registered and none run.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
 - **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
   streams and against the fake broker only (see "Where F5 and F6 stand"). Its gate is not met and code
   cannot meet it. No model has been trained on real data, and nothing in this repository is evidence of an
   edge.
+- **Three pieces were written last, and are in the same state as the rest:** the scorer in a process of its
+  own ([ADR 0023](adr/0023-weekly-learning-loop.md), section 5), sleeve state kept across a restart, and the
+  two commands the registered experiments name ([ADR 0026](adr/0026-sleeve-state-across-a-restart.md)). Each
+  is written and tested on synthetic data. None has run on a host, and none has seen real data.
 
 | Gate | State | What closes it |
 |---|---|---|

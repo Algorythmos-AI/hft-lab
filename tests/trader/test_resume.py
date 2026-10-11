@@ -266,6 +266,19 @@ def test_a_corrupted_state_file_starts_every_sleeve_cold_is_reported_set_aside_a
     assert [one.identical for one in replayed] == [True, True, True], "the session that found it broken among them"
 
 
+def test_a_state_file_that_cannot_be_read_or_written_stops_neither_a_start_nor_a_clean_stop(tmp_path):
+    made = a_desk(tmp_path)
+    made.run(10, quotes=False)
+    (tmp_path / resume.FILE).mkdir()  # not a file at all: it can be neither read nor appended to
+    result = made.stop()
+    assert result["turns"] > 0 and made.pages.fired[-1] == "sleeve-state-save", "the session ended, and said so"
+    made.start()
+    assert state_of(made) == {"restored": [], "cold": {"control": "UNVERIFIED", "dc": "UNVERIFIED"}}
+    made.run(10, quotes=False)
+    made.stop()
+    assert all(one.identical for one in made.replay(tmp_path / "scratch"))
+
+
 def test_a_last_entry_that_is_not_a_state_or_is_torn_restores_nothing(tmp_path):
     made = stopped(tmp_path / "other")
     journal = Journal(tmp_path / "other" / resume.FILE)

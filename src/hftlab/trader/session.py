@@ -155,10 +155,7 @@ def mark(path: Path) -> list[object]:
 
 
 def lineup_mark(path: Path) -> list[object]:
-    """Where a journal stands that the trader starts without: the lineup's, and the one of saved sleeve states.
-
-    One that does not verify is marked as such, by its length: nothing is served from it and nothing restored.
-    """
+    """Where the lineup journal stands. One that does not verify is marked as such, by its length: it serves nothing."""
     try:
         return mark(path)
     except JournalError:
@@ -198,7 +195,7 @@ class Trader:
         paths = {"decisions": days / "decisions.jsonl", **{name: self._folder / f"{name}.jsonl" for name in STATE}}
         marks = {name: mark(path) for name, path in paths.items()}  # before anything of this session is written
         marks["lineup"] = lineup_mark(self._folder / LINEUP)  # written by the weekly decision (ADR 0023)
-        marks[resume.KIND] = lineup_mark(self._folder / resume.FILE)  # the sleeves' saved states (ADR 0026)
+        marks[resume.KIND] = resume.standing(self._folder / resume.FILE)  # the sleeves' saved states (ADR 0026)
         self._paths, self._fsync = paths, settings.fsync
         # May the last saved state be believed? Decided here, from where the journals stood before this session
         # wrote anything, and from the tapes: a replay has no tapes and is handed what the day found (`resumed`).
@@ -794,7 +791,8 @@ class Trader:
                 elif name in saved["states"]:
                     try:
                         self._states[name] = sleeve.restore(saved["states"][name])
-                    except (ValueError, KeyError, TypeError):  # a `StateError`, or a state so unlike one that it raised
+                    except (ValueError, LookupError, TypeError, AttributeError):
+                        # A `StateError`, or a state so unlike one that reading it raised something else.
                         reason = resume.SETTINGS
                     else:
                         restored.add(name)
@@ -1131,11 +1129,16 @@ class Trader:
         states, in_flight = self._kept()
         self._shut()
         # Last, when every journal is closed and the tape has its last line: the entry is tied to where they stand.
-        resume.write(
-            self._folder / resume.FILE, fsync=self._fsync, day=self.label, session=self.session, tape=self._tape,
-            n=self._n, at_ns=now, marks={name: mark(path) for name, path in self._paths.items()}, states=states,
-            stages=ran_under, in_flight=in_flight,
-        )  # fmt: skip
+        # A clean stop does not fail on it. An entry that could not be written is a cold start next time.
+        try:
+            resume.write(
+                self._folder / resume.FILE, fsync=self._fsync, day=self.label, session=self.session,
+                tape=self._tape, n=self._n, at_ns=now, marks={name: mark(path) for name, path in self._paths.items()},
+                states=states, stages=ran_under, in_flight=in_flight,
+            )  # fmt: skip
+        except (JournalError, OSError) as exc:
+            text = f"The sleeves' states were not written ({type(exc).__name__}). The next start is a cold one."
+            self._notify.fire("sleeve-state-save", "Sleeve states were not saved", text, 3)
         return result
 
     def abandon(self) -> None:

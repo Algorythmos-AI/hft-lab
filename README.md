@@ -90,7 +90,10 @@ What that does and does not mean:
   ([runbook](docs/runbooks/install.md)).
 - **F1 is open** until the owner runs the capability probe against the real paper account
   ([runbook](docs/runbooks/ibkr-probe.md)).
-- **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days.
+- **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days. The command that
+  compares the control run with its recording trip by trip, which the registered experiment names, is
+  written (`python -m hftlab.review.trip_costs`,
+  [ADR 0026](docs/adr/0026-sleeve-state-across-a-restart.md)) and has read synthetic recordings only.
 - **F4 is open:** its code is complete against the fake broker, and its gate is five trading days of the
   control sleeve at minimum size on the real paper account with zero reconciliation breaks
   ([`HFT-EXP-0002`](research/experiments/HFT-EXP-0002-control-min-size-paper/protocol.md), registered, not
@@ -111,6 +114,11 @@ What that does and does not mean:
   rollback drill on the host; neither has happened. The scorer can run in a process of its own
   (`src/hftlab/scoring/`), written and tested on synthetic rows; it is off as shipped and has not run on the
   host.
+- **A sleeve's state is kept across a restart** ([ADR 0026](docs/adr/0026-sleeve-state-across-a-restart.md)):
+  saved when a session ends on purpose, and restored at the next start only when no journal and no tape moved
+  since. Otherwise the sleeve starts cold and the owner is told why. The Directional Change sleeve's
+  random-walk null can be run on a recorded day (`python -m hftlab.review.dc_null`). Both are written and
+  tested on synthetic data; nothing of either has run on a host or seen real data.
 - All of it has been run on synthetic streams the tests make, some with an effect planted in them on
   purpose, and against the fake broker. **No real data exists yet, no model has been trained on real data,
   and nothing here is evidence of an edge.** The first challenger's week is registered

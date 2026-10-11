@@ -47,13 +47,14 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
-from hftlab.journal import Journal, JournalError, read
+from hftlab.journal import Journal, JournalError, read, verify
 
 FILE: Final = "sleeves.jsonl"
 KIND: Final = "sleeves"
 VERSION: Final = 1
 TAPES: Final = "session-*.tape.jsonl"
 SET_ASIDE: Final = ".unverified"
+NOT_VERIFIED: Final = -1  # in a mark, where the number of entries would be
 # Why nothing is restored from the file ...
 NONE, UNVERIFIED, NOT_A_STATE, JOURNALS, TAPE = "NONE", "UNVERIFIED", "NOT_A_STATE", "JOURNALS", "TAPE"
 # ... and why one sleeve is not, when the file may be believed.
@@ -97,11 +98,26 @@ def latest_tape(days: Path) -> Path | None:
     return None
 
 
+def standing(path: Path) -> list[object]:
+    """Where the state file stands: its entries, its last hash and its length, as the session's tape keeps them.
+
+    A file that does not verify, or cannot be read at all, is marked as such, by its length. The trader starts
+    without it: nothing is restored from it, and no start is refused for it.
+    """
+    try:
+        state = verify(path)
+    except JournalError:
+        return [NOT_VERIFIED, "", path.stat().st_size]
+    except OSError:
+        return [NOT_VERIFIED, "", 0]
+    return [state.entries, state.last_hash, state.good_bytes]
+
+
 def last(path: Path) -> tuple[dict[str, Any] | None, str]:
     """The last entry of the state file and "", or None and why there is none to restore from."""
     try:
         entries = read(path)[1]
-    except JournalError:
+    except (JournalError, OSError):
         return None, UNVERIFIED
     if not entries:
         return None, NONE
@@ -156,7 +172,11 @@ def write(
     stages: Mapping[str, str],
     in_flight: Sequence[str],
 ) -> None:
-    """Append one entry. A file that does not verify is set aside first, as it is, and a new chain begins."""
+    """Append one entry. A file that does not verify is set aside first, as it is, and a new chain begins.
+
+    Raises `JournalError` or `OSError` when it cannot be written. Whoever calls decides what that costs: an
+    entry that was not written is a cold start, and nothing worse.
+    """
     journal = Journal(path, fsync=fsync)
     try:
         journal.open()

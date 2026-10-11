@@ -12,6 +12,9 @@ Connection messages relied on, all UNVERIFIED without a gateway:
                lock is passed again on the account list and the caller reconciles before orders resume.
   10147, 10148 a cancel for an order that is already done.
   a daily restart of the gateway closes the socket; the supervisor reconnects on its backoff schedule.
+
+Every other message is passed on as a notice `ib:<code>`. The ones that speak of the gateway's own link to the
+broker and its data services are listed, with what they mean, in `hftlab.venues.ibkr.link`.
 """
 from __future__ import annotations
 
@@ -148,6 +151,9 @@ class IbkrVenue(GuardedVenue):
     def _on_error(self, request: int, code: int, message: str) -> None:
         if code == UPSTREAM_LOST:
             self._upstream = False
+            # Said as a notice as well: during the handshake `_lost` is ignored, and a caller that only reads
+            # notices (the probe) would otherwise never learn why nothing is answered.
+            self._emit_notice(f"ib:{code}", message)
             self._lost(f"the gateway lost its connection to the broker ({code})")
         elif code in UPSTREAM_BACK:
             self._upstream = True

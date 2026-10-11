@@ -41,6 +41,11 @@ class FakeConfig:
     depth_levels: int = 0  # 0: the venue offers no depth
     history: bool = True
     server_clock_offset_ns: int = 0
+    # A gateway that is up but cut off from the broker. Its status messages, as (at_ns, code, text), reach the
+    # caller as notices `ib:<code>`: the ones due when the connection is made are said during the handshake.
+    gateway_messages: tuple[tuple[int, int, str], ...] = ()
+    unanswered_lookups: tuple[tuple[int, int], ...] = ()  # [start, end) spans when an instrument lookup times out
+    lookup_timeout_ns: int = 10_000 * MS  # how long such a lookup waits before it gives up
 
 
 @dataclass(frozen=True, slots=True)

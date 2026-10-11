@@ -19,6 +19,7 @@ from hftlab.venues.port import ConnectionState, VenueError
 from tests.venues.kit import EURUSD, INSTRUMENTS, MS, SECOND, T0, USDJPY
 
 FAST = ProbeSettings(window_ns=2 * SECOND, depth_window_ns=SECOND, history_ticks=50, order_wait_ns=2 * SECOND)
+WITH_ORDERS = dataclasses.replace(FAST, orders=True)
 
 
 def a_venue(config: FakeConfig | None = None, *, quotes: bool = True, **options):
@@ -154,6 +155,121 @@ def test_a_disconnect_during_the_probe_is_counted():
     assert report["disconnects_during_probe"] == 1
 
 
+# ---- a gateway that is up and cut off from the broker ---------------------------------------------------------------
+
+HOUR = 3_600 * SECOND
+SAID_BEFORE = (T0, 2110, "the link to the servers is cut")
+SAID_DURING = (T0 + 15 * SECOND, 2103, "a quote service is cut:farm-a")
+CUT_OFF = FakeConfig(
+    depth_levels=5, gateway_messages=(SAID_BEFORE, SAID_DURING), unanswered_lookups=((T0, T0 + HOUR),)
+)
+
+
+def test_a_gateway_cut_off_from_the_broker_gives_each_pair_one_plain_reason_instead_of_a_timeout():
+    report, broker = run(config=CUT_OFF)
+    for pair in ("EUR.USD", "USD.JPY"):
+        found = report["pairs"][pair]
+        assert found["reason"] == "the gateway is connected to us but not to the broker's servers"
+        assert found["forms"] == {"cash": {"resolves": False}, "cfd": {"resolves": False}}
+        assert found["quotes"] is None and found["depth"] is None and found["historical_ticks"] is None
+    assert "TimeoutError" not in json.dumps(report["pairs"])
+    assert report["upstream_link_down"] is True and report["proposed_config"]["pairs"] == []
+    assert broker.state is ConnectionState.DISCONNECTED
+
+
+def test_what_the_gateway_said_before_and_during_the_probe_is_in_the_notices_though_nothing_resolved():
+    report, _ = run(config=CUT_OFF)
+    assert report["notices"] == [
+        {"code": "ib:2110", "message": "the link to the servers is cut"},
+        {"code": "ib:2103", "message": "a quote service is cut:farm-a"},
+    ]
+
+
+def test_a_cut_off_pair_is_asked_once_not_once_per_form():
+    clock, broker = a_venue(CUT_OFF)
+    Probe(broker, clock, FAST).run()
+    assert clock.now_ns() - T0 == 2 * CUT_OFF.lookup_timeout_ns, "two pairs, one unanswered lookup each"
+
+
+def test_cut_off_with_orders_asked_for_places_nothing_and_asks_the_account_nothing():
+    clock, broker = a_venue(CUT_OFF)
+    asked = []
+    broker.market.working = lambda: asked.append("working") or []
+    report = Probe(broker, clock, WITH_ORDERS).run()
+    assert report["orders"] == {
+        "placed": False, "reason": "the gateway is connected to us but not to the broker's servers",
+    }  # fmt: skip
+    assert broker.market._orders == {} and broker._sent == set() and asked == []
+
+
+def test_a_lookup_that_times_out_with_no_word_from_the_gateway_stays_a_bare_timeout():
+    report, _ = run(config=dataclasses.replace(CUT_OFF, gateway_messages=()))
+    forms = report["pairs"]["EUR.USD"]["forms"]
+    assert "TimeoutError" in forms["cash"]["reason"] and "TimeoutError" in forms["cfd"]["reason"]
+    assert "reason" not in report["pairs"]["EUR.USD"] and report["upstream_link_down"] is False
+
+
+def test_a_lookup_that_times_out_after_the_gateway_said_it_was_back_is_not_blamed_on_the_link():
+    back = (T0, 1102, "restored")
+    report, _ = run(config=dataclasses.replace(CUT_OFF, gateway_messages=(SAID_BEFORE, back)))
+    assert report["upstream_link_down"] is False and "reason" not in report["pairs"]["EUR.USD"]
+    assert [n["code"] for n in report["notices"]] == ["ib:2110", "ib:1102"]
+
+
+def test_a_pair_the_venue_does_not_have_is_not_blamed_on_the_link_even_while_it_is_down():
+    """Only a request that went unanswered is explained by the link; an answer of "no such contract" is an answer."""
+    report, _ = run(config=FakeConfig(depth_levels=5, gateway_messages=(SAID_BEFORE,)))
+    yen = report["pairs"]["USD.JPY"]
+    assert "USD.JPY" in yen["forms"]["cfd"]["reason"] and "reason" not in yen
+    assert report["upstream_link_down"] is False and yen["quotes"]["updates"] > 0
+
+
+def test_the_link_going_down_after_one_form_resolved_keeps_that_form_and_samples_nothing():
+    late = dataclasses.replace(CUT_OFF, unanswered_lookups=((T0 + 1, T0 + HOUR),))
+    clock, broker = a_venue(late)
+    real_lookup = broker.market.instrument
+
+    def lookup_that_takes_a_moment(pair, kind):
+        clock.advance(MS)
+        return real_lookup(pair, kind)
+
+    broker.market.instrument = lookup_that_takes_a_moment
+    report = Probe(broker, clock, FAST).run()
+    euro = report["pairs"]["EUR.USD"]
+    assert euro["forms"]["cash"]["resolves"] is True and euro["forms"]["cfd"] == {"resolves": False}
+    assert euro["quotes"] is None and "sampled_as" not in euro and report["upstream_link_down"] is True
+    assert report["proposed_config"]["pairs"] == []
+
+
+def test_a_healthy_run_is_the_same_report_with_the_gateways_greetings_in_its_notices():
+    """The messages a well gateway sends as the connection is made are collected, and change nothing else."""
+    greetings = ((T0, 2104, "a quote service is there:farm-a"), (T0, 2158, "the contract service is there:farm-c"))
+    plain, _ = run()
+    greeted, _ = run(config=FakeConfig(depth_levels=5, gateway_messages=greetings))
+    assert plain["upstream_link_down"] is False and plain["notices"] == []
+    assert all("reason" not in found for found in plain["pairs"].values())
+    assert [n["code"] for n in greeted["notices"]] == ["ib:2104", "ib:2158"]
+    assert {**greeted, "notices": []} == plain
+
+
+def test_the_command_exits_with_a_status_of_its_own_when_the_gateway_is_cut_off(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(probe, "_fake_venue", lambda pairs, window_ns: a_venue(CUT_OFF)[::-1])
+    target = tmp_path / "ibkr.yaml"
+    arguments = ["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path), "--orders"]
+    code = probe.main([*arguments, "--write-config", "--config-path", str(target)])
+    captured = capsys.readouterr()
+    assert code == probe.EXIT_UPSTREAM_DOWN == 3
+    assert json.loads(captured.out)["upstream_link_down"] is True
+    assert "connected to us but not to the broker's servers" in captured.err
+    assert not target.exists() and "nothing was measured" in captured.err
+    assert len(list(tmp_path.iterdir())) == 1, "the report is still written: it is the record of what was said"
+
+
+def test_the_command_still_exits_zero_on_a_healthy_run(tmp_path, capsys):
+    assert probe.main(["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path)]) == 0
+    assert json.loads(capsys.readouterr().out)["upstream_link_down"] is False
+
+
 # ---- the lock -------------------------------------------------------------------------------------------------------
 
 
@@ -166,9 +282,6 @@ def test_the_probe_refuses_through_the_lock_when_the_account_is_not_paper(accoun
 
 
 # ---- the order round trip -------------------------------------------------------------------------------------------
-
-WITH_ORDERS = dataclasses.replace(FAST, orders=True)
-
 
 def test_with_orders_one_far_away_minimum_size_order_per_pair_is_placed_timed_and_cancelled():
     report, broker = run(WITH_ORDERS)

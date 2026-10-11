@@ -7,6 +7,10 @@ forward to the next thing that happens, which is what lets a plain polling loop 
 
 While the link is down nothing is delivered: quotes in the gap are gone, and what happened to orders is found
 afterwards with `open_orders` and `executions_since`, exactly as with a real broker.
+
+It can also play a gateway that is up but cut off from the broker: `FakeConfig.gateway_messages` are the status
+messages it sends, as notices with the gateway's own codes, and during `FakeConfig.unanswered_lookups` an
+instrument lookup waits out its timeout and fails, as it does on a real gateway in that state.
 """
 from __future__ import annotations
 
@@ -60,6 +64,8 @@ class FakeBroker(GuardedVenue):
         self._link = False
         self._reported: dict[str, tuple[OrderState, int]] = {}
         self._pumped_ns = clock.now_ns()
+        self._messages = sorted(market.config.gateway_messages, key=lambda said: said[0])
+        self._said = 0
 
     @property
     def name(self) -> str:
@@ -83,6 +89,7 @@ class FakeBroker(GuardedVenue):
         self.market.advance(now)  # whatever happened while nobody was connected was never delivered
         self._pumped_ns = now
         self._link = True
+        self._say_what_is_due(now)
         return self.market.config.accounts
 
     def _close(self) -> None:
@@ -97,6 +104,7 @@ class FakeBroker(GuardedVenue):
         now = self._clock.now_ns()
         if not self._link:
             return
+        self._say_what_is_due(now)
         down_at = self.market.outage_start(self._pumped_ns, now)
         for happening in self.market.advance(now):
             if down_at is None or happening.at_ns < down_at:
@@ -113,9 +121,18 @@ class FakeBroker(GuardedVenue):
         candidates = [now + timeout_ns]
         if self._link and (next_at := self.market.next_at()) is not None:
             candidates.append(next_at)
+        if self._link and self._said < len(self._messages):
+            candidates.append(self._messages[self._said][0])
         if not self._link and self._retry_at is not None:
             candidates.append(self._retry_at)
         self._clock.advance_to(max(now, min(candidates)))
+
+    def _say_what_is_due(self, now: int) -> None:
+        """The gateway's status messages whose time has come, in order, each as a notice with the gateway's code."""
+        while self._said < len(self._messages) and self._messages[self._said][0] <= now:
+            _, code, text = self._messages[self._said]
+            self._said += 1
+            self._emit_notice(f"ib:{code}", text)
 
     # ---- what the broker says, as port events -------------------------------------------------------------------
 
@@ -170,6 +187,14 @@ class FakeBroker(GuardedVenue):
     # ---- the broker-facing half of the port ---------------------------------------------------------------------
 
     def _lookup(self, pair: str, kind: InstrumentKind) -> Instrument:
+        config, now = self.market.config, self._clock.now_ns()
+        if any(start <= now < end for start, end in config.unanswered_lookups):
+            # Cut off from the broker: the request is accepted and never answered, and the wait runs out.
+            if self._auto_advance:
+                assert isinstance(self._clock, SimClock)
+                self._clock.advance(config.lookup_timeout_ns)
+            self._say_what_is_due(self._clock.now_ns())  # what the gateway said while the request waited
+            raise VenueUnavailable("the gateway did not answer: TimeoutError")
         found = self.market.instrument(pair, kind)
         if found is None:
             raise UnknownInstrument(f"the fake broker has no {pair} as {kind.value}")

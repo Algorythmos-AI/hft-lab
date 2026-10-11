@@ -137,6 +137,17 @@ def test_losing_the_brokers_side_of_the_gateway_is_a_lost_connection_though_the_
     assert len([c for c in h.stub.calls if c.startswith("handshake")]) == 1, "the socket was never dropped"
 
 
+def test_losing_the_brokers_side_is_also_said_as_a_notice_whether_or_not_a_connection_is_established():
+    """During the handshake the lost connection is not an event of its own; the notice is all a reader gets."""
+    h, _ = ready(backoff=Backoff())
+    h.stub.say(1100, "lost")
+    assert [(n.code, n.message) for n in of(h.venue.poll(), VenueNotice)] == [("ib:1100", "lost")]
+    early = Harness("ibkr")
+    early.stub.say(1100, "lost")
+    assert early.venue.state is S.DISCONNECTED
+    assert brief(early.venue.poll()) == [("notice", "ib:1100")]
+
+
 @pytest.mark.parametrize("code", [1101, 1102])
 def test_when_the_gateway_is_back_the_lock_is_passed_again_and_the_caller_reconciles(code):
     h, instrument = ready(backoff=Backoff())

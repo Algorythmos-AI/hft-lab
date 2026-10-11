@@ -15,6 +15,14 @@ By default it places NO orders. With --orders it places one minimum-size limit o
 below the bid so that it cannot trade, waits for the acknowledgement, cancels it and times both. Whatever
 happens in between, it cancels in a `finally` and then checks that nothing of its own is left working.
 
+The gateway can be connected to us and cut off from the broker. It then answers no lookup, and says why only
+in status messages. The probe reads those from the moment it connects (`hftlab.venues.ibkr.link` lists them),
+and when a lookup fails while the latest of them says the link is down, the pair gets that one plain reason,
+the report says `upstream_link_down`, no order is placed, and the command exits with status 3.
+
+Exit status: 0 done; 1 an order of the probe's is still working or a position changed; 2 refused, or the venue
+could not be probed at all; 3 the gateway was cut off from the broker, so the report measures nothing.
+
 It never overwrites config/venues/ibkr.yaml unless told to with --write-config. Every number in the report is
 an integer or decimal text: durations in microseconds, prices in the instrument's own units.
 """
@@ -52,6 +60,7 @@ from hftlab.core import (
 )
 from hftlab.core._checks import pair as check_pair
 from hftlab.safety.lock import PaperOnlyError
+from hftlab.venues.ibkr.link import DOWN_REASON, UpstreamLink
 from hftlab.venues.port import (
     ConnectionEvent,
     ConnectionState,
@@ -60,6 +69,7 @@ from hftlab.venues.port import (
     VenueError,
     VenueEvent,
     VenueNotice,
+    VenueUnavailable,
 )
 
 SCHEMA = 1
@@ -67,6 +77,9 @@ SECOND = 1_000_000_000
 SLEEVE = "probe"
 KINDS = (InstrumentKind.CASH, InstrumentKind.CFD)
 CONFIG_PATH = Path("config/venues/ibkr.yaml")
+EXIT_ATTENTION = 1
+EXIT_REFUSED = 2
+EXIT_UPSTREAM_DOWN = 3
 NOT_MEASURED = (
     "commissions: a commission is only reported on a fill, and the probe never lets its orders fill",
     "weekly login: what happens at the weekly reset has to be watched over a week, not sampled",
@@ -148,6 +161,8 @@ class Probe:
         self.notices: list[dict[str, str]] = []
         self.disconnects = 0
         self.last_quote: dict[str, Quote] = {}
+        self.link = UpstreamLink()
+        self.upstream_down = False  # a lookup failed while the gateway's latest word was that it is cut off
         self._stuck = 0
 
     def run(self) -> dict[str, Any]:
@@ -155,6 +170,7 @@ class Probe:
         venue = self.venue
         venue.connect()
         try:
+            self._drain()  # what the gateway said while the connection was being made
             started = self.clock.now_ns()
             accounts = venue.managed_accounts()
             report: dict[str, Any] = {
@@ -166,9 +182,12 @@ class Probe:
                 "pairs": {pair: self._pair(pair) for pair in self.settings.pairs},
                 "orders": None,
             }
-            if self.settings.orders:
+            if self.settings.orders and self.upstream_down:
+                report["orders"] = {"placed": False, "reason": DOWN_REASON}
+            elif self.settings.orders:
                 report["orders"] = self._orders(report["pairs"])
             report["disconnects_during_probe"] = self.disconnects
+            report["upstream_link_down"] = self.upstream_down
             for notice in self.notices:  # the gateway may name an account in its own words; the report does not
                 for account in accounts:
                     notice["message"] = notice["message"].replace(account, mask(account))
@@ -198,10 +217,15 @@ class Probe:
             out += self._step(until_ns)
         return out
 
+    def _drain(self) -> None:
+        """Read what the venue has already queued, without waiting: its messages arrive at any time."""
+        self._note(self.venue.poll(0))
+
     def _note(self, events: Sequence[VenueEvent]) -> None:
         for event in events:
             if isinstance(event, VenueNotice):
                 self.notices.append({"code": event.code, "message": event.message})
+                self.link.hear(event.code, event.message)
             elif isinstance(event, ConnectionEvent) and event.state is ConnectionState.DISCONNECTED:
                 self.disconnects += 1
             elif isinstance(event, Quote):
@@ -226,6 +250,9 @@ class Probe:
             try:
                 instrument = self.venue.instrument(pair, kind)
             except VenueError as exc:
+                self._drain()  # the gateway may have said why while the request waited
+                if isinstance(exc, VenueUnavailable) and self.link.down:
+                    return self._cut_off(forms)
                 forms[kind.value.lower()] = {"resolves": False, "reason": str(exc)}
                 continue
             instruments[kind] = instrument
@@ -244,6 +271,16 @@ class Probe:
             result["depth"] = self._depth(sampled)
             result["historical_ticks"] = self._history(sampled)
         return result
+
+    def _cut_off(self, forms: dict[str, Any]) -> dict[str, Any]:
+        """A pair whose lookup went unanswered while the gateway was cut off: one reason, and nothing sampled.
+
+        The forms not yet asked for are not asked: each would wait out the same timeout for the same reason.
+        """
+        self.upstream_down = True
+        for kind in KINDS:
+            forms.setdefault(kind.value.lower(), {"resolves": False})
+        return {"forms": forms, "reason": DOWN_REASON, "quotes": None, "depth": None, "historical_ticks": None}
 
     def _quotes(self, instrument: Instrument) -> dict[str, Any]:
         self.venue.subscribe_quotes(instrument)
@@ -411,7 +448,7 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
     pairs = []
     for pair, found in report["pairs"].items():
         forms = [name for name, form in found["forms"].items() if form["resolves"]]
-        if not forms:
+        if not forms or "sampled_as" not in found:
             continue
         chosen = found["forms"][found["sampled_as"]]
         gaps = (found["quotes"] or {}).get("gap_us")
@@ -505,10 +542,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         pairs = tuple(check_pair(pair.strip()) for pair in args.pairs.split(",") if pair.strip())
     except ValueError as exc:
         print(f"probe: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_REFUSED
     if not pairs or args.window_seconds < 1:
         print("probe: at least one pair and a window of at least one second are needed", file=sys.stderr)
-        return 2
+        return EXIT_REFUSED
     settings = ProbeSettings(pairs=pairs, window_ns=args.window_seconds * SECOND, orders=args.orders)
     if args.fake:
         venue, clock = _fake_venue(pairs, settings.window_ns)
@@ -518,10 +555,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = Probe(venue, clock, settings).run()
     except PaperOnlyError as exc:
         print(f"probe: refused by the paper-only lock: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_REFUSED
     except VenueError as exc:
         print(f"probe: the venue could not be probed: {exc}", file=sys.stderr)
-        return 2
+        return EXIT_REFUSED
 
     prefix = "ibkr" if venue.name == "ibkr_paper" else venue.name
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -530,16 +567,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.write_text(text + "\n", encoding="utf-8")
     print(text)
     print(f"probe: report written to {out}", file=sys.stderr)
-    if args.write_config:
+    if args.write_config and report["upstream_link_down"]:
+        print(f"probe: {args.config_path} left as it is: nothing was measured", file=sys.stderr)
+    elif args.write_config:
         if args.fake and args.config_path == CONFIG_PATH:
             print("probe: a dry run never overwrites the real capability file", file=sys.stderr)
-            return 2
+            return EXIT_REFUSED
         write_config(args.config_path, report["proposed_config"], out.name)
         print(f"probe: {args.config_path} overwritten with the proposed content", file=sys.stderr)
     orders = report["orders"] or {}
     if orders.get("left_working") or orders.get("positions_changed"):
         print("probe: ATTENTION: an order is still working or a position changed. Check the account.", file=sys.stderr)
-        return 1
+        return EXIT_ATTENTION
+    if report["upstream_link_down"]:
+        print(f"probe: {DOWN_REASON}. This report measures nothing; see the runbook.", file=sys.stderr)
+        return EXIT_UPSTREAM_DOWN
     return 0
 
 

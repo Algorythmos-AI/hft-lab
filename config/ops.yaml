@@ -18,6 +18,15 @@ backup:
                                 #   [restic, backup, --tag, "{tag}", --files-from, "{list}"]
                                 # A command that forgets, prunes or deletes is refused.
 
+# When the learning loop's two weekend jobs start (ADR 0023, docs/runbooks/learning.md). The unit files are
+# rendered from these two values: after changing one, run `python -m hftlab.ops.units render --out deploy/systemd`.
+# Both are PLACEHOLDERS and both are the owner's: training must not overlap the other desks' weekend jobs on
+# the host, which nobody but the owner knows. The market is shut from Friday 17:00 to Sunday 17:15 New York.
+# Neither timer is enabled by the install script.
+learning:
+  train_at: "Sat *-*-* 03:00:00 America/New_York"     # PLACEHOLDER. A Saturday, any time
+  promote_at: "Sun *-*-* 12:00:00 America/New_York"   # PLACEHOLDER. A Sunday before 17:00, after training
+
 # The state of each phase of docs/roadmap.md, as the status snapshot reports it: `done` when the phase's exit
 # gate is met, `open` when its code is written and its gate is not met, `not_started` otherwise. It changes in
 # the same pull request as the roadmap, and a test compares the two.

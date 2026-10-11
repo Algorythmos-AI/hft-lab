@@ -1,0 +1,11 @@
+[Unit]
+Description=Start HFT Lab promote: Sunday, before the week opens; the time is the owner's (config/ops.yaml)
+
+[Timer]
+OnCalendar=Sun *-*-* 12:00:00 America/New_York
+AccuracySec=10s
+Persistent=false
+Unit=hft-promote.service
+
+[Install]
+WantedBy=timers.target

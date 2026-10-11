@@ -1,0 +1,11 @@
+[Unit]
+Description=Start HFT Lab train: Saturday, with the market shut; the time is the owner's (config/ops.yaml)
+
+[Timer]
+OnCalendar=Sat *-*-* 03:00:00 America/New_York
+AccuracySec=10s
+Persistent=false
+Unit=hft-train.service
+
+[Install]
+WantedBy=timers.target

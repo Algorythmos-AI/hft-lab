@@ -6,6 +6,7 @@ always rounded against us, so the model can be too costly by less than a million
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -22,6 +23,11 @@ NORMAL: Final = "normal"
 WIDENED: Final = "widened"
 NO_FILL: Final = "no_fill"
 _BPS_X100: Final = 1_000_000  # a rate in hundredths of a basis point is millionths of the notional
+# placeholder: round figures, no result is a result. decided: set by a decision record, each value saying whether
+# it was measured, published or chosen. measured: every value from fills and timings of our own.
+PLACEHOLDER: Final = "placeholder"
+STATUSES: Final = (PLACEHOLDER, "decided", "measured")
+_DECISION = re.compile(r"HFT-DEC-[0-9]{4}")
 
 
 class CostModelError(ValueError):
@@ -44,9 +50,17 @@ class CostModel:
     widen_before_ns: int
     widen_after_ns: int
     spread_multiplier_x100: int
+    # Where a pair's base currency has a minimum of its own (the venue's minimum for good pricing differs by
+    # currency), it stands in for `min_order_size` in that pair.
+    min_order_size_by_base: Mapping[str, int] = MappingProxyType({})
 
     def as_dict(self) -> dict[str, object]:
-        """Every parameter as a plain value: what a journal keeps beside a result, so the two cannot part."""
+        """Every parameter as a plain value: what a journal keeps beside a result, so the two cannot part.
+
+        `min_order_size_by_base` is left out when it is empty, so a model without one is written as it always
+        was, and every hash taken over these values before the key existed still holds.
+        """
+        by_base = dict(sorted(self.min_order_size_by_base.items()))
         return {
             "effective_from": self.effective_from,
             "placeholder": self.placeholder,
@@ -62,6 +76,7 @@ class CostModel:
             "widen_before_ns": self.widen_before_ns,
             "widen_after_ns": self.widen_after_ns,
             "spread_multiplier_x100": self.spread_multiplier_x100,
+            **({"min_order_size_by_base": by_base} if by_base else {}),
         }
 
     def notional_micro(self, price: int, quantity: int, instrument: Instrument) -> int:
@@ -77,9 +92,13 @@ class CostModel:
         by_rate = -(-notional_micro * self.commission_rate_bps_x100 // _BPS_X100)
         return max(by_rate, self.commission_minimum[currency])
 
+    def least(self, base: str) -> int:
+        """The model's own minimum for a pair with this base currency, in base-currency units."""
+        return self.min_order_size_by_base.get(base, self.min_order_size)
+
     def minimum_size(self, instrument: Instrument) -> int:
         """The smallest order it takes: the larger of the venue's and the model's minimum, on the size grid."""
-        smallest = max(instrument.min_order_size, self.min_order_size)
+        smallest = max(instrument.min_order_size, self.least(instrument.base))
         return -(-smallest // instrument.size_increment) * instrument.size_increment
 
     def phase(self, at_ns: int) -> str:
@@ -151,13 +170,22 @@ def load_cost_model(path: Path) -> CostModel:
     minimum = commission.get("minimum")
     if not isinstance(minimum, dict) or not minimum:
         raise CostModelError("commission.minimum must give a minimum per quote currency")
+    by_base = loaded.get("min_order_size_by_base", {})
+    if not isinstance(by_base, dict) or not all(isinstance(code, str) and len(code) == 3 for code in by_base):
+        raise CostModelError("min_order_size_by_base must map a base currency to a size")
     low, high = _whole(latency, "min", "latency_us"), _whole(latency, "max", "latency_us")
     multiplier = _decimal(rollover.get("spread_multiplier"), "rollover.spread_multiplier", 2)
     if high < low or multiplier < 100 or not isinstance(loaded.get("effective_from"), str):
         raise CostModelError("latency max below min, a spread multiplier below 1, or no effective_from date")
+    status, decision = loaded.get("status"), loaded.get("decision")
+    if status not in STATUSES:
+        raise CostModelError(f"status must be one of {', '.join(STATUSES)}, not {status!r}")
+    named = isinstance(decision, str) and _DECISION.fullmatch(decision) is not None
+    if (status != PLACEHOLDER and not named) or (decision is not None and not named):
+        raise CostModelError("a cost model that is not a placeholder names the decision record that set it")
     return CostModel(
         effective_from=loaded["effective_from"],
-        placeholder=loaded.get("status") != "measured",
+        placeholder=status == PLACEHOLDER,
         latency_min_ns=low * 1_000,
         latency_max_ns=high * 1_000,
         commission_rate_bps_x100=_decimal(commission.get("rate_bps"), "commission.rate_bps", 2),
@@ -172,4 +200,7 @@ def load_cost_model(path: Path) -> CostModel:
         widen_before_ns=_whole(rollover, "widen_before_min", "rollover") * MINUTE,
         widen_after_ns=_whole(rollover, "widen_after_min", "rollover") * MINUTE,
         spread_multiplier_x100=multiplier,
+        min_order_size_by_base=MappingProxyType(
+            {code: _whole(by_base, code, "min_order_size_by_base") for code in sorted(by_base)}
+        ),
     )

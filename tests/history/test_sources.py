@@ -24,10 +24,10 @@ from tests.history.kit import a_folder, run
 from tests.learn.kit import CONFIG, HORIZON, SATURDAY, dataset, learn_settings, planted, record, weeks
 from tests.lineup import test_decide
 from tests.shadow.test_runner import shadow_config
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.venues.kit import EURUSD, T0, plain_costs
 
-SHIPPED = ["--cost-model", str(ROOT / "config/cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
+SHIPPED = ["--cost-model", str(PLACEHOLDER / "cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
            "--feasibility", str(ROOT / "config/feasibility.yaml")]  # fmt: skip
 SIZED = {"time": 1, "bid": 2, "ask": 3, "bid_size": 4, "ask_size": 5}
 A, B = "imported:vendor-a", "imported:vendor-b"

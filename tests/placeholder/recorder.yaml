@@ -1,0 +1,19 @@
+# The recorder's settings. Read by `python -m hftlab.record`.
+#
+# The two sizes that protect the host are PLACEHOLDERS: they are set from the host's measured disk budget
+# before the recorder is installed (ADR 0007), not from this file's first draft.
+root: var/record                # git-ignored; never inside a tracked path
+
+pairs:                          # what to record, and in which form (cash or cfd), until the probe decides
+  - {pair: EUR.USD, form: cash}
+  - {pair: USD.JPY, form: cash}
+
+quota_bytes: 2000000000         # PLACEHOLDER. The recorder stops, loudly, rather than write past this
+keep_hours: 240                 # a rolling ten days stay here; older closed hours go to the offload
+offload_dir: null               # a directory to hand old segments to; null: nothing is ever deleted
+
+block_records: 256              # a block is flushed when it holds this many records ...
+flush_ms: 250                   # ... or after this long, whichever comes first: the most a kill can lose
+heartbeat_ms: 1000              # a quiet book is recorded as quiet this often
+gap_threshold_s: 5              # a silence longer than this is a gap and must have a reason
+fsync: true

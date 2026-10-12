@@ -33,7 +33,7 @@ from tests.learn.kit import CONFIG, SATURDAY, WIN, dataset, features, labels, le
 from tests.learn.shapes import NOISE, ORDER, ordered_weeks  # noqa: E402
 from tests.learn.test_train import go, the_report  # noqa: E402
 from tests.models.test_net import a_model  # noqa: E402
-from tests.support import ROOT  # noqa: E402
+from tests.support import PLACEHOLDER, ROOT  # noqa: E402
 
 TINY = Network(window=3, kernel=2, filters=2, hidden=3, epochs=2, batch_rows=8, learning_rate_ppm=10_000, l2_ppm=5_000,
                clip=3, cap=2, seed=1)  # fmt: skip
@@ -382,7 +382,7 @@ def test_a_seq_run_in_a_process_of_its_own_says_what_it_peaked_at_and_how_long_i
         "import sys\nfrom hftlab.core import WallClock\nfrom hftlab.learn import train\n"
         "class Weekend(WallClock):\n    def now_ns(self):\n"
         f"        return {SATURDAY} + super().now_ns() % 10**12\n"
-        f"sys.exit(train.main({['--config', str(config), '--cost-model', str(ROOT / 'config/cost_model.yaml')]!r} + "
+        f"sys.exit(train.main({['--config', str(config), '--cost-model', str(PLACEHOLDER / 'cost_model.yaml')]!r} + "
         f"{['--calendar', str(ROOT / 'config/calendar'), '--feasibility', str(ROOT / 'config/feasibility.yaml')]!r} + "
         f"{['--store', str(trained / 'rec'), '--trial-registry', str(tmp_path / 'registry.yaml')]!r}, Weekend()))\n"
     )

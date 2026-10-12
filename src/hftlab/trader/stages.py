@@ -31,7 +31,7 @@ Everything here is a function of the journal, the calendar and the times it is h
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -126,10 +126,12 @@ class Stages:
         calendar: Calendar,
         in_force: bool,
         min_day_ns: int | None,
-        cannot_open: str = "",
+        cannot_open: str | Callable[[], str] = "",
     ) -> None:
         self._journal, self._rollout, self._calendar = journal, dict(rollout), calendar
-        self._cannot_open = cannot_open  # why the account cannot open what the sleeves need; "": it can
+        # Why the account cannot open what the sleeves need; "": it can. Asked at each close where it can change
+        # while the trader runs: an account with a float can open them once the float is funded (ADR 0031).
+        self._cannot_open = cannot_open if callable(cannot_open) else (lambda: cannot_open)
         self._in_force, self._min_day_ns = in_force, min_day_ns
         self._stage = {name: ladder.start for name, ladder in self._rollout.items()}
         self._days: dict[str, list[tuple[int, str, bool]]] = {name: [] for name in self._rollout}  # day, stage, clean
@@ -284,8 +286,8 @@ class Stages:
         if self.clean_run(sleeve) < rule.clean_days:
             return None
         held, detail = "", ""
-        if self._cannot_open:
-            held, detail = ACCOUNT_CANNOT_OPEN, self._cannot_open
+        if why := self._cannot_open():
+            held, detail = ACCOUNT_CANNOT_OPEN, why
         elif not self._in_force:
             held = LIMITS_NOT_IN_FORCE
         elif latched or broken:

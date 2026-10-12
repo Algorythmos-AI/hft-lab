@@ -108,8 +108,10 @@ def test_the_design_records_exist_in_order():
     topics += ["risk-gate", "order-manager", "host-layer", "snapshot-publish", "trader-loop"]
     topics += ["features-and-labels", "validation", "model-file", "weekly-learning-loop"]
     topics += ["directional-change", "gradient-boosting", "sleeve-state", "deploy-gate", "imported-history"]
-    topics += ["sequence-network"]
-    assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, len(topics) + 1)]
+    topics += ["sequence-network", "spot-inventory"]
+    taken_elsewhere = {30}  # a number given to a record that is written on another branch and not here yet
+    wanted = [n for n in range(1, len(topics) + len(taken_elsewhere) + 1) if n not in taken_elsewhere]
+    assert [name[:4] for name in records] == [f"{n:04d}" for n in wanted]
     for name, topic in zip(records, topics, strict=True):
         text = read(f"docs/adr/{name}")
         assert topic in name and text.startswith(f"# ADR {name[:4]}: "), name
@@ -158,16 +160,21 @@ def test_the_never_build_list_names_what_the_plan_rules_out():
         assert item in text, item
 
 
-def test_the_placeholders_say_they_are_not_in_force():
+def test_what_is_in_force_names_the_decision_record_that_set_it_and_says_it_is_a_proposal():
     risk = yaml.safe_load(read("config/risk.yaml"))
-    assert risk["status"] == "placeholder" and risk["in_force"] is False
-    assert "NOT YET IN FORCE" in read("config/risk.yaml")
+    assert (risk["status"], risk["in_force"], risk["decision"]) == ("decided", True, "HFT-DEC-0001")
     costs = yaml.safe_load(read("config/cost_model.yaml"))
-    text = read("config/cost_model.yaml")
-    assert costs["status"] == "placeholder" and "HFT-EXP-0007" in text and "HFT-EXP-0008" in text
-    assert "A DECISION RECORD MUST SET THESE NUMBERS" in text, "the measured medians are a comment, not a value"
-    assert (costs["version"], costs["effective_from"], costs["min_order_size"]) == (1, "2026-10-11", 20_000)
-    assert costs["latency_us"] == {"min": 20_000, "max": 80_000} and costs["commission"]["rate_bps"] == "0.20"
+    assert (costs["status"], costs["decision"]) == ("decided", "HFT-DEC-0002")
+    assert "HFT-EXP-0008" in read("config/cost_model.yaml") and "NOT MEASURED" in read("config/cost_model.yaml")
+    assert "HFT-DEC-0003" in read("config/trader.yaml")
+    records = sorted(path.name for path in (ROOT / "research" / "decisions").glob("HFT-DEC-*.md"))
+    assert [name[:12] for name in records] == ["HFT-DEC-0001", "HFT-DEC-0002", "HFT-DEC-0003"]
+    for name, file in zip(records, ("risk.yaml", "cost_model.yaml", "trader.yaml"), strict=True):
+        text = read(f"research/decisions/{name}")
+        assert "approved_by: owner" in text and "proposal" in text and f"config/{file}" in text, name
+        assert "PROPOSAL" in read(f"config/{file}") or file == "trader.yaml", file
+    assert (costs["version"], costs["effective_from"], costs["min_order_size"]) == (1, "2026-10-12", 20_000)
+    assert costs["latency_us"] == {"min": 100_000, "max": 400_000} and costs["commission"]["rate_bps"] == "0.20"
 
 
 def test_the_capability_file_claims_only_what_was_measured():

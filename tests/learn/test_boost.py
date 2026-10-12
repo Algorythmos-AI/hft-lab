@@ -28,7 +28,7 @@ from hftlab.models import BUY, SELL, ModelRegistry, Trees, TreeScorer, parse, sc
 from tests.learn.kit import IMBALANCE, SATURDAY, WIN, dataset, learn_settings, record  # noqa: E402
 from tests.learn.shapes import BAND, NOISE, shaped_weeks  # noqa: E402
 from tests.learn.test_train import go, the_report  # noqa: E402
-from tests.support import ROOT  # noqa: E402
+from tests.support import PLACEHOLDER, ROOT  # noqa: E402
 
 SMALL = Boosting(trees=40, max_depth=4, leaves=12, learning_rate_ppm=100_000, min_leaf_rows=20, bins=63,
                  l2_ppm=1_000_000, leaf_scale=1000, seed=1)  # fmt: skip
@@ -255,7 +255,7 @@ def test_a_gbm_run_in_a_process_of_its_own_peaks_far_inside_the_hosts_cap(traine
     (tmp_path / "registry.yaml").write_text("history: []\n")
     script = (
         "import sys\nfrom hftlab.core import SimClock\nfrom hftlab.learn import train\n"
-        f"sys.exit(train.main({['--config', str(config), '--cost-model', str(ROOT / 'config/cost_model.yaml')]!r} + "
+        f"sys.exit(train.main({['--config', str(config), '--cost-model', str(PLACEHOLDER / 'cost_model.yaml')]!r} + "
         f"{['--calendar', str(ROOT / 'config/calendar'), '--feasibility', str(ROOT / 'config/feasibility.yaml')]!r} + "
         f"{['--store', str(trained / 'rec'), '--trial-registry', str(tmp_path / 'registry.yaml')]!r}, "
         f"SimClock({SATURDAY})))\n"

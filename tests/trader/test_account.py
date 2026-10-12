@@ -14,19 +14,19 @@ from hftlab.trader import __main__ as cli
 from hftlab.trader.config import load
 from hftlab.trader.stages import ACCOUNT_CANNOT_OPEN, DAY_NS
 from hftlab.venues import capability
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.trader.kit import SECOND, Desk, put_stage
 from tests.trader.test_command import FILES, run
 from tests.trader.test_stages import HOUR, MONDAY, a_day
 
-SHIPPED = load(ROOT / "config" / "trader.yaml")
+SHIPPED = load(PLACEHOLDER / "trader.yaml")  # the settings before any decision: no float in the limits
 VENUE_FILE = ROOT / capability.path_for(SHIPPED.venue)
 BLOCKED = capability.cannot_open(capability.load(VENUE_FILE), SHIPPED.pairs)
 EARNED = Rollout("shadow", Rule(1, "HFT-DEC-9998"), Rule(1, "HFT-DEC-9999"))  # a rule that IS met after one day
 YEN = {"USD.JPY": "buy refused (currency_not_permitted), sell not tested, by HFT-EXP-0008"}
 
 
-def test_with_the_shipped_files_every_sleeve_stays_in_shadow_and_the_refusal_names_the_reason(tmp_path):
+def test_with_the_shipped_capability_file_and_no_float_every_sleeve_stays_in_shadow_and_is_told_why(tmp_path):
     """Give every shipped sleeve a rule that is met, limits in force and clean days: the account still holds it."""
     assert BLOCKED == {"EUR.USD": "buy refused (insufficient_cash_quote_currency), sell not tested, by HFT-EXP-0008"}
     ladders = dict.fromkeys(SHIPPED.names, EARNED)

@@ -1,0 +1,115 @@
+# The trader's settings. Read by `python -m hftlab.trader` (ADR 0019, docs/runbooks/trader.md).
+#
+# AS SHIPPED THIS FILE TRADES NOTHING ON PAPER. Every sleeve starts in `shadow`, every promotion rule below is
+# null, and a null rule is never met. On top of that the risk limits (config/risk.yaml) are not in force, and
+# while they are not the trader runs in shadow-only mode: it holds no object that could send an order.
+#
+# A sleeve moves up only by its rule: the number of clean trading days in a row, AND the decision record
+# (HFT-DEC-NNNN, `approved_by: owner`) that approved the step, AND the limits in force. Neither number below
+# is chosen here. Each is set by the decision record that names it.
+status: placeholder             # placeholder | decided
+state_dir: var/trader           # git-ignored: the outbox, the journals, the tapes and the status file
+venue: ibkr_paper               # the registered paper venue; nothing else is accepted
+seed: 1                         # seeds the shadow venue's latency draws
+
+pairs:
+  - {pair: EUR.USD, form: cash}
+
+poll_ms: 50                     # ENGINEERING DEFAULT. How long one poll of the venue may wait
+beat_ms: 1000                   # ENGINEERING DEFAULT. How often the switches are read and a quiet book confirmed
+reconcile_seconds: 60           # the plan's number: the venue's positions and fills against the broker book
+close_retry_seconds: 5          # ENGINEERING DEFAULT. The least time between two closes the trader proposes for a line
+fsync: true                     # the outbox and the state journals reach the disk before an order is sent
+
+# The sleeves, written as in config/shadow.yaml. The control sleeve's three numbers are PLACEHOLDERS: a control
+# run that is compared with anything takes them from its registered experiment (research/experiments/).
+sleeves:
+  - {name: idle, kind: idle}
+  - name: control
+    kind: control
+    seed: 1
+    entry_per_million: 200      # PLACEHOLDER
+    hold_seconds: 60            # PLACEHOLDER
+    retry_seconds: 10           # PLACEHOLDER
+
+  # The ML places (ADR 0023): the champion's and three challengers', as many as the registered shadow weeks name
+  # (HFT-EXP-0003, HFT-EXP-0004, HFT-EXP-0006). A place names no model: the lineup journal in the state directory
+  # says which model stands in it, by hash, and an empty place runs idle. With nothing registered all four run idle.
+  # `scorer` is where a row is scored: in_process, or process, a child of the trader behind a timeout (its
+  # times are `scorer:` in config/learn.yaml). in_process is the shipped value.
+  - {name: ml, kind: ml, slot: champion, margin_micro: 0, retry_seconds: 10, scorer: in_process}                 # PLACEHOLDER margin
+  - {name: ml-challenger-1, kind: ml, slot: challenger-1, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
+  - {name: ml-challenger-2, kind: ml, slot: challenger-2, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
+  - {name: ml-challenger-3, kind: ml, slot: challenger-3, margin_micro: 0, retry_seconds: 10, scorer: in_process} # PLACEHOLDER margin
+
+  # The Directional Change sleeve (ADR 0024): a rule-based baseline, not a claimed edge. EVERY NUMBER BELOW IS A
+  # PLACEHOLDER. A run that is compared with anything takes its numbers from its registered experiment
+  # (research/experiments/). It has seen no real data.
+  - name: directional-change
+    kind: directional_change
+    price: mid                  # the series the events are detected on: half the sum of bid and ask. The one value
+    variant: trend              # PLACEHOLDER. trend | contrarian
+    threshold_percent: "0.10"   # PLACEHOLDER. IN PERCENT OF THE PRICE, as a quoted decimal: "0.10" is one thousandth
+    overshoot_multiple: null    # PLACEHOLDER. contrarian only: thresholds of overshoot before it enters, quoted
+    max_hold_seconds: 3600      # PLACEHOLDER. A position older than this is closed
+    min_spread_ratio: "5"       # PLACEHOLDER. No entry unless the threshold is worth this many quoted spreads
+    warm_up_events: 2           # PLACEHOLDER. Events discarded after a start or a gap
+    gap_seconds: 10             # PLACEHOLDER. A book unconfirmed for longer interrupts the series
+    retry_seconds: 10           # PLACEHOLDER. The least time between two orders after one came to nothing
+    max_attempts: 1             # PLACEHOLDER. Entry orders one event may get
+
+registry: var/learn             # models/ and reports/, each file named by its SHA-256; written by the training run
+
+# The event tape (hftlab.trader.tape): a session's turns go into parts, a new one at each UTC midnight and when
+# one is full. Closed parts are compressed by the hourly housekeeping unit. All tapes together stay under the
+# quota, and the quota never stops the trader watching a position (hftlab.trader.room, ADR 0027's addendum):
+#   - from soft_percent of the quota on, nothing is opened: every sleeve is on exits only;
+#   - from the hard limit on, every position is closed, and the session ends when the broker book is flat. The
+#     hard limit is the quota less a reserve worked out from config/risk.yaml: what the tape can take in
+#     flatten_seconds. A start is refused when the quota cannot hold that reserve above the soft limit;
+#   - when the closing takes longer than flatten_seconds the owner is paged and the trader stays up.
+# Nothing removes a tape.
+tape:
+  part_bytes: 64000000          # ENGINEERING DEFAULT. A part is closed at the first turn after it has grown to this
+  quota_bytes: 1000000000       # PLACEHOLDER. Set from the host's measured disk budget before the trader runs (ADR 0007)
+  soft_percent: 90              # PLACEHOLDER. The share of the quota at which entries stop and the owner is paged
+  flatten_seconds: 300          # PLACEHOLDER. How long the closing at the hard limit may take before the owner is paged
+
+clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
+
+rollout:
+  idle:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  control:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  directional-change:                                 # a baseline to be judged (ADR 0024): shadow
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml-challenger-1:                                    # a challenger is judged in shadow, and stays there
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml-challenger-2:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
+  ml-challenger-3:
+    start: shadow
+    promote:
+      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met

@@ -90,17 +90,22 @@ class Desk:
         start: bool = True,
         scorer_times=None,
         edge: dict[str, object] | None = None,
+        traded=TRADED,
+        pairs=PAIRS,
+        risk=None,
     ) -> None:
         self.folder, self.paper, self.scorer_times = folder, paper, scorer_times
+        self.traded, self.pairs = tuple(traded), tuple(pairs)  # what the broker lists, and what the trader asks for
         # How the tape is cut and counted: part_bytes, quota_bytes, soft_bytes, reserve_bytes, fsync. What is not
         # given here is what the settings and the limits give, as the command works it out.
         self.edge_options = edge or {}
         self.cannot_open: dict[str, str] | None = None  # what the capability file holds against the pairs, if given
+        self.needs_float: dict[str, str] | None = None  # and what it holds only until a float is funded (ADR 0031)
         self.settings: Settings = parse(settings or raw_settings())
-        self.risk = limits({**WIDE, **(changes or {})}) if paper else None
+        self.risk = (risk or limits({**WIDE, **(changes or {})})) if paper else None
         self.costs = costs or plain_costs()
         self.clock = SimClock(at_ns)
-        self.market = FakeMarket(TRADED, config, reject=reject, seed=3)
+        self.market = FakeMarket(self.traded, config, reject=reject, seed=3)
         self.switched: set[str] = set()
         self.pages = Pages()
         self.until = at_ns
@@ -122,7 +127,7 @@ class Desk:
         source = self.broker if self.paper else MarketDataView(self.broker)
         options = {**room.edge_options(self.settings, self.risk), **self.edge_options}
         self.edge = LiveEdge(
-            source, self.clock, pairs=PAIRS, switches=lambda: frozenset(self.switched),
+            source, self.clock, pairs=self.pairs, switches=lambda: frozenset(self.switched),
             requests=self.folder / "requests", should_stop=lambda: self.clock.now_ns() >= self.until,
             venue=self.broker if self.paper else None, **options,
         )  # fmt: skip
@@ -133,7 +138,7 @@ class Desk:
         self.trader = Trader(
             self.edge, self.settings, self.edge.open(), model=self.costs, calendar=Calendar(), risk=self.risk,
             notify=self.pages, config_digest=DIGEST, folder=self.folder, scorer_times=self.scorer_times,
-            cannot_open=self.cannot_open,
+            cannot_open=self.cannot_open, needs_float=self.needs_float,
         )  # fmt: skip
         return self.trader
 
@@ -194,7 +199,7 @@ class Desk:
     def replay(self, scratch: Path):
         return replay_day(
             self.day(), scratch, self.settings, model=self.costs, calendar=Calendar(), risk=self.risk,
-            config_digest=DIGEST,
+            config_digest=DIGEST, cannot_open=self.cannot_open, needs_float=self.needs_float,
         )  # fmt: skip
 
     def ask(self, what: str, subject: str, value: str = "", operator: str = "owner") -> None:

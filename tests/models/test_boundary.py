@@ -18,7 +18,7 @@ from hftlab.models import BUY, SELL, ModelRegistry, Tree, Trees
 from tests.models import test_net
 from tests.learn.kit import SATURDAY, learn_settings, record, weeks
 from tests.models.test_trees import a_model
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 
 ML_SET = ("lightgbm", "scipy", "narwhals")  # what requirements-ml.in adds to an environment
 ARRAYS = "numpy"  # in the base lock already, for the broker's client library; the adapter alone may import it
@@ -168,7 +168,7 @@ def run_training(folder, model: str) -> subprocess.CompletedProcess[str]:
     script = f"""
 from hftlab.core import SimClock
 from hftlab.learn import train
-argv = ["--config", {str(config)!r}, "--cost-model", {str(ROOT / "config/cost_model.yaml")!r},
+argv = ["--config", {str(config)!r}, "--cost-model", {str(PLACEHOLDER / "cost_model.yaml")!r},
         "--calendar", {str(ROOT / "config/calendar")!r}, "--feasibility", {str(ROOT / "config/feasibility.yaml")!r},
         "--store", {str(folder / "rec")!r}, "--trial-registry", {str(folder / "registry.yaml")!r}]
 code = train.main(argv, SimClock({SATURDAY}))

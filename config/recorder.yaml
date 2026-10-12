@@ -7,6 +7,8 @@ root: var/record                # git-ignored; never inside a tracked path
 pairs:                          # what to record, and in which form (cash or cfd), until the probe decides
   - {pair: EUR.USD, form: cash}
   - {pair: USD.JPY, form: cash}
+  - {pair: AUD.USD, form: cash}
+  - {pair: GBP.USD, form: cash}
 
 quota_bytes: 2000000000         # PLACEHOLDER. The recorder stops, loudly, rather than write past this
 keep_hours: 240                 # a rolling ten days stay here; older closed hours go to the offload

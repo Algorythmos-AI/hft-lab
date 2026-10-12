@@ -1,19 +1,24 @@
 # The trader's settings. Read by `python -m hftlab.trader` (ADR 0019, docs/runbooks/trader.md).
 #
-# AS SHIPPED THIS FILE TRADES NOTHING ON PAPER. Every sleeve starts in `shadow`, every promotion rule below is
-# null, and a null rule is never met. On top of that the risk limits (config/risk.yaml) are not in force, and
-# while they are not the trader runs in shadow-only mode: it holds no object that could send an order.
+# AS SHIPPED ONE SLEEVE CAN REACH THE PAPER ACCOUNT, AND ONLY AFTER A CLEAN DAY. Every sleeve starts in `shadow`.
+# The control sleeve alone has a rule that can be met: one clean trading day in shadow, by HFT-DEC-0003, takes
+# it to `min_size`. Every other rule below is null, and a null rule is never met. The risk limits
+# (config/risk.yaml) are in force by HFT-DEC-0001, so the trader holds an order manager; and until the account's
+# float is funded (ADR 0031) no sleeve is promoted and the risk gate stops every entry, whatever a sleeve's stage.
 #
 # A sleeve moves up only by its rule: the number of clean trading days in a row, AND the decision record
-# (HFT-DEC-NNNN, `approved_by: owner`) that approved the step, AND the limits in force. Neither number below
-# is chosen here. Each is set by the decision record that names it.
+# (HFT-DEC-NNNN, `approved_by: owner`) that approved the step, AND the limits in force. There is no other way
+# up, and nothing here skips the rule.
 status: placeholder             # placeholder | decided
 state_dir: var/trader           # git-ignored: the outbox, the journals, the tapes and the status file
 venue: ibkr_paper               # the registered paper venue; nothing else is accepted
 seed: 1                         # seeds the shadow venue's latency draws
 
-pairs:
-  - {pair: EUR.USD, form: cash}
+pairs:                          # the two paper pairs of config/risk.yaml, and the two it keeps on the shadow venue
+  - {pair: EUR.USD, form: cash} # alone (`inventory.shadow_only`): those are quoted, recorded on the tape and
+  - {pair: AUD.USD, form: cash} # shadow-traded, and nothing of them is ever sent to the broker
+  - {pair: GBP.USD, form: cash}
+  - {pair: USD.JPY, form: cash}
 
 poll_ms: 50                     # ENGINEERING DEFAULT. How long one poll of the venue may wait
 beat_ms: 1000                   # ENGINEERING DEFAULT. How often the switches are read and a quiet book confirmed
@@ -21,16 +26,18 @@ reconcile_seconds: 60           # the plan's number: the venue's positions and f
 close_retry_seconds: 5          # ENGINEERING DEFAULT. The least time between two closes the trader proposes for a line
 fsync: true                     # the outbox and the state journals reach the disk before an order is sent
 
-# The sleeves, written as in config/shadow.yaml. The control sleeve's three numbers are PLACEHOLDERS: a control
-# run that is compared with anything takes them from its registered experiment (research/experiments/).
+# The sleeves, written as in config/shadow.yaml. The control sleeve's three numbers are the ones HFT-DEC-0003
+# proposes for its first days on paper, sized so that a day of it costs less than the loss latches allow. They
+# are not an experiment's: a control run that is compared with anything takes them from its registered
+# experiment (research/experiments/).
 sleeves:
   - {name: idle, kind: idle}
   - name: control
     kind: control
     seed: 1
-    entry_per_million: 200      # PLACEHOLDER
-    hold_seconds: 60            # PLACEHOLDER
-    retry_seconds: 10           # PLACEHOLDER
+    entry_per_million: 50       # HFT-DEC-0003: about one entry an hour over the four pairs, at the measured quote rate
+    hold_seconds: 60            # HFT-DEC-0003
+    retry_seconds: 10           # HFT-DEC-0003
 
   # The ML places (ADR 0023): the champion's and three challengers', as many as the registered shadow weeks name
   # (HFT-EXP-0003, HFT-EXP-0004, HFT-EXP-0006). A place names no model: the lineup journal in the state directory
@@ -75,7 +82,7 @@ tape:
   soft_percent: 90              # PLACEHOLDER. The share of the quota at which entries stop and the owner is paged
   flatten_seconds: 300          # PLACEHOLDER. How long the closing at the hard limit may take before the owner is paged
 
-clean_day_minutes: null         # PLACEHOLDER: how long the trader must have run in a trading day for it to count. Null: no day counts
+clean_day_minutes: 480          # HFT-DEC-0003: the trader must have run eight hours of a trading day for it to count
 
 rollout:
   idle:
@@ -83,10 +90,10 @@ rollout:
     promote:
       min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
       normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
-  control:
+  control:                                            # the one sleeve with a rule that can be met
     start: shadow
     promote:
-      min_size: {clean_days: null, decision: null}    # PLACEHOLDER: never met
+      min_size: {clean_days: 1, decision: HFT-DEC-0003}   # one clean trading day in shadow. The plan said 5
       normal: {clean_days: null, decision: null}      # PLACEHOLDER: never met
   ml:
     start: shadow

@@ -69,11 +69,11 @@ Code, and tests of it. **Two runs of the capability probe aside, nothing here ha
 | The lineup: a hash-chained journal of which model is champion and which are challengers, the trader's loading of them by hash, the weekly decision and the drift look | `src/hftlab/lineup/` |
 | An ML sleeve skeleton that asks a scorer and reports that it may not leave shadow on placeholder costs | `src/hftlab/strategy/ml.py` |
 | The scorer in a process of its own: a versioned message format, a child that holds no venue, a timeout, a restart with back-off, and a record a replay abstains by (off as shipped) | `src/hftlab/scoring/` |
-| The independent risk gate (every limit still a null placeholder, not in force) | `src/hftlab/risk/`, `config/risk.yaml` |
+| The independent risk gate (limits in force by HFT-DEC-0001, for a cash account with a float: ADR 0031) | `src/hftlab/risk/`, `config/risk.yaml` |
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
 | Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
-| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 2 records of measurements (the capability probe's two real runs), and 0 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 2 records of measurements (the capability probe's two real runs), and 3 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
 | The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate with its pruning of old checkouts (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
@@ -98,9 +98,14 @@ What that does and does not mean:
 - **Not done:** those two runs are all that has touched anything real. Nothing has been recorded from the real
   feed, and no experiment on a strategy has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
   place a broker order. The trader can only once the risk limits are in force and a sleeve has earned a
-  stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. It also refuses any stage
-  above `shadow` while the capability file does not show that the account may open the positions a sleeve
-  needs, and today the file shows the opposite. The capability probe can place an order, on the paper
+  stage above `shadow`. The limits are in force by a decision record (HFT-DEC-0001), written as a proposal the
+  owner approves by merging it; every sleeve still starts in `shadow`, and only the control sleeve has a rule
+  that can be met. The trader also holds every stage above `shadow` while the capability file does not show
+  that the account may open the positions a sleeve needs, and the file shows the opposite: the account lends
+  nothing on spot. The one answer built for that is a float of cash in each traded currency, funded by the
+  owner ([ADR 0031](docs/adr/0031-spot-inventory-on-a-cash-account.md),
+  [runbook](docs/runbooks/paper-trading-on-spot.md)); until it is funded nothing is sent. None of it has run
+  against the real gateway. The capability probe can place an order, on the paper
   account, when the owner runs it with `--orders`: it has sent four, and the broker accepted none.
 - **The host layer exists and is tested off the host only:** the units as text, the scripts in dry runs
   against a temporary directory, the publisher against a stand-in for the network. Nothing is installed on

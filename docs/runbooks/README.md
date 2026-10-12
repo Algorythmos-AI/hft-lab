@@ -14,6 +14,7 @@ and is exercised once as a drill.
 | [Weekly login](weekly-login.md) | What the gateway needs on the host, and its once-a-week paper login |
 | [Gateway down](gateway-down.md) | The broker's gateway stops or will not connect |
 | [Kill and flatten](kill-and-flatten.md) | The `KILL` and `FLATTEN` switches, and stopping what runs today |
+| [Paper trading on spot](paper-trading-on-spot.md) | From a laptop, without the server: starting the recorder and the trader against a local paper gateway, funding the float, watching, kill and flatten, taking the float back, and the known limits |
 | [Trader](trader.md) | Starting it in shadow, reading the stages, kill and flatten with a trader running, a reconciliation break, resetting a latch, replaying a day, the tapes and their quota, sleeve state and what "started cold" means |
 | [Backup](backup.md) | Handing the journals, the trader's folder and the model registry away every night, what is left out and why, and checking that a backup can be read back |
 | [Reports](reports.md) | The daily summary and the weekly scorecard: what each says, making one by hand, and the timer that sends them |

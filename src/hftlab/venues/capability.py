@@ -6,6 +6,16 @@ pair it trades. This module answers one question: for these pairs, in these form
 be shown to open on both sides, and why. Anything but `accepted` on a side is a reason, a side never tested
 among them: a stage above shadow is earned on what was measured, not on what was not refused.
 
+A cash account with a float (ADR 0031) changes what one kind of answer means, and only that kind. An order
+refused for want of cash in the currency it pays in is refused because the account holds none of it, and a
+funded float is that cash. So `split` sorts the pairs that cannot be shown to open into two: those held
+whatever is funded (a currency the account may not hold, a refusal whose reason is not known, a pair the file
+does not describe), and those held only until a float stands (every side that was not accepted was either
+refused for want of cash or never tested). The second kind is still not "shown to open": the file is not
+changed and says what was measured. It is opened on the float, order by order, by the risk gate's cash rules,
+and the first refusal the broker gives is counted like any other. Pairs the limits keep on the shadow venue
+alone are not asked about: nothing of them is ever sent.
+
 It reads a permission, never a cost or a timing, so it reads the file whatever its `status`. No network, no
 broker library: a file and nothing else.
 """
@@ -21,6 +31,8 @@ from hftlab.core import InstrumentKind
 
 ACCEPTED: Final = "accepted"
 SIDES: Final = ("buy", "sell")  # a sleeve enters long or short: both are needed
+REFUSED_FOR_CASH: Final = "insufficient_cash_quote_currency"  # the probe's class for the refusal a float answers
+NO_FLOAT: Final = "no float is funded to pay for them"
 FOLDER: Final = Path("config/venues")
 
 
@@ -75,6 +87,39 @@ def cannot_open(capability: Mapping[str, Any], pairs: Iterable[tuple[str, Instru
         if why is not None:
             out[pair] = f"{why}{cited}"
     return out
+
+
+def _float_answers(entry: object, kind: InstrumentKind) -> bool:
+    """Is every side of this spot pair that was not accepted either refused for want of cash or never tested?"""
+    if not isinstance(entry, dict) or kind is not InstrumentKind.CASH:
+        return False
+    opening = entry.get("spot_position_opening")
+    if not isinstance(opening, dict):
+        return False
+    for side in SIDES:
+        verdict = opening.get(side)
+        if verdict not in (ACCEPTED, None) and opening.get(f"{side}_refusal") != REFUSED_FOR_CASH:
+            return False
+    return True
+
+
+def split(
+    capability: Mapping[str, Any], pairs: Iterable[tuple[str, InstrumentKind]], shadow_only: Iterable[str] = ()
+) -> tuple[dict[str, str], dict[str, str]]:
+    """(pairs held whatever is funded, pairs held only until a float is funded), each with its reason.
+
+    For an account run with a float (ADR 0031). `shadow_only` are the pairs the limits never send to the
+    broker: they are in neither.
+    """
+    described = {entry.get("pair"): entry for entry in capability["pairs"] if isinstance(entry, dict)}
+    kinds, apart = dict(pairs), set(shadow_only)
+    blocked: dict[str, str] = {}
+    unfunded: dict[str, str] = {}
+    for pair, why in cannot_open(capability, kinds.items()).items():
+        if pair in apart:
+            continue
+        (unfunded if _float_answers(described.get(pair), kinds[pair]) else blocked)[pair] = why
+    return blocked, unfunded
 
 
 def said(blocked: Mapping[str, str]) -> str:

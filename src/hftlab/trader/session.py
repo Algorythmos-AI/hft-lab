@@ -20,6 +20,13 @@ Nothing here reads a clock, a file or the venue. The edge hands every turn its t
 from a recording, so the decisions are a function of the tape: `hftlab.trader.replay` runs a recorded day
 through this same class and gets the same journal, byte for byte (ADR 0005).
 
+A cash account with a float (ADR 0031, `inventory` in the limits). The broker lends nothing, so the account holds
+a float of every traded currency and a sleeve's position is a deviation from it. The float is funded once, when
+an operator asks, by conversions this loop proposes to the order manager like any other order; they are booked
+in the broker book as the line `FLOAT`, never mirrored on the shadow venue, and shown to no sleeve. So the
+shadow book and every result stay what they were: relative to a sleeve's own zero. A pair the account cannot
+hold a currency of is traded on the shadow venue only, whatever the sleeve's stage.
+
 No order reaches a broker from this module. The one venue it places on is the shadow venue it builds itself;
 everything meant for the broker is proposed to the order manager, which asks the risk gate
 (tests/trader/test_structure.py).
@@ -33,9 +40,10 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from enum import Enum, unique
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Final, Protocol
 
-from hftlab.book import DESK, Book, Reconciler, SleeveView
+from hftlab.book import DESK, FLOAT, Book, CashCheck, Reconciler, SleeveView, anchor_of, effect, expected
 from hftlab.calendar import Calendar, new_york
 from hftlab.core import (
     Fill,
@@ -59,22 +67,24 @@ from hftlab.lineup import FILE as LINEUP
 from hftlab.lineup.journal import LineupError
 from hftlab.lineup.serve import lineup_or_none, make
 from hftlab.record.format import Heartbeat, describe
-from hftlab.risk import HARD, ROOM, SOFT, Reason, RiskConfig, RiskGate, TapeRoom
+from hftlab.risk import HARD, ROOM, SOFT, FloatState, Reason, RiskConfig, RiskGate, TapeRoom
 from hftlab.scoring.client import READY, Scorers, Times
 from hftlab.scoring.record import SUFFIX as ABSTAINED
 from hftlab.shadow.__main__ import make_sleeves, minimum_sizes
 from hftlab.strategy import Action, Cancel, Event, Intent, Placed, Refused, Saves, Sleeve
-from hftlab.trader import resume, room
+from hftlab.trader import funding, resume, room
 from hftlab.trader.config import Settings, TraderConfigError
 from hftlab.trader.slippage import Matched, report
 from hftlab.trader.stages import BREAK, LATCH, MIN_SIZE, OFF, PAPER, SHADOW, STEPPED_DOWN, Change, Stages, day_of
 from hftlab.trader.tape import Beat, Edge, Opened, Request, Step
+from hftlab.venues.capability import NO_FLOAT
 from hftlab.venues.capability import said as say_blocked
 from hftlab.venues.port import (
     CommissionEvent,
     ConnectionEvent,
     ConnectionState,
     OpenOrder,
+    VenueCash,
     VenueError,
     VenueNotice,
     VenuePosition,
@@ -82,9 +92,11 @@ from hftlab.venues.port import (
 from hftlab.venues.sim import CostModel, SimVenue
 
 ANSWERS_PER_EVENT: Final = 64
-STATE: Final = ("outbox", "risk", "reconcile", "stages", "shadow")  # the journals that outlive a day, by file name
+# The journals that outlive a day, by file name.
+STATE: Final = ("outbox", "risk", "reconcile", "stages", "shadow", funding.FILE)
 SEEDS: Final = 1_000_000  # the shadow venue's seed is the configured one times this, plus the session's number
 SLEEVE, FLATTEN, INHERIT, ALIGN = "sleeve", "flatten", "inherit", "align"  # where an order came from
+FLOAT_STUCK: Final = "float-stuck"  # the alert of a funding that cannot go on by itself
 UNVERIFIED: Final = -1  # in a mark, where the number of entries would be: the journal's chain does not verify
 _SLEEVE_LATCHES: Final = (Reason.DAILY_LOSS_SLEEVE.value, Reason.DRAWDOWN_SLEEVE.value)
 _TAPE_CODES: Final = {ROOM: "", SOFT: Reason.TAPE_SOFT_LIMIT.value, HARD: Reason.TAPE_HARD_LIMIT.value}
@@ -111,6 +123,15 @@ class Why(Enum):
     STAGE_EXITS_ONLY = "STAGE_EXITS_ONLY"  # the sleeve is stepped down: only an order that reduces may go
     INHERITED_POSITION = "INHERITED_POSITION"  # the pair holds a position from before this session; it is being closed
     SHADOW_REFUSED = "SHADOW_REFUSED"  # the shadow venue would not take it
+    # what became of an operator's request about the float (ADR 0031)
+    NO_INVENTORY = "NO_INVENTORY"  # this run keeps no float: the limits have no `inventory`, or are not in force
+    ALREADY_FUNDED = "ALREADY_FUNDED"  # a float stands: there is nothing to do
+    IN_PROGRESS = "IN_PROGRESS"  # a funding or an unfunding has not ended
+    NOT_SETTLED = "NOT_SETTLED"  # the connection is not safe, an order is on its way, or a fill is too recent
+    NO_CASH = "NO_CASH"  # the venue could not be asked what cash the account holds
+    CANNOT_COVER = "CANNOT_COVER"  # the account cannot be given the float from what it holds, or a quote is missing
+    NOT_FUNDED = "NOT_FUNDED"  # there is no float to take back
+    NOT_FLAT = "NOT_FLAT"  # a sleeve holds a position or has an order on its way
     NOT_THIS_SLEEVES_ORDER = "NOT_THIS_SLEEVES_ORDER"
     NOTHING_TO_REDUCE = "NOTHING_TO_REDUCE"  # the shadow book holds nothing this exit could close
 
@@ -147,6 +168,9 @@ class _Listening:
         found = self._asks.executions_since(ts_ns)
         self._heard.extend(found)
         return found
+
+    def cash(self) -> tuple[VenueCash, ...]:
+        return self._asks.cash()
 
 
 def day_label(day: int) -> str:
@@ -191,6 +215,7 @@ class Trader:
         abstained: Path | None = None,
         resumed: bool | None = None,
         cannot_open: Mapping[str, str] | None = None,
+        needs_float: Mapping[str, str] | None = None,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -217,9 +242,11 @@ class Trader:
             saved, why = None, resume.TAPE
         fsync = settings.fsync
 
+        self._cannot_open, self._needs_float = dict(cannot_open or {}), dict(needs_float or {})
+        self._ledger: funding.FloatLedger | None = None  # the float's journal; None: this run keeps no float
         self._stages = Stages(
             Journal(paths["stages"], fsync=fsync), settings.rollout, calendar=calendar, in_force=risk is not None,
-            min_day_ns=settings.clean_day_ns, cannot_open=say_blocked(cannot_open or {}),
+            min_day_ns=settings.clean_day_ns, cannot_open=self._held_back,
         )  # fmt: skip
         above = self._stages.above_shadow()
         if above and cannot_open:
@@ -264,6 +291,14 @@ class Trader:
         self._manager: OrderManager | None = None
         self._reconciler: Reconciler | None = None
         self._switched: frozenset[str] | None = frozenset()
+        self._shadow_only: frozenset[str] = frozenset()  # pairs the account cannot hold: the shadow venue only
+        self._asks: _Listening | None = None
+        self._cash_seen: dict[str, int] | None = None  # what the venue last said the account holds, and when
+        self._cash_at: int | None = None
+        self._fill_at = opened.at_ns  # when a fill was last booked: the venue's cash may lag it by a moment
+        self._waiting: set[str] = set()  # pairs whose conversion cannot go on; said once, and paged
+        self._shadow_orders: dict[str, str] = {}  # orders placed on the shadow venue alone in such a pair -> the pair
+        cash: CashCheck | None = None
         if risk is not None:
             assert edge.venue is not None
             asks = _Listening(edge.asks, self._heard)
@@ -275,10 +310,17 @@ class Trader:
                 edge.venue, self._gate, Outbox(paths["outbox"], fsync=fsync), clock=self._clock,
                 instruments=self._instruments.values(), asks=asks, witness=edge.witness,
             )  # fmt: skip
+            if risk.inventory is not None:
+                self._ledger = funding.FloatLedger(Journal(paths[funding.FILE], fsync=fsync))
+                self._shadow_only = risk.inventory.shadow_only
+                self._asks = asks
+                cash = CashCheck(asks.cash, lambda: self._ledger.anchor if self._ledger else None,
+                                 risk.inventory.tolerance_micro)  # fmt: skip
             self._reconciler = Reconciler(
                 asks, self._manager.book, Journal(paths["reconcile"], fsync=fsync), clock=self._clock,
-                grace_ns=risk.reconciliation_grace_ns, sink=self._from_reconciler,
+                grace_ns=risk.reconciliation_grace_ns, sink=self._from_reconciler, cash=cash,
             )  # fmt: skip
+            self._show_float()
             if opened.state is ConnectionState.READY:
                 # The connection outlived the session before this one, so the venue will not announce it again.
                 self._gate.observe(ConnectionEvent(ConnectionState.READY, opened.at_ns, 0))
@@ -542,6 +584,9 @@ class Trader:
                     self._changed(change)
         elif request.what == "lineup":
             self._renew, done = True, 1  # the turn is finished; the next session reads the lineup as it is now
+        elif request.what in (funding.FUND, funding.UNFUND, "anchor"):
+            said = self._on_float_request(request, now)
+            done = int(not said)
         self._write(
             "request", what=request.what, subject=request.subject, value=request.value, operator=request.operator,
             done=done, refused=said,
@@ -589,7 +634,8 @@ class Trader:
         if self._room != HARD or self._hard_since is None or self._flat:
             return
         manager = self._manager
-        held = sorted(manager.book.open_lines().items()) if manager else []
+        # The float is not a position to be closed: it is what everything is closed back to (ADR 0031).
+        held = sorted(item for item in manager.book.open_lines().items() if item[0][0] != FLOAT) if manager else []
         flying = sorted(manager.in_flight()) if manager else []
         blind = bool(manager is not None and manager.blind)
         late = now - self._hard_since >= self._settings.tape_flatten_ns
@@ -640,7 +686,9 @@ class Trader:
             self._manager.reconcile()
         elif now - self._checked_at >= self._settings.reconcile_ns:
             self._checked_at = now
-            self._reconciler.check()
+            found = self._reconciler.check()
+            if found.seen_cash is not None:
+                self._cash_seen, self._cash_at = dict(found.seen_cash), now
         self._take_heard()
         for order_id, owner in list(self._watching.items()):
             tracked = self._manager.tracked(order_id)
@@ -652,7 +700,7 @@ class Trader:
         if self._inherited is None and not self._manager.blind:
             lines = self._manager.book.open_lines()
             self._inherited = {key: 0 for key in lines if self._is_inherited(key[0])}
-            self._note_inherited(sorted(key for key in lines if key[0] not in self._names))
+            self._note_inherited(sorted(key for key in lines if key[0] not in (*self._names, FLOAT)))
         self._watch(now)
 
     def _take_heard(self) -> None:
@@ -664,6 +712,7 @@ class Trader:
                 continue
             self._noted.add(fill.fill_id)
             self._stale_views = True
+            self._fill_at = self._clock.now_ns()
             owner = sleeve_of(fill.client_order_id) or ""
             self._write(
                 "broker_fill", sleeve=owner, fill_id=fill.fill_id, client_order_id=fill.client_order_id,
@@ -720,6 +769,162 @@ class Trader:
         text = f"{change.sleeve}: {change.before} to {change.to} ({change.cause} {change.detail})".rstrip()
         self._notify.fire(f"stage.{change.sleeve}.{change.number}", f"Stage of {change.sleeve}: {change.to}", text, 4)
 
+    # ---- the float of a cash account (ADR 0031) ---------------------------------------------------------------------
+
+    def _held_back(self) -> str:
+        """Why no sleeve may go above shadow as the account stands; "": nothing holds one back.
+
+        What the capability file holds against a pair stands, whatever is funded. A pair it holds only for want
+        of cash is opened on the float, so it holds a sleeve back until a float is funded and anchored.
+        """
+        if self._cannot_open:
+            return say_blocked(self._cannot_open)
+        ledger = self._ledger
+        if self._needs_float and not (ledger is not None and ledger.funded and ledger.anchor is not None):
+            return f"{say_blocked(self._needs_float)}; and {NO_FLOAT} (ADR 0031)"
+        return ""
+
+    def _show_float(self) -> None:
+        """Tell the risk gate where the float stands. At every start, and whenever the ledger moves."""
+        if self._gate is not None and self._ledger is not None:
+            ledger = self._ledger
+            unwinding = ledger.phase == funding.UNFUNDING
+            self._gate.observe(FloatState(ledger.anchor, ledger.funded, ledger.converting, unwinding))
+
+    def _float_lines(self) -> dict[str, int]:
+        assert self._manager is not None
+        return {pair: held for (name, pair), held in self._manager.book.open_lines().items() if name == FLOAT}
+
+    def _sleeves_flat(self) -> bool:
+        """Does no sleeve hold anything at the broker, with no order of any sleeve on its way?"""
+        assert self._manager is not None
+        if any(name != FLOAT for name, _ in self._manager.book.open_lines()):
+            return False
+        flying = (self._manager.tracked(order_id) for order_id in self._manager.in_flight())
+        return not any(tracked is not None and tracked.order.sleeve != FLOAT for tracked in flying)
+
+    def _ask_cash(self, now: int) -> dict[str, int] | None:
+        """Ask the venue what the account holds; None when it cannot be asked. Kept for the status file."""
+        assert self._asks is not None
+        try:
+            seen = {held.currency: held.amount for held in self._asks.cash()}
+        except VenueError:
+            return None
+        self._cash_seen, self._cash_at = seen, now
+        return seen
+
+    def _on_float_request(self, request: Request, now: int) -> str:
+        """An operator asked for the float to be funded, taken back, or anchored again. "" when it was begun.
+
+        Nothing is converted here. A funding is opened in the ledger, and `_convert` takes it forward one
+        order at a time, on every beat, through the order manager.
+        """
+        ledger, manager, risk = self._ledger, self._manager, self._risk
+        if ledger is None or manager is None or risk is None or risk.inventory is None:
+            return Why.NO_INVENTORY.value
+        inventory, book = risk.inventory, manager.book
+        what, operator = request.what, request.operator
+        if ledger.converting and not (what == funding.UNFUND and ledger.phase == funding.FUNDING):
+            return Why.IN_PROGRESS.value
+        if what == funding.FUND and ledger.funded:
+            return Why.ALREADY_FUNDED.value
+        if what == funding.UNFUND and ledger.phase == funding.NONE:
+            return Why.NOT_FUNDED.value
+        settled = now - self._fill_at >= inventory.settle_ns
+        if manager.blind or manager.in_flight() or not settled:
+            return Why.NOT_SETTLED.value
+        if what == funding.UNFUND:
+            if not self._sleeves_flat():
+                return Why.NOT_FLAT.value
+            held = self._float_lines()
+            order = sorted(held, key=lambda pair: (held[pair] < 0, pair))  # what brings the hub in comes first
+            ledger.open(funding.UNFUND, dict.fromkeys(order, 0), order, operator=operator, at_ns=now)
+        else:
+            seen = self._ask_cash(now)
+            if seen is None:
+                return Why.NO_CASH.value
+            if what == "anchor":
+                ledger.set_anchor(anchor_of(seen, book), operator=operator, why="operator", at_ns=now)
+            else:
+                quotes = {pair: (quote.bid, quote.ask) for pair, quote in self._last.items()}
+                try:
+                    steps = funding.plan(seen, quotes, self._instruments, inventory, risk.pairs)
+                except funding.CannotFund:
+                    return Why.CANNOT_COVER.value
+                ledger.set_anchor(anchor_of(seen, book), operator=operator, why=funding.FUND, at_ns=now)
+                wanted = funding.targets(self._float_lines(), steps)
+                order = list(dict.fromkeys(step.pair for step in steps))
+                ledger.open(funding.FUND, wanted, order, operator=operator, at_ns=now)
+        self._waiting.clear()
+        self._write("float", event=what, phase=ledger.phase, pairs=list(ledger.order), operator=operator)
+        self._show_float()
+        return ""
+
+    def _convert(self, now: int) -> None:
+        """On a beat: the next order of a funding or an unfunding, or its end. One order at a time, in order.
+
+        What is left of a pair is its target less what the book's float line holds, so a restart, a partial
+        fill or a reject changes nothing here: the next beat proposes what is still left. A conversion the
+        account cannot pay for in full is proposed as far as it can, and when it cannot go on at all the
+        owner is told, once; an unfunding then ends with what could not be converted back written down.
+        """
+        ledger, manager, gate, risk = self._ledger, self._manager, self._gate, self._risk
+        if ledger is None or manager is None or gate is None or risk is None or not ledger.converting:
+            return
+        if manager.blind:
+            return
+        book, left = manager.book, {}
+        for pair in ledger.order:
+            held, target = book.position(FLOAT, pair).quantity, ledger.targets[pair]
+            if held == target:
+                continue
+            instrument, limits = self._instruments.get(pair), risk.pairs.get(pair)
+            if self._busy(FLOAT, pair) or instrument is None or limits is None:
+                return
+            side = Side.BUY if target > held else Side.SELL
+            step = instrument.size_increment
+            size = funding.chunk(abs(target - held), limits.max_order_size, step)
+            can = gate.affordable(pair, side)
+            size = min(size, (can or 0) // step * step)
+            if size < max(step, instrument.min_order_size):  # nothing, or less than the venue takes as an order
+                if pair not in self._waiting:
+                    self._waiting.add(pair)
+                    self._write("float", event="waiting", phase=ledger.phase, pairs=[pair], operator=ledger.operator)
+                    text = f"The conversion of {pair} cannot go on: the account cannot pay for it. See the runbook."
+                    self._notify.fire(FLOAT_STUCK, "A conversion of the float is waiting", text, 4)
+                if ledger.phase == funding.UNFUNDING:
+                    left[pair] = held
+                    continue  # the rest is converted as far as it goes; what stays is written down at the end
+                return
+            key = (ledger.phase, FLOAT, pair)
+            if not self._due(key, now):
+                return
+            self._propose_conversion(pair, side, size, self._try(key, now), now)
+            return
+        baseline = expected(ledger.anchor, book, FLOAT) if ledger.anchor is not None else None
+        ended = ledger.close(baseline=baseline, left=left, at_ns=now)
+        self._write("float", event="closed", phase=ledger.phase, pairs=sorted(left), operator=ledger.operator)
+        self._show_float()
+        self._notify.resolve(FLOAT_STUCK, "The float's conversions ended", f"The {ended}ing is over.")
+
+    def _propose_conversion(self, pair: str, side: Side, size: int, attempt: int, now: int) -> None:
+        """One order of the float, to the order manager and nowhere else: no shadow order, and no sleeve hears of it."""
+        assert self._manager is not None and self._ledger is not None
+        leg = self._ledger.phase
+        order_id = client_order_id(sleeve=FLOAT, pair=pair, side=side, decision_seq=now, leg=leg, attempt=attempt)
+        order = Order(order_id, FLOAT, pair, side, size, OrderType.MARKET, TimeInForce.IOC, now)
+        self._write(
+            "order", sleeve=FLOAT, client_order_id=order_id, pair=pair, side=side.value, quantity=size,
+            order_type=order.order_type.value, tif=order.tif.value, limit_price=None, stage=leg, reducing=0,
+        )  # fmt: skip
+        proposal = self._manager.propose(order)
+        at = proposal.stage.value if proposal.stage else None
+        self._write("verdict", client_order_id=order_id, code=proposal.code, sent=int(proposal.sent), at=at)
+
+    def _on_paper(self, name: str, pair: str) -> bool:
+        """Do this sleeve's orders in this pair go to the broker? Its stage says, and the account must hold the pair."""
+        return self._stages.stage(name) in PAPER and pair not in self._shadow_only
+
     # ---- the shadow venue -----------------------------------------------------------------------------------------
 
     def _settle_shadow(self, now: int) -> None:
@@ -761,8 +966,15 @@ class Trader:
         self._shadow_journal.flush()
 
     def _shadow_news(self, owner: str, item: Event) -> None:
-        if owner in self._names and self._stages.stage(owner) == SHADOW:
+        """A sleeve hears of the shadow venue where that is where its order went: in shadow, or in a pair that is
+        never sent to the broker."""
+        if owner not in self._names:
+            return
+        apart = isinstance(item, Fill | OrderEvent) and item.client_order_id in self._shadow_orders
+        if self._stages.stage(owner) == SHADOW or apart:
             self._news.setdefault(owner, []).append(item)
+            if isinstance(item, OrderEvent) and item.state.is_terminal:
+                self._shadow_orders.pop(item.client_order_id, None)
 
     def _restore_shadow(self, path: Path) -> int:
         """The shadow book as its own journal left it. Returns the number of sessions that wrote to it."""
@@ -793,10 +1005,10 @@ class Trader:
                 self._close_on_paper(order, now)
         if (switched is not None and self._risk_flatten(switched)) or self._room == HARD:
             for (name, pair), held in sorted(self._shadow_book.open_lines().items()):
-                if name in self._names and self._stages.stage(name) == SHADOW:
+                if name in self._names and not self._on_paper(name, pair) and self._stages.stage(name) != OFF:
                     self._close_line(FLATTEN, name, pair, held, now)
         for name, pair in sorted(self._inherited or {}):
-            held = self._view_book(name).position(name, pair).quantity
+            held = self._view_book(name, pair).position(name, pair).quantity
             if held == 0:
                 assert self._inherited is not None
                 del self._inherited[name, pair]
@@ -804,6 +1016,7 @@ class Trader:
                 self._close_line(INHERIT, name, pair, held, now)
         if self._manager is not None and not self._manager.blind:
             self._align(now)
+        self._convert(now)
 
     def _risk_flatten(self, switched: frozenset[str]) -> bool:
         name = self._risk.flatten_switch if self._risk else "FLATTEN"
@@ -863,6 +1076,8 @@ class Trader:
             if self._stages.stage(name) not in PAPER:
                 continue
             for pair in self._instruments:
+                if pair in self._shadow_only:
+                    continue  # never sent to the broker: the shadow book is all there is of it
                 broker = self._manager.book.position(name, pair).quantity
                 shadow = self._shadow_book.position(name, pair).quantity
                 same_way = broker * shadow > 0
@@ -886,7 +1101,7 @@ class Trader:
 
     def _note_inherited(self, unowned: Sequence[tuple[str, str]] = ()) -> None:
         for name, pair in sorted(self._inherited or {}):
-            held = self._view_book(name).position(name, pair).quantity
+            held = self._view_book(name, pair).position(name, pair).quantity
             self._write("inherited", sleeve=name, pair=pair, quantity=held)
         for name, pair in unowned:
             self._write("unowned", sleeve=name, pair=pair)
@@ -962,9 +1177,10 @@ class Trader:
                 text = f"The scorer process of {name} is {health}. The sleeve abstains until it answers."
                 self._notify.fire(_key("scorer", name), f"The scorer of {name} is {health}", text, 4)
 
-    def _view_book(self, name: str) -> Book:
-        """The book a sleeve's position is read from: the broker's once it places paper orders, else the shadow's."""
-        if self._manager is not None and name in self._names and self._stages.stage(name) in PAPER:
+    def _view_book(self, name: str, pair: str) -> Book:
+        """The book a sleeve's position in a pair is read from: the broker's once its orders in that pair go to the
+        broker, else the shadow's."""
+        if self._manager is not None and name in self._names and self._on_paper(name, pair):
             return self._manager.book
         return self._shadow_book
 
@@ -975,9 +1191,16 @@ class Trader:
         found = self._views.get(name)
         if found is None:
             shadow = self._shadow_book.view(name)
-            book = self._view_book(name)
-            # Positions from the book that can be closed; results from the shadow book and from nowhere else.
-            found = shadow if book is self._shadow_book else replace(shadow, positions=book.view(name).positions)
+            found = shadow
+            if self._manager is not None and name in self._names and self._stages.stage(name) in PAPER:
+                # Positions from the book that can be closed; results from the shadow book and from nowhere else.
+                # A pair that is never sent to the broker can only be closed where it was opened: on the shadow.
+                held = dict(self._manager.book.view(name).positions)
+                for pair in self._shadow_only:
+                    held.pop(pair, None)
+                    if pair in shadow.positions:
+                        held[pair] = shadow.positions[pair]
+                found = replace(shadow, positions=MappingProxyType(held))
             self._views[name] = found
         return found
 
@@ -1038,7 +1261,7 @@ class Trader:
         if instrument is None:
             return self._refuse(name, intent, Why.UNKNOWN_PAIR.value)
         stage = self._stages.stage(name)
-        on_paper = stage in PAPER and source != ALIGN
+        on_paper = self._on_paper(name, intent.pair) and source != ALIGN
         reducing = self._reduces(name, intent, on_paper)
         quantity = intent.quantity
         if on_paper and not reducing:
@@ -1070,6 +1293,8 @@ class Trader:
             code = self._to_shadow(order, instrument)
         if code is not None:
             return self._refuse(name, intent, code)
+        if not on_paper and intent.pair in self._shadow_only:
+            self._shadow_orders[order_id] = intent.pair
         if name in self._counts:
             self._counts[name]["orders"] += 1
         return Placed(intent, order_id)
@@ -1080,7 +1305,7 @@ class Trader:
         The same pessimism as the risk gate's: a second exit behind a first that has not ended could go through
         zero, so it is not a reduction, and gets no treatment a reduction gets.
         """
-        held = self._view_book(name).position(name, intent.pair).quantity
+        held = self._view_book(name, intent.pair).position(name, intent.pair).quantity
         ahead = 0
         if on_paper and self._manager is not None:
             for order_id in self._manager.in_flight():
@@ -1166,6 +1391,11 @@ class Trader:
         out: dict[str, Any] = {}
         for label, book in books.items():
             out[label] = {scope: self._net(book, scope, realised_only) for scope in (DESK, *self._names)}
+        if self._ledger is not None and self._manager is not None:
+            # The desk is its sleeves. What the float gains or loses as rates move is said beside it, never in it.
+            drift, desk = self._net(self._manager.book, FLOAT, realised_only), out["broker"][DESK]
+            if desk is not None:
+                out["broker"][DESK] = None if drift is None else {c: a - drift.get(c, 0) for c, a in desk.items()}
         return out
 
     def _net(self, book: Book, scope: str, realised_only: bool) -> dict[str, int] | None:
@@ -1186,7 +1416,7 @@ class Trader:
         nets = self._nets()
         open_lines = set(self._shadow_book.open_lines())
         if self._manager is not None:
-            open_lines |= set(self._manager.book.open_lines())
+            open_lines |= {key for key in self._manager.book.open_lines() if key[0] != FLOAT}
         sleeves = []
         for name in self._names:
             total, opening = nets["shadow"][name], self._opening.get("shadow", {}).get(name)
@@ -1213,6 +1443,36 @@ class Trader:
             "turns": self._n, "sleeves": sleeves, "books": books,
         }  # fmt: skip
 
+    def float_status(self) -> dict[str, object] | None:
+        """Where the float stands, for the status file and the funding plan. None: this run keeps no float.
+
+        It holds balances of a private account. The status file stays in the state directory, and nothing of
+        this is published (hftlab.publish reads the sleeves and the books, not this).
+        """
+        ledger, manager, gate = self._ledger, self._manager, self._gate
+        if ledger is None or manager is None or gate is None:
+            return None
+        book = manager.book
+        fills: dict[str, int] = {}
+        for order_id, got in self._got["broker"].items():
+            owner = sleeve_of(order_id) or ""
+            fills[owner] = fills.get(owner, 0) + len(got)
+        return {
+            "phase": ledger.phase,
+            "cash": self._cash_seen, "cash_at_ns": self._cash_at,
+            "expected": gate.cash(),
+            "baseline": ledger.baseline,
+            "deviation": {name: effect(book, name) for name in book.sleeves() if name != FLOAT},
+            "drift_micro": self._net(book, FLOAT, False),
+            "positions": {f"{name}/{pair}": held for (name, pair), held in book.open_lines().items() if name != FLOAT},
+            "converting": {pair: [book.position(FLOAT, pair).quantity, ledger.targets[pair]] for pair in ledger.order},
+            "waiting": sorted(self._waiting),
+            "quotes": {pair: [quote.bid, quote.ask] for pair, quote in sorted(self._last.items())},
+            "shadow_only": sorted(self._shadow_only),
+            "instruments": [describe(instrument) for instrument in self._instruments.values()],
+            "paper_fills_session": fills,
+        }
+
     def slippage(self) -> list[dict[str, object]]:
         """Shadow against broker for the orders this session sent to both (hftlab.trader.slippage)."""
         matched = [
@@ -1229,7 +1489,7 @@ class Trader:
         assert self._status_path is not None
         said = {
             **self.summary(), "at_ns": now, "connection": state.value, "latched": sorted(self._latched),
-            "tape": self._edge.room(),
+            "tape": self._edge.room(), "float": self.float_status(),
         }  # fmt: skip
         partial = self._status_path.with_suffix(".partial")
         partial.write_text(json.dumps(said, sort_keys=True) + "\n", encoding="utf-8")
@@ -1281,6 +1541,8 @@ class Trader:
         self._shadow_journal.close()
         if self._manager is not None:
             self._manager.close()
+        if self._ledger is not None:
+            self._ledger.shut()
 
 
 def _key(kind: str, name: str) -> str:

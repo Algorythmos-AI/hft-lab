@@ -39,6 +39,7 @@ from hftlab.venues.port import (
     UnknownInstrument,
     UnknownOrder,
     Venue,
+    VenueCash,
     VenuePosition,
     VenueUnavailable,
 )
@@ -395,6 +396,18 @@ class IbkrVenue(GuardedVenue):
                 )
             )
         return tuple(out)
+
+    def _cash(self) -> tuple[VenueCash, ...]:
+        """The cash of the account orders go to, by currency. One login with several accounts must name which."""
+        accounts = list(self._accounts())
+        account = self._settings.account if self._settings.account is not None else accounts[0] if accounts else None
+        if account is None or account not in accounts or (self._settings.account is None and len(accounts) != 1):
+            raise VenueUnavailable("the gateway manages no single account whose cash could be read")
+        values = self._ask(lambda: self._client.account_values(account))
+        try:
+            return translate.cash_from(values)
+        except TranslationError as exc:
+            raise VenueUnavailable(f"the gateway's cash balances cannot be read: {exc}") from exc
 
     def _server_time_ns(self) -> int:
         answered = translate.ns_of(self._ask(self._client.server_time))

@@ -9,6 +9,7 @@ are recorded here, one JSON line each, at the edge where they enter:
                                                   with a sixth value, the room on the tapes, on a session's first
                                                   turn and on the turn it changes, where the tapes have a quota
     ["ask", question, state, answer, error]       a question to the venue, and what it said or how it failed
+                                                  (open orders, positions, executions, and the account's cash)
     ["sent", verb, client order id, how, state]   how a send or a cancel went, as the order manager saw it
     ["stop", at]                                  the session ended on purpose
     ["dark"]                                      the reserve is used up: the session went on, and wrote no more here
@@ -110,6 +111,7 @@ from hftlab.venues.port import (
     OrderRefused,
     Unsupported,
     Venue,
+    VenueCash,
     VenueError,
     VenueEvent,
     VenueNotice,
@@ -292,6 +294,7 @@ _ANSWERS: Final[dict[str, tuple[Callable[[Any], Row], Callable[[Row], Any]]]] = 
         lambda row: VenuePosition(row[0], InstrumentKind(row[1]), row[2]),
     ),
     "executions_since": (_fill_row, _fill_of),
+    "cash": (lambda held: [held.currency, held.amount], lambda row: VenueCash(row[0], row[1])),
 }
 _ERRORS: Final[dict[str, type[VenueError]]] = {
     "VenueUnavailable": VenueUnavailable, "NotReady": NotReady, "Unsupported": Unsupported,
@@ -494,6 +497,9 @@ class _Recorded:
 
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]:
         return self._ask("executions_since", lambda: self._venue.executions_since(ts_ns))
+
+    def cash(self) -> tuple[VenueCash, ...]:
+        return self._ask("cash", self._venue.cash)
 
 
 class LiveEdge:
@@ -849,6 +855,9 @@ class ReplayVenue:
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]:
         return self._edge.asks.executions_since(ts_ns)
 
+    def cash(self) -> tuple[VenueCash, ...]:
+        return self._edge.asks.cash()
+
     def connect(self) -> None:
         return None
 
@@ -899,6 +908,9 @@ class _Replayed:
 
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]:
         return self._ask("executions_since")
+
+    def cash(self) -> tuple[VenueCash, ...]:
+        return self._ask("cash")
 
 
 class ReplayEdge:

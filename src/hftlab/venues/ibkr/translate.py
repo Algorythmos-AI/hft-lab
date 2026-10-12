@@ -13,11 +13,13 @@ one. The capability probe is how each is confirmed (docs/runbooks/ibkr-probe.md)
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_EVEN, Decimal
+from typing import Final
 
-from ib_async import CFD, CommissionReport, Contract, ContractDetails, Execution, Forex, Ticker, Trade
+from ib_async import CFD, AccountValue, CommissionReport, Contract, ContractDetails, Execution, Forex, Ticker, Trade
 from ib_async import Order as IbOrder
 from ib_async import Position as IbPosition
 from ib_async.objects import HistoricalTickBidAsk
@@ -38,7 +40,7 @@ from hftlab.core import (
     to_scaled,
 )
 from hftlab.core.money import MAX_SCALE, InexactError
-from hftlab.venues.port import OpenOrder, VenuePosition
+from hftlab.venues.port import OpenOrder, VenueCash, VenuePosition
 
 # UNVERIFIED: forex spot is secType CASH routed to IDEALPRO, and a forex CFD is secType CFD with the base
 # currency as symbol, the quote currency as currency, routed to SMART.
@@ -384,3 +386,28 @@ def position_from(position: IbPosition) -> VenuePosition | None:
         return None
     quantity = whole(position.position, f"{pair} position")
     return VenuePosition(pair, KINDS[position.contract.secType], quantity) if quantity else None
+
+
+CASH_TAG: Final = "CashBalance"
+_ALL_CURRENCIES: Final = "BASE"  # the gateway's row for everything valued in the account's own currency: not a holding
+
+
+def cash_from(values: Iterable[AccountValue]) -> tuple[VenueCash, ...]:
+    """The cash an account holds, by currency, from the gateway's account values.
+
+    A balance is the broker's own decimal text. One with more decimals than a millionth is rounded half-even to
+    CASH_SCALE, like a commission; text that is not a number is a `TranslationError`, never a guess.
+    """
+    out: dict[str, int] = {}
+    quantum = Decimal(1).scaleb(-CASH_SCALE)
+    for value in values:
+        if value.tag != CASH_TAG or value.currency == _ALL_CURRENCIES:
+            continue
+        try:
+            amount = Decimal(value.value)
+        except ArithmeticError as exc:
+            raise TranslationError(f"the cash balance in {value.currency} is not a number") from exc
+        if not amount.is_finite() or len(value.currency) != 3:
+            raise TranslationError(f"the cash balance in {value.currency!r} cannot be read")
+        out[value.currency] = to_scaled(amount.quantize(quantum, rounding=ROUND_HALF_EVEN), CASH_SCALE)
+    return tuple(VenueCash(currency, amount) for currency, amount in sorted(out.items()))

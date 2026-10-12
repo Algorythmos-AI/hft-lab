@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from ib_async import IB, CommissionReport, Contract, ContractDetails, ExecutionFilter, Ticker, Trade
+from ib_async import IB, AccountValue, CommissionReport, Contract, ContractDetails, ExecutionFilter, Ticker, Trade
 from ib_async import Fill as IbFill
 from ib_async import Order as IbOrder
 from ib_async import Position as IbPosition
@@ -80,6 +80,10 @@ class IbClient(Protocol):
 
     def server_time(self) -> datetime: ...
 
+    def account_values(self, account: str) -> list[AccountValue]:
+        """The account's values as the gateway keeps them up to date. Asks for nothing but to be told them."""
+        ...
+
     def historical_bid_ask(self, contract: Contract, end: datetime, count: int) -> list[HistoricalTickBidAsk]: ...
 
 
@@ -112,6 +116,7 @@ class IbAsyncClient:
         self._ib = ib if ib is not None else IB()
         # Without this a request the gateway never answers blocks for ever; with it the request raises.
         self._ib.RequestTimeout = request_timeout_s
+        self._followed: str | None = None  # the account whose values this connection has asked to be told
 
     def listen(self, handlers: Handlers) -> None:
         ib = self._ib
@@ -125,6 +130,7 @@ class IbAsyncClient:
     def handshake(self, host: str, port: int, client_id: int, timeout_s: float) -> list[str]:
         ib = self._ib
         ib.wrapper.clientId = client_id
+        self._followed = None  # a subscription does not outlive its socket
         ib.run(ib.client.connectAsync(host, port, client_id, timeout_s))
         return list(ib.client.getAccounts())
 
@@ -183,6 +189,15 @@ class IbAsyncClient:
 
     def server_time(self) -> datetime:
         return self._ib.reqCurrentTime()
+
+    def account_values(self, account: str) -> list[AccountValue]:
+        # UNVERIFIED: once asked, the gateway sends the account's values when one changes and at least every
+        # three minutes, and a cash balance arrives as the tag `CashBalance`, once per currency held. The first
+        # call on a connection subscribes and waits for the first full set; later ones read what has arrived.
+        if self._followed != account:
+            self._ib.reqAccountUpdates(account)
+            self._followed = account
+        return self._ib.accountValues(account)
 
     def historical_bid_ask(self, contract: Contract, end: datetime, count: int) -> list[HistoricalTickBidAsk]:
         ticks = self._ib.reqHistoricalTicks(contract, "", end, count, "BID_ASK", useRth=False)

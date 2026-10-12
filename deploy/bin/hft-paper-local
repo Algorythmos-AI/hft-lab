@@ -1,0 +1,127 @@
+#!/bin/sh
+# hft-paper-local: the recorder and the trader on this machine, against a paper gateway on this machine.
+#
+#   deploy/bin/hft-paper-local              start both, and stop both cleanly on Ctrl-C (or SIGTERM)
+#   deploy/bin/hft-paper-local --no-recorder    the trader alone
+#   deploy/bin/hft-paper-local --dry-run    print what would be run, and run nothing
+#
+# For a laptop, without the server: no systemd, no sudo, no install. It runs from a checkout that has an
+# environment (`make bootstrap`), and keeps all of its state under var/ in that checkout, which git ignores.
+# The trader reconciles with the broker itself, every minute. For the screen, in a second terminal:
+#
+#   make paper-status
+#
+# What it will and will not do:
+#   - It connects to 127.0.0.1 port 4002 and nowhere else: the paper gateway's port. It takes no host and no
+#     port. The paper-only lock in the platform checks the port, the mode and the account the gateway reports,
+#     before connecting and before every order, and this script is no way round it.
+#   - It runs with MODE=paper, and refuses to start if MODE is already set to anything else.
+#   - It starts nothing but the two processes, and it never logs in to the gateway: that is the owner's.
+#   - On a Mac it holds `caffeinate` while it runs, so the machine does not sleep from idleness. Closing the
+#     lid still sleeps it, and a sleeping machine loses the gateway's link.
+#
+#   HFT_ROOT      the checkout to run in (default: the one this script is in). For tests
+#   HFT_PYTHON    the interpreter (default: .venv/bin/python in the checkout). For tests
+#
+# Exit code: 0 when both stopped cleanly, else the first code that was not 0. 2 is a refusal: nothing was started.
+set -eu
+
+PORT=4002
+here=$(cd "$(dirname "$0")" && pwd)
+root=${HFT_ROOT:-$(cd "$here/../.." && pwd)}
+python=${HFT_PYTHON:-$root/.venv/bin/python}
+dry=0
+recorder=1
+
+for word in "$@"; do
+    case "$word" in
+        --dry-run) dry=1 ;;
+        --no-recorder) recorder=0 ;;
+        -h|--help) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) echo "hft-paper-local: refused: it takes --dry-run and --no-recorder, not '$word'. It has one gateway: 127.0.0.1:$PORT" >&2; exit 2 ;;
+    esac
+done
+
+if [ "${MODE:-paper}" != "paper" ]; then
+    echo "hft-paper-local: refused: MODE is set and is not 'paper'. This runs on the paper account or not at all" >&2
+    exit 2
+fi
+[ -f "$root/config/trader.yaml" ] || { echo "hft-paper-local: refused: $root is not a checkout of the platform" >&2; exit 2; }
+[ -x "$python" ] || { echo "hft-paper-local: refused: no environment at $python: run  make bootstrap" >&2; exit 2; }
+
+run_recorder="$python -m hftlab.record --host 127.0.0.1 --port $PORT"
+run_trader="$python -m hftlab.trader --host 127.0.0.1 --port $PORT"
+
+if [ "$dry" -eq 1 ]; then
+    echo "hft-paper-local: DRY RUN, nothing is run"
+    echo "  in $root, with MODE=paper PYTHONPATH=src PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 TZ=UTC HFT_STATE_DIR=var"
+    [ "$recorder" -eq 1 ] && echo "  would start: $run_recorder    (log: var/log/recorder.log)"
+    echo "  would start: $run_trader    (log: var/log/trader.log)"
+    echo "  would stop both with SIGTERM on Ctrl-C, and wait for them"
+    exit 0
+fi
+
+cd "$root"
+mkdir -p var/log
+export MODE=paper PYTHONPATH=src PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 TZ=UTC HFT_STATE_DIR=var
+
+recorder_pid=""
+trader_pid=""
+awake_pid=""
+stopping=0
+
+stop() {
+    # Told once is enough: each process ends its session, flushes and closes its files on SIGTERM.
+    [ "$stopping" -eq 1 ] && return 0
+    stopping=1
+    echo "hft-paper-local: stopping (positions are NOT closed by this: see the runbook for KILL and FLATTEN)" >&2
+    [ -n "$trader_pid" ] && kill -TERM "$trader_pid" 2>/dev/null || true
+    [ -n "$recorder_pid" ] && kill -TERM "$recorder_pid" 2>/dev/null || true
+}
+trap stop INT TERM
+
+if [ "$recorder" -eq 1 ]; then
+    $run_recorder >>var/log/recorder.log 2>&1 &
+    recorder_pid=$!
+fi
+$run_trader >>var/log/trader.log 2>&1 &
+trader_pid=$!
+if command -v caffeinate >/dev/null 2>&1; then
+    caffeinate -i -w "$trader_pid" &
+    awake_pid=$!
+fi
+
+echo "hft-paper-local: trader $trader_pid${recorder_pid:+, recorder $recorder_pid}; logs in $root/var/log; Ctrl-C stops both" >&2
+echo "hft-paper-local: the screen, in another terminal:  make paper-status" >&2
+
+# `wait` returns early, with a code above 128, when a signal arrives; the process is then still there and is
+# waited for again, and the second answer is its own exit code.
+reap() {
+    reaped=0
+    while :; do
+        wait "$1" && reaped=0 || reaped=$?
+        kill -0 "$1" 2>/dev/null || break
+    done
+    if [ "$reaped" -gt 128 ]; then
+        wait "$1" 2>/dev/null && reaped=0 || reaped=$?
+        [ "$reaped" -eq 127 ] && reaped=0  # already collected: it ended on our SIGTERM
+    fi
+    return 0
+}
+
+reap "$trader_pid"
+code=$reaped
+if [ "$stopping" -eq 0 ]; then
+    # The trader ended by itself (a refusal, or the gateway was not there): the recorder is not left behind.
+    echo "hft-paper-local: the trader ended by itself with code $code; see var/log/trader.log" >&2
+    stop
+fi
+other=0
+if [ -n "$recorder_pid" ]; then
+    reap "$recorder_pid"
+    other=$reaped
+fi
+[ -n "$awake_pid" ] && kill "$awake_pid" 2>/dev/null || true
+echo "hft-paper-local: stopped (trader $code${recorder_pid:+, recorder $other})" >&2
+[ "$code" -ne 0 ] && exit "$code"
+exit "$other"

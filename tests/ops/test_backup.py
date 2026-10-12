@@ -30,7 +30,7 @@ from hftlab.trader.__main__ import only_one
 from hftlab.trader.session import STATE
 from tests.learn import kit as learning
 from tests.ops.kit import SATURDAY, Host, a_shadow_session, sources
-from tests.support import ROOT, called_name
+from tests.support import PLACEHOLDER, ROOT, called_name
 from tests.trader.kit import Desk, put_stage
 
 STAMP = "20261014T030000Z"
@@ -73,7 +73,7 @@ def test_on_a_host_with_nothing_yet_the_list_is_empty(tmp_path):
 
 # ---- the trader's folder and the learning folder: taken whole, but for what is named ---------------------------------
 
-SHIPPED = ["--cost-model", str(ROOT / "config/cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
+SHIPPED = ["--cost-model", str(PLACEHOLDER / "cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
            "--feasibility", str(ROOT / "config/feasibility.yaml")]  # fmt: skip
 
 
@@ -107,7 +107,10 @@ def kept(folder) -> list[Entry]:
 def test_what_the_trader_the_lineup_and_training_cannot_make_again_is_on_the_list(lived):
     names = {entry.name for entry in kept(lived)}
     (day,) = (lived / "trader" / "days").iterdir()
-    assert {f"trader/{name}.jsonl" for name in STATE} <= names, "the outbox, both books' journals, latches, stages"
+    # The float's journal exists only where the limits keep a float (ADR 0031); this desk's do not. Where it
+    # exists it is in the trader's folder, which is taken whole.
+    always = {f"trader/{name}.jsonl" for name in STATE if name != "inventory"}
+    assert always <= names, "the outbox, both books' journals, latches, stages"
     assert {"trader/outbox.jsonl", "trader/shadow.jsonl", "trader/stages.jsonl", "trader/lineup.jsonl"} <= names
     assert f"trader/days/{day.name}/decisions.jsonl" in names
     assert (lived / "trader" / resume.FILE).is_file(), "the trader that was stopped saved its sleeves' states"

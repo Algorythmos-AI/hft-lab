@@ -9,6 +9,15 @@ Its runbook is docs/runbooks/trader.md.
     python -m hftlab.trader --demote SLEEVE off --operator NAME     ask it to take a sleeve down (off or shadow)
     python -m hftlab.trader --dry-run-seconds 60 --state-dir DIR    the same loop on the fake broker; no gateway
     python -m hftlab.trader --housekeep                  compress the closed parts of the tapes; say what they use
+    python -m hftlab.trader --fund-plan                  the conversions that would fund the float; converts nothing
+    python -m hftlab.trader --fund --operator NAME       ask the running trader to fund the float (ADR 0031)
+    python -m hftlab.trader --unfund --operator NAME     ask it to convert the float back
+    python -m hftlab.trader --reanchor --operator NAME   ask it to take the venue's cash as where the account stands
+
+The float is what lets a cash account trade both ways: an amount of every traded currency, bought once. The
+plan is worked out from what the running trader last heard the account holds (its status file), and is only
+printed. A funding is asked of the running trader, which proposes each conversion to its own order manager:
+there is no other way an order of this platform reaches the broker, and this command sends none.
 
 A place whose settings say `scorer: process` is scored by a child of this process (ADR 0023, section 5). How
 long the child may take is `scorer:` in the learning settings (--learn), which are read for that and nothing
@@ -59,12 +68,13 @@ from hftlab.learn.config import load as load_learning
 from hftlab.lineup.serve import PROCESS
 from hftlab.ops import host
 from hftlab.ops.alerts import Alerts, sender_from
+from hftlab.record.format import instrument_of
 from hftlab.risk import ROOM, RiskConfig, RiskConfigError, RiskNotInForce, file_switches, load_risk_config
 from hftlab.safety.lock import PaperOnlyError
 from hftlab.safety.venues import UnknownVenueError, venue
 from hftlab.scoring.client import Times
 from hftlab.shadow.__main__ import ConfigError
-from hftlab.trader import room
+from hftlab.trader import funding, room
 from hftlab.trader.config import Settings, TraderConfigError, digest, load
 from hftlab.trader.replay import replay_day
 from hftlab.trader.session import Notify, Silent, Trader, TraderRefused
@@ -112,9 +122,19 @@ def config_digest(args: argparse.Namespace) -> str:
     return digest(files)
 
 
-def account_cannot_open(args: argparse.Namespace, settings: Settings) -> dict[str, str]:
-    """pair -> why the capability file does not show the account opening a position in it, long and short."""
-    return capability.cannot_open(capability.load(args.capability), settings.pairs)
+def account_cannot_open(
+    args: argparse.Namespace, settings: Settings, risk: RiskConfig | None
+) -> tuple[dict[str, str], dict[str, str]]:
+    """(pairs the capability file holds whatever is funded, pairs it holds only until a float is funded).
+
+    Each is pair -> why the file does not show the account opening a position in it, long and short. Without
+    a float in the limits everything is of the first kind. With one (ADR 0031), a pair refused only for want
+    of cash is of the second, and a pair the limits keep on the shadow venue alone is in neither.
+    """
+    loaded = capability.load(args.capability)
+    if risk is None or risk.inventory is None:
+        return capability.cannot_open(loaded, settings.pairs), {}
+    return capability.split(loaded, settings.pairs, risk.inventory.shadow_only)
 
 
 @contextlib.contextmanager
@@ -161,13 +181,14 @@ def serve(
     should_stop: Callable[[], bool],
     times: Times | None = None,
     cannot_open: dict[str, str] | None = None,
+    needs_float: dict[str, str] | None = None,
 ) -> int:
     """Session after session until told to stop. Each starts as a restart would: from the journals, blind."""
     sessions = 0
     while not should_stop():
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=notify,
-            config_digest=config_digest, scorer_times=times, cannot_open=cannot_open,
+            config_digest=config_digest, scorer_times=times, cannot_open=cannot_open, needs_float=needs_float,
         )  # fmt: skip
         sessions += 1
         say(f"session {trader.session} of {trader.label}; stages {json.dumps(trader.stages.all(), sort_keys=True)}")
@@ -215,7 +236,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         raise TraderRefused(f"{settings.venue} is not a broker's paper account")
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
     times = scorer_times(args.learn, settings)
-    blocked = account_cannot_open(args, settings)
+    blocked, unfunded = account_cannot_open(args, settings, risk)
     tape = room.edge_options(settings, risk)  # refused here, before any connection, when the quota is too small
     stopping: list[int] = []
     for number in (signal.SIGTERM, signal.SIGINT):
@@ -264,6 +285,11 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
             "SHADOW IS THE HIGHEST STAGE: the capability file does not show that the account can open these "
             f"positions, long and short: {capability.said(blocked)}"
         )
+    if unfunded and not blocked:
+        say(
+            "ON THE FLOAT: the account opens these pairs only with cash it holds, so no sleeve goes above shadow "
+            f"and no entry is sent until a float is funded (--fund-plan, --fund): {capability.said(unfunded)}"
+        )
     with only_one(settings.state_dir):
         edge = LiveEdge(
             source, clock, pairs=settings.pairs, switches=file_switches(switch_dir, names),
@@ -274,6 +300,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
             serve(
                 edge, settings, model=model, calendar=calendar, risk=risk, notify=notify,
                 config_digest=config_digest(args), should_stop=should_stop, times=times, cannot_open=blocked,
+                needs_float=unfunded,
             )  # fmt: skip
         finally:
             source.disconnect()
@@ -282,10 +309,11 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
 
 def run_replay(args: argparse.Namespace, settings: Settings) -> int:
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
+    blocked, unfunded = account_cannot_open(args, settings, risk)
     with tempfile.TemporaryDirectory(prefix="hft-replay-") as scratch:
         found = replay_day(
             args.replay, Path(scratch), settings, model=model, calendar=calendar, risk=risk,
-            config_digest=config_digest(args), cannot_open=account_cannot_open(args, settings),
+            config_digest=config_digest(args), cannot_open=blocked, needs_float=unfunded,
         )  # fmt: skip
     print(json.dumps({"day": args.replay.name, "sessions": [one.as_dict() for one in found]}, indent=2))
     return EXIT_OK if all(one.identical for one in found) else EXIT_FAILED
@@ -319,6 +347,59 @@ def ask(settings: Settings, what: str, subject: str, value: str, operator: str) 
     return EXIT_OK
 
 
+PLAN_MAX_AGE_NS = 300 * SECOND  # a plan is not worked out from balances the trader heard longer ago than this
+
+
+def fund_plan(settings: Settings, risk_path: Path, out: IO[str], *, now_ns: int | None = None) -> int:
+    """Print the conversions that would fund the float, from what the running trader last heard. Converts nothing.
+
+    Exit 0 with a plan, or with nothing to do; 2 when it is refused: no float is configured, no trader has
+    said what the account holds, what it said is old, or the account cannot cover the float.
+    """
+    risk = limits(risk_path)
+    if risk is None or risk.inventory is None:
+        raise TraderRefused("no float is configured: the limits are not in force, or have no `inventory` section")
+    inventory = risk.inventory
+    path = settings.state_dir / "status.json"
+    try:
+        said = json.loads(path.read_text(encoding="utf-8")).get("float")
+    except (OSError, ValueError, AttributeError):
+        said = None
+    if not isinstance(said, dict) or not isinstance(said.get("cash"), dict):
+        raise TraderRefused(
+            f"{path} does not say what the account holds yet. Start the trader on the paper account and wait for its "
+            "first reconciliation (a minute): the plan is worked out from what it hears, not from a second login"
+        )
+    now = WallClock().now_ns() if now_ns is None else now_ns
+    heard = said.get("cash_at_ns")
+    if not isinstance(heard, int) or now - heard > PLAN_MAX_AGE_NS:
+        raise TraderRefused("what the trader last heard of the account's cash is over five minutes old; is it running?")
+    cash = {str(code): int(amount) for code, amount in said["cash"].items()}
+    unit = funding.UNIT
+    print(f"float: {said.get('phase')}", file=out)
+    for code in sorted(set(inventory.float_micro) | {c for c, a in cash.items() if a}):
+        held, wanted = cash.get(code, 0), inventory.float_micro.get(code, 0)
+        kept = inventory.reserve_micro.get(code, 0)
+        print(f"  {code}  holds {held // unit:>12}   float {wanted // unit:>10}   reserve {kept // unit:>8}", file=out)
+    if said.get("phase") != funding.NONE:
+        print("nothing to plan: a float stands or is being converted. `--unfund` takes it back.", file=out)
+        return EXIT_OK
+    instruments = {one.pair: one for one in map(instrument_of, said.get("instruments") or [])}
+    quotes = {str(pair): (int(q[0]), int(q[1])) for pair, q in (said.get("quotes") or {}).items()}
+    try:
+        steps = funding.plan(cash, quotes, instruments, inventory, risk.pairs)
+    except funding.CannotFund as exc:
+        raise TraderRefused(f"the float cannot be funded: {exc}") from exc
+    if not steps:
+        print("nothing to convert: the account holds the float already. `--fund` records it as the baseline.", file=out)
+        return EXIT_OK
+    print("conversions, in this order (each at the market, in orders of at most the pair's limit):", file=out)
+    for step in steps:
+        print(f"  {step.line()}", file=out)
+    print("`--fund --operator NAME` asks the running trader to place them. Nothing was sent.", file=out)
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m hftlab.trader", description="Trade on the paper account.")
     parser.add_argument("--config", type=Path, default=CONFIG)
@@ -338,6 +419,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--housekeep", action="store_true", help="compress the closed parts of the tapes and exit")
     parser.add_argument("--reset", metavar="LATCH", help="ask the running trader to reset this latch")
     parser.add_argument("--demote", nargs=2, metavar=("SLEEVE", "STAGE"), help="ask it to take a sleeve down")
+    parser.add_argument("--fund-plan", action="store_true", help="print the conversions that would fund the float")
+    parser.add_argument("--fund", action="store_true", help="ask the running trader to fund the float")
+    parser.add_argument("--unfund", action="store_true", help="ask the running trader to convert the float back")
+    parser.add_argument("--reanchor", action="store_true", help="ask it to take the venue's cash as where it stands")
     parser.add_argument("--operator", help="who is asking; it goes into the journal")
     args = parser.parse_args(argv)
     try:
@@ -350,9 +435,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             return show_stages(settings, sys.stdout)
         if args.housekeep:
             return keep_house(settings, args.risk)
-        if args.reset or args.demote:
+        if args.fund_plan:
+            return fund_plan(settings, args.risk, sys.stdout)
+        if args.reset or args.demote or args.fund or args.unfund or args.reanchor:
             if not args.operator:
                 raise TraderRefused("--operator NAME is needed: the journal says who asked")
+            if args.fund or args.unfund or args.reanchor:
+                if args.fund + args.unfund + args.reanchor != 1:
+                    raise TraderRefused("one of --fund, --unfund and --reanchor at a time")
+                what = funding.FUND if args.fund else funding.UNFUND if args.unfund else "anchor"
+                return ask(settings, what, "float", "", args.operator)
             if args.reset:
                 return ask(settings, "reset", args.reset, "", args.operator)
             if args.demote[0] not in settings.names or args.demote[1] not in (OFF, SHADOW):

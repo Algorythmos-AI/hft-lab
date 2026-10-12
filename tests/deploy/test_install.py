@@ -66,13 +66,14 @@ def good_samples(tmp_path) -> str:
 # ---- the scripts themselves ------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["hft-install", "hft-status", "hft-preflight-sample"])
+@pytest.mark.parametrize("name", ["hft-install", "hft-status", "hft-preflight-sample", "hft-paper-local"])
 def test_every_script_is_posix_shell_parses_and_is_executable(name):
     script = SCRIPTS / name
     assert script.read_text().startswith("#!/bin/sh\n") and script.stat().st_mode & stat.S_IXUSR
     assert subprocess.run(["sh", "-n", str(script)], check=False).returncode == 0
     assert "[[" not in script.read_text() and "#!/usr/bin/env bash" not in script.read_text()
-    assert sorted(path.name for path in SCRIPTS.iterdir()) == ["hft-install", "hft-preflight-sample", "hft-status"]
+    listed = ["hft-install", "hft-paper-local", "hft-preflight-sample", "hft-status"]  # the second is for a laptop
+    assert sorted(path.name for path in SCRIPTS.iterdir()) == listed
 
 
 def test_no_script_holds_an_address_a_key_or_another_desks_unit():

@@ -17,6 +17,7 @@ What a caller may rely on:
   * A `Fill` may arrive more than once, and before or after the `OrderEvent` that counts it. `fill_id` is the
     key. Its commission arrives separately, as a `CommissionEvent`, and may be late.
   * Events lost while disconnected are not replayed. `executions_since` and `open_orders` are how to find out.
+  * `cash()` is a question like `positions()`: it changes nothing at the venue, and its answer is the venue's.
 """
 from __future__ import annotations
 
@@ -117,6 +118,19 @@ class VenuePosition:
 
 
 @dataclass(frozen=True, slots=True)
+class VenueCash:
+    """What the account holds of one currency, in millionths of it (CASH_SCALE). Read, never set, by this platform.
+
+    A cash account converts currencies and lends none: a buy is paid from the quote currency it holds and a
+    sell from the base currency it holds (ADR 0031). This is the venue's own figure; like a position it is
+    compared with ours and never trusted over it.
+    """
+
+    currency: str
+    amount: int
+
+
+@dataclass(frozen=True, slots=True)
 class Capabilities:
     kinds: frozenset[InstrumentKind]
     depth: bool
@@ -208,4 +222,8 @@ class Venue(Protocol):
 
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]:
         """Fills the venue executed at or after `ts_ns` (its own time). One it cannot date is included."""
+        ...
+
+    def cash(self) -> tuple[VenueCash, ...]:
+        """The cash the paper account holds, one entry per currency it reports, sorted by currency. Read-only."""
         ...

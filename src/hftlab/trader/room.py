@@ -26,7 +26,8 @@ paged, and the reserve is what the tape can take in that time, the worst of ever
     turns    one a beat for the whole of the time limit, and two for its ends
     step     a turn's line with a quote for every pair and a beat
     asked    the venue's answers when a connection is made safe on that turn: every order that can be listed
-             as working, every fill that can be listed, a position for every pair. What can be listed is what
+             as working, every fill that can be listed, a position for every pair, and for a cash
+             account with a float its cash in every currency, twice. What can be listed is what
              the desk's `max_orders_per_minute` lets through in the time limit and the five minutes before
              it, which is how far back the reconciler asks
     orders   what the desk's `max_orders_per_minute` lets through in the time limit, exits, retries and
@@ -99,6 +100,7 @@ _OPEN: Final = _size(
     ]
 )  # fmt: skip
 _POSITION: Final = _size([_PAIR, "CASH", -BIG])
+_CASH: Final = _size(["USD", -BIG])  # one currency of the account's cash, as the venue answers (ADR 0031)
 _ASK: Final = _size(["ask", "executions_since", _STATE, [], "VenueUnavailable"])
 _STOP: Final = _size(["stop", BIG])
 _HEAD: Final = 2_048  # a session's `open` and `marks` lines without its instruments: a mark and a hash a journal
@@ -158,6 +160,10 @@ def reserve_bytes(settings: Settings, risk: RiskConfig | None) -> int:
         return starts + turns(settings) * step + _STOP + len(DARK)  # nothing can be sent, so nothing is asked
     listed = orders(risk, settings.tape_flatten_ns + LISTED_NS)
     asked = 3 * _ASK + listed * (_OPEN + FILLS_PER_ORDER * _FILL) + pairs * _POSITION
+    if risk.inventory is not None:
+        # The venue is asked for the account's cash as well: at most the two currencies of every pair, and as
+        # often again for what an operator's request about the float asks on the same turn.
+        asked += 2 * (_ASK + 2 * pairs * _CASH)
     order = 2 * _SENT + REPORTS_PER_ORDER * _REPORT + FILLS_PER_ORDER * (_FILL + _COMMISSION)
     sent = orders(risk, settings.tape_flatten_ns + MINUTE)
     return starts + turns(settings) * (step + asked) + sent * order + _STOP + len(DARK)

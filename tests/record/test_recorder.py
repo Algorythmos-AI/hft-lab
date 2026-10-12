@@ -25,7 +25,7 @@ from hftlab.venues.port import ConnectionState
 from hftlab.venues.supervisor import Backoff
 from hftlab.venues.view import MarketDataView
 from tests.record.kit import HOUR, MS, PAIRS, ROOMY, SECOND, T0, a_disk, a_store, everything
-from tests.support import ROOT, called_name, sources
+from tests.support import PLACEHOLDER, ROOT, called_name, sources
 from tests.venues.kit import INSTRUMENTS
 
 SETTINGS = RecorderSettings(pairs=(("EUR.USD", InstrumentKind.CASH), ("USD.JPY", InstrumentKind.CASH)))
@@ -407,13 +407,15 @@ def test_only_the_view_itself_reaches_the_venue_behind_it():
 
 def test_the_shipped_config_loads_and_marks_its_placeholders():
     config = cli.load_config(ROOT / "config" / "recorder.yaml")
-    assert config["pairs"] == (("EUR.USD", InstrumentKind.CASH), ("USD.JPY", InstrumentKind.CASH))
+    four = ("EUR.USD", "USD.JPY", "AUD.USD", "GBP.USD")  # the two paper pairs and the two kept on the shadow venue
+    assert config["pairs"] == tuple((pair, InstrumentKind.CASH) for pair in four)
     assert cli.store_settings(config).keep_ns == 240 * HOUR and cli.offload_of(config) is None
     assert "PLACEHOLDER" in (ROOT / "config" / "recorder.yaml").read_text()
 
 
 def test_a_dry_run_records_the_fake_broker_and_the_day_checks_out(tmp_path, capsys):
-    assert cli.main(["--dry-run-seconds", "8", "--root", str(tmp_path / "rec")]) == 0
+    frozen = ["--config", str(PLACEHOLDER / "recorder.yaml")]
+    assert cli.main([*frozen, "--dry-run-seconds", "8", "--root", str(tmp_path / "rec")]) == 0
     assert "stopped after" in capsys.readouterr().err
     found = everything(tmp_path / "rec")
     assert found[0].kind == fmt.START and found[-1].kind == fmt.STOP and len(found) > 1_000
@@ -422,6 +424,7 @@ def test_a_dry_run_records_the_fake_broker_and_the_day_checks_out(tmp_path, caps
 
 def test_sigterm_stops_the_process_cleanly_with_everything_flushed(tmp_path):
     command = [sys.executable, "-m", "hftlab.record", "--dry-run-seconds", "864000", "--root", str(tmp_path / "rec")]
+    command += ["--config", str(PLACEHOLDER / "recorder.yaml")]
     environment = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
     child = subprocess.Popen(command, cwd=ROOT, env=environment, stderr=subprocess.PIPE)
     assert b"recording EUR.USD, USD.JPY from fake" in child.stderr.readline()

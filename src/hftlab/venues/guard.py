@@ -36,6 +36,7 @@ from hftlab.venues.port import (
     OrderRefused,
     UnknownInstrument,
     Unsupported,
+    VenueCash,
     VenueError,
     VenueEvent,
     VenueNotice,
@@ -53,7 +54,7 @@ class GuardedVenue(abc.ABC):
     SEALED: ClassVar[tuple[str, ...]] = (
         "connect", "disconnect", "mark_reconciled", "poll", "place", "cancel", "state", "managed_accounts",
         "instrument", "subscribe_quotes", "unsubscribe_quotes", "subscribe_depth", "unsubscribe_depth",
-        "historical_quotes", "open_orders", "positions", "executions_since", "server_time_ns",
+        "historical_quotes", "open_orders", "positions", "executions_since", "server_time_ns", "cash",
     )  # fmt: skip
 
     def __init_subclass__(cls, **kwargs: object) -> None:
@@ -144,6 +145,10 @@ class GuardedVenue(abc.ABC):
 
     @abc.abstractmethod
     def _server_time_ns(self) -> int: ...
+
+    @abc.abstractmethod
+    def _cash(self) -> tuple[VenueCash, ...]:
+        """The account's cash by currency, as the broker reports it now. A question: it sends no order."""
 
     # ---- connection ---------------------------------------------------------------------------------------------
 
@@ -366,6 +371,10 @@ class GuardedVenue(abc.ABC):
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]:
         self._require_connected()
         return self._executions_since(ts_ns)
+
+    def cash(self) -> tuple[VenueCash, ...]:
+        self._require_connected()
+        return tuple(sorted(self._cash(), key=lambda held: held.currency))
 
     def _require_known(self, instrument: Instrument) -> None:
         if instrument not in self._instruments:

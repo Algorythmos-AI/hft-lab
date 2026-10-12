@@ -12,7 +12,7 @@ from hftlab.feasibility import __main__ as cli
 from hftlab.record.format import Heartbeat, Marker
 from hftlab.venues.port import ConnectionEvent, ConnectionState
 from tests.shadow.kit import BIG, constant, walk
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.venues.kit import EURUSD, SECOND, T0, USDJPY, plain_costs
 
 MINUTE = 60 * SECOND
@@ -263,7 +263,8 @@ def test_settings_that_are_incomplete_or_inexact_are_refused(tmp_path, change):
 def recorded_store(tmp_path, seconds: int = 120):
     from hftlab.record import __main__ as record
 
-    assert record.main(["--dry-run-seconds", str(seconds), "--root", str(tmp_path / "rec")]) == 0
+    frozen = ["--config", str(PLACEHOLDER / "recorder.yaml")]
+    assert record.main([*frozen, "--dry-run-seconds", str(seconds), "--root", str(tmp_path / "rec")]) == 0
     return tmp_path / "rec"
 
 
@@ -272,7 +273,8 @@ def test_the_command_maps_a_recorded_store_and_writes_json(tmp_path, capsys, mon
     store = recorded_store(tmp_path)
     capsys.readouterr()
     out = tmp_path / "maps" / "map.json"
-    assert cli.main(["--store", str(store), "--out", str(out)]) == 0
+    costs = ["--cost-model", str(PLACEHOLDER / "cost_model.yaml")]
+    assert cli.main(["--store", str(store), "--out", str(out), *costs]) == 0
     printed, said = capsys.readouterr()
     assert printed == "" and "PLACEHOLDER" in said and f"1 day(s), map written to {out}" in said
     result = json.loads(out.read_text())
@@ -288,7 +290,7 @@ def test_the_command_maps_a_recorded_store_and_writes_json(tmp_path, capsys, mon
         assert by_horizon[5]["median_cost_x2_micro"] > 0 and by_horizon[900]["median_cost_x2_micro"] is None
         assert not any(cell["viable"] for cell in line["cells"]), "two minutes are fewer windows than the rule asks"
 
-    assert cli.main(["--store", str(store), "--day", "2026-10-07"]) == 0
+    assert cli.main(["--store", str(store), "--day", "2026-10-07", *costs]) == 0
     assert json.loads(capsys.readouterr().out) == result, "the same recording, the same map, printed this time"
 
 

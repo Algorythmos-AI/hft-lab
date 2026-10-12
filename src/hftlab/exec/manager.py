@@ -55,6 +55,7 @@ from hftlab.venues.port import (
     OrderRefused,
     UnknownInstrument,
     Venue,
+    VenueCash,
     VenueError,
     VenuePosition,
     VenueUnavailable,
@@ -72,13 +73,15 @@ _SETTLED: Final = {
 
 
 class Asked(Protocol):
-    """The three questions the manager asks of a venue while it makes a connection safe. Nothing here trades."""
+    """The questions asked of a venue: three while a connection is made safe, and what cash it holds. None trades."""
 
     def open_orders(self) -> tuple[OpenOrder, ...]: ...
 
     def positions(self) -> tuple[VenuePosition, ...]: ...
 
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]: ...
+
+    def cash(self) -> tuple[VenueCash, ...]: ...
 
 
 # Told how every send and every cancel went: ("place" or "cancel", the client order id, one of the words below).

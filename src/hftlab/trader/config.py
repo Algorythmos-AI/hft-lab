@@ -131,6 +131,8 @@ def parse(loaded: object, source: str = "the trader's settings") -> Settings:
             names.append(check_sleeve(entry.get("name")))
         except ValueError as exc:
             raise TraderConfigError(f"{source}: {exc}") from exc
+    if "float" in names:
+        raise TraderConfigError(f"{source}: `float` is the book's name for the account's float, not a sleeve")
     ladders = loaded["rollout"]
     if not isinstance(ladders, dict) or sorted(ladders) != sorted(names) or len(set(names)) != len(names):
         raise TraderConfigError(f"{source}: `rollout` must have one entry for each sleeve, and each sleeve one name")

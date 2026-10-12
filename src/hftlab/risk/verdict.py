@@ -39,6 +39,12 @@ class Reason(Enum):
     ORDER_RATE_DESK = "ORDER_RATE_DESK"
     ORDER_TO_TRADE_SLEEVE = "ORDER_TO_TRADE_SLEEVE"
     ORDER_TO_TRADE_DESK = "ORDER_TO_TRADE_DESK"
+    # a cash account with a float (ADR 0031)
+    PAIR_NOT_TRADABLE = "PAIR_NOT_TRADABLE"  # the account cannot hold one of the pair's currencies: shadow only
+    ODD_LOT = "ODD_LOT"  # an entry smaller than the pair's minimum, which the venue prices worse
+    CASH_RESERVE = "CASH_RESERVE"  # with every order on its way filled, it would take a currency under its reserve
+    NOT_FUNDED = "NOT_FUNDED"  # no float stands: there is nothing a sleeve's position could be a deviation from
+    FUNDING_NOT_OPEN = "FUNDING_NOT_OPEN"  # a conversion of the float, with no funding an operator asked for
     # market guards
     NO_QUOTE = "NO_QUOTE"
     STALE_QUOTE = "STALE_QUOTE"

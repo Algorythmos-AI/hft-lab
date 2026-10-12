@@ -8,7 +8,7 @@ export PYTHONDONTWRITEBYTECODE := 1
 LOCK := uv pip compile --universal --python-version 3.12 --generate-hashes
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap ml lock lint typecheck test leakcheck attest ci hooks
+.PHONY: help bootstrap ml lock lint typecheck test leakcheck attest ci hooks paper-local paper-status
 
 help: ## List the tasks
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | sed -E 's/:.*## /\t/' | sort
@@ -48,3 +48,9 @@ ci: lint typecheck test leakcheck ## Everything CI runs
 
 hooks: ## Use the tracked hooks in .githooks (pre-commit, commit-msg, pre-push)
 	git config core.hooksPath .githooks
+
+paper-local: ## Recorder and trader on this machine against a local paper gateway (port 4002); Ctrl-C stops both
+	deploy/bin/hft-paper-local
+
+paper-status: ## The status screen for a local run: stages, float, positions, paper fills, shadow result
+	HFT_STATE_DIR=var $(PY) -m hftlab.ops.status

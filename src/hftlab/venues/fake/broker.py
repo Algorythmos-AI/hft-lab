@@ -19,6 +19,10 @@ from collections.abc import Callable, Iterable, Sequence
 from hftlab.core import Clock, Fill, Instrument, InstrumentKind, Order, OrderState, Quote, SimClock
 from hftlab.safety.gate import PaperGate, Permit
 from hftlab.venues.fake.market import (
+    INSUFFICIENT_CASH,
+    NOT_ALLOWED,
+    ODD_LOT_CODE,
+    REJECTED_CODE,
     Acked,
     Cancelled,
     CancelTooLate,
@@ -38,6 +42,7 @@ from hftlab.venues.port import (
     UnknownInstrument,
     UnknownOrder,
     Venue,
+    VenueCash,
     VenuePosition,
     VenueUnavailable,
 )
@@ -142,6 +147,10 @@ class FakeBroker(GuardedVenue):
         elif isinstance(happening, Acked):
             self._report(happening.client_order_id, OrderState.WORKING, 0, happening.broker_order_id)
         elif isinstance(happening, Rejected):
+            if happening.reason.startswith((INSUFFICIENT_CASH, NOT_ALLOWED)):
+                # A real gateway says it twice: as the order's last state, and as a message with its number.
+                said = f"Order rejected - reason:{happening.reason}"
+                self._emit_notice(f"ib:{REJECTED_CODE}", said, happening.client_order_id)
             self._report(happening.client_order_id, OrderState.REJECTED, 0, None, happening.reason)
         elif isinstance(happening, Executed):
             self._emit_fill(
@@ -220,6 +229,10 @@ class FakeBroker(GuardedVenue):
         if not self._gate.holds(permit):
             raise VenueUnavailable("the connection this order was checked for is gone")
         self.market.submit(order, instrument, self._clock.now_ns())
+        least = dict(self.market.config.odd_lot_below).get(instrument.base)
+        if least is not None and order.quantity < least:
+            said = f"order size is below the {instrument.base} {least} minimum and is routed as an odd lot"
+            self._emit_notice(f"ib:{ODD_LOT_CODE}", said, order.client_order_id)
 
     def _cancel(self, client_order_id: str, permit: Permit) -> None:
         if not self._gate.holds(permit):
@@ -281,6 +294,10 @@ class FakeBroker(GuardedVenue):
 
     def _server_time_ns(self) -> int:
         return self._clock.now_ns() + self.market.config.server_clock_offset_ns
+
+    def _cash(self) -> tuple[VenueCash, ...]:
+        self._settle()
+        return tuple(VenueCash(currency, amount) for currency, amount in sorted(self.market.cash().items()))
 
     def _settle(self) -> None:
         """A query sees the broker as it is now; what became due is still delivered by the next `poll`."""

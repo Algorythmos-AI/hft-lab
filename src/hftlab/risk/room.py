@@ -12,6 +12,7 @@ the level off the turn the tape recorded: a replayed day shows the gate the same
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -30,3 +31,21 @@ class TapeRoom:
     def __post_init__(self) -> None:
         if type(self.level) is not int or self.level not in LEVELS:
             raise ValueError(f"the tape's room is one of {LEVELS}, not {self.level!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class FloatState:
+    """Where the float of a cash account stands (ADR 0031), shown to the gate by the trader like the tape's room.
+
+    `anchor` is the cash the account began with, by currency in millionths, as far as the broker book is
+    concerned: the gate adds what its own book's fills moved and has the cash it reasons about. `funded` says a
+    baseline stands, so a sleeve may deviate from it. `open` says an operator asked for a funding or an
+    unfunding that has not ended: only then may a conversion of the float go. `unwinding` says it is an
+    unfunding: the float is being converted back to the hub, so the reserve of every other currency is no
+    longer kept (nothing will trade around it), and the hub's still is.
+    """
+
+    anchor: Mapping[str, int] | None = None
+    funded: bool = False
+    open: bool = False
+    unwinding: bool = False

@@ -496,7 +496,12 @@ def test_the_round_trip_cost_of_a_minimum_size_trade_by_hand():
 def test_the_cost_model_as_plain_values_leaves_no_parameter_out():
     costs = plain_costs(commission_minimum={"USD": 2_000_000, "JPY": 300_000_000})
     plain = costs.as_dict()
-    assert list(plain) == [field.name for field in dataclasses.fields(costs)], "every field, in the order declared"
+    names = [field.name for field in dataclasses.fields(costs)]
+    assert names[-1] == "min_order_size_by_base" and list(plain) == names[:-1], "every field, in the order declared"
+    by_base = plain_costs(min_order_size_by_base={"USD": 25_000, "AUD": 25_000})
+    assert list(by_base.as_dict()) == names, "a minimum per base currency is said where there is one, and only there"
+    assert by_base.as_dict()["min_order_size_by_base"] == {"AUD": 25_000, "USD": 25_000}
+    assert type(costs)(**by_base.as_dict()) == by_base
     assert plain["commission_minimum"] == {"JPY": 300_000_000, "USD": 2_000_000} and plain["placeholder"] is True
     assert type(costs)(**plain) == costs, "nothing was changed on the way"
 

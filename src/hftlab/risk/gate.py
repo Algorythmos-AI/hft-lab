@@ -31,6 +31,22 @@ What it is pessimistic about:
     against none. "Can only reduce" counts every order of the sleeve still in flight as filled.
   * Money in different currencies is never added. A loss is judged per currency, and a loss in a currency
     with no latch stops entries by itself.
+
+A cash account with a float (ADR 0031, `inventory` in the limits). The broker lends nothing, so an order is paid
+from cash the account holds: a buy from the quote currency, a sell from the base currency. The gate keeps its
+own figure of that cash: the anchor it is shown (`FloatState`) plus everything the fills in its own book moved.
+Before an order may go, the currency it pays in must stay at or above its reserve with the order filled in
+full at the worst price its collar allows, and with every order still on its way filled the same way; what
+those orders would bring in is not counted. On top of that:
+
+  * a pair the account cannot hold a currency of is refused, whatever the order;
+  * an order that adds to a position is at least the pair's minimum entry;
+  * until a float stands, entries are stopped. Exits never are: an order that can only reduce a sleeve's
+    position is not held to the reserve, because it takes back what the entry paid out;
+  * the conversions that fund the float are orders of the book's `FLOAT` line. They pass every guard here and
+    the reserve, and may go only while a funding an operator asked for is open. The float is not a sleeve: it
+    has no position cap, it is not closed by FLATTEN, and what it gains or loses as rates move is not the
+    desk's result and trips no latch. A sleeve's position, and the desk's, is counted without it.
 """
 from __future__ import annotations
 
@@ -39,7 +55,7 @@ from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from hftlab.book import DESK, UNATTRIBUTED, Book, BookError, BreakEvent
+from hftlab.book import DESK, FLOAT, UNATTRIBUTED, Book, BookError, BreakEvent, expected
 from hftlab.calendar import Calendar, in_rollover_window, last_rollover, next_close
 from hftlab.core import (
     CASH_SCALE,
@@ -59,7 +75,7 @@ from hftlab.core import (
 from hftlab.core._checks import token
 from hftlab.journal import Journal, read
 from hftlab.risk.config import LossLatch, RiskConfig, RiskConfigError
-from hftlab.risk.room import HARD, ROOM, SOFT, TapeRoom
+from hftlab.risk.room import HARD, ROOM, SOFT, FloatState, TapeRoom
 from hftlab.risk.verdict import Outcome, Reason, Verdict
 from hftlab.venues.port import CommissionEvent, ConnectionEvent, ConnectionState
 
@@ -145,6 +161,7 @@ class RiskGate:
         self._state = ConnectionState.DISCONNECTED
         self._broken = False
         self._room = ROOM  # the room on the trader's event tape, as last shown; not journalled, shown again at a start
+        self._float = FloatState()  # where the float stands, as last shown; shown again at every start
         self._quotes: dict[str, Quote] = {}
         self._fresh: dict[str, int] = {}
         self._quoted: set[str] = set()  # pairs quoted on the connection in hand; only those can be confirmed fresh
@@ -200,6 +217,8 @@ class RiskGate:
             self._broken = event.broken
         elif isinstance(event, TapeRoom):
             self._room = event.level
+        elif isinstance(event, FloatState):
+            self._float = event
 
     def quiet(self, pair: str, at_ns: int) -> None:
         """The venue confirmed that this pair's book has not changed: its last quote is as fresh as `at_ns`."""
@@ -323,6 +342,9 @@ class RiskGate:
             refusing.append(Reason.ORDER_ID)
         if self._state is not ConnectionState.READY:
             refusing.append(Reason.VENUE_NOT_READY)
+        inventory, floating = self._config.inventory, order.sleeve == FLOAT
+        if inventory is not None and order.pair in inventory.shadow_only:
+            return [*refusing, Reason.PAIR_NOT_TRADABLE], stopping
         limits, instrument = self._config.pairs.get(order.pair), self._instruments.get(order.pair)
         if limits is None or instrument is None:
             return [*refusing, Reason.PAIR_NOT_CONFIGURED], stopping
@@ -374,16 +396,29 @@ class RiskGate:
             refusing.append(Reason.ORDER_SIZE)
         caps = [(order.sleeve, min(limits.max_position, mine.max_position) if mine else limits.max_position)]
         caps.append((DESK, limits.max_position))
-        if any(self._would_exceed(order, scope, cap) for scope, cap in caps):
+        if not floating and any(self._would_exceed(order, scope, cap) for scope, cap in caps):
             refusing.append(Reason.POSITION_LIMIT)
-        pairs_open = {pair for _, pair in self._book.open_lines()} | {
-            pending.order.pair for pending in self._pending.values() if pending.held
+        pairs_open = {pair for sleeve, pair in self._book.open_lines() if sleeve != FLOAT} | {
+            pending.order.pair for pending in self._pending.values() if pending.held and pending.order.sleeve != FLOAT
         }
-        if order.pair not in pairs_open and len(pairs_open) >= desk.max_open_pairs:
+        if not floating and order.pair not in pairs_open and len(pairs_open) >= desk.max_open_pairs:
             stopping.append(Reason.MAX_OPEN_PAIRS)
+        if floating:
+            if inventory is None or not self._float.open:
+                refusing.append(Reason.FUNDING_NOT_OPEN)
+        elif inventory is not None:
+            if not self._float.funded:
+                stopping.append(Reason.NOT_FUNDED)
+            if order.quantity < inventory.minimum_entry.get(order.pair, 0) and not self._reduces(order):
+                refusing.append(Reason.ODD_LOT)
+        holds_reserve = floating or (self._float.funded and not self._reduces(order))
+        if inventory is not None and holds_reserve and self._short_of_cash(order):
+            refusing.append(Reason.CASH_RESERVE)
 
         self._forget(now)
-        if mine is None:
+        if floating:
+            pass  # not a sleeve: it has no limits of its own, and the desk's rate holds for it below
+        elif mine is None:
             stopping.append(Reason.SLEEVE_NOT_CONFIGURED)
         elif sum(1 for _, sleeve in self._sent if sleeve == order.sleeve) >= mine.max_orders_per_minute:
             refusing.append(Reason.ORDER_RATE_SLEEVE)
@@ -407,10 +442,80 @@ class RiskGate:
             stopping.append(Reason.RECONCILIATION_BREAK)
         return refusing, stopping
 
+    # ---- cash (ADR 0031) ------------------------------------------------------------------------------------------
+
+    def cash(self) -> dict[str, int] | None:
+        """The account's cash as the gate has it: the anchor plus what its book's fills moved. None: no anchor."""
+        if self._float.anchor is None:
+            return None
+        return expected(self._float.anchor, self._book)
+
+    def _pays(self, order: Order, quantity: int) -> tuple[str, int] | None:
+        """(the currency this much of an order is paid in, the most it can cost in millionths); None: no price."""
+        instrument, limits = self._instruments.get(order.pair), self._config.pairs.get(order.pair)
+        if instrument is None or limits is None:
+            return None
+        if order.side is Side.SELL:
+            return instrument.base, quantity * int(10**CASH_SCALE)
+        price = order.limit_price
+        if price is None:
+            quote = self._quotes.get(order.pair)
+            if quote is None:
+                return None
+            # The furthest a market order can be filled from the touch and still have passed a collar.
+            price = quote.ask + limits.exit_collar_ticks * instrument.price_increment
+        return instrument.quote, quantity * price * int(10 ** (CASH_SCALE - instrument.price_scale))
+
+    def spendable(self, currency: str) -> int | None:
+        """What is left of a currency above its reserve with every order on its way filled; None: it is not known."""
+        inventory, cash = self._config.inventory, self.cash()
+        if inventory is None or cash is None:
+            return None
+        kept = inventory.reserve_micro.get(currency, 0)
+        if self._float.unwinding and currency != inventory.hub:
+            kept = 0  # the float is being taken back: all of a currency goes, and only the hub's reserve stays
+        left = cash.get(currency, 0) - kept
+        for pending in self._pending.values():
+            if pending.held:
+                paid = self._pays(pending.order, pending.held)
+                if paid is None:
+                    return None  # an order on its way that cannot be priced: nothing more is promised
+                if paid[0] == currency:
+                    left -= paid[1]
+        return left
+
+    def affordable(self, pair: str, side: Side) -> int | None:
+        """The most base-currency units a market order of this side could be for and still leave the reserve of
+        the currency it pays in. None where the gate keeps no cash (no `inventory`): nothing is said."""
+        if self._config.inventory is None:
+            return None
+        probe = Order(
+            client_order_id(sleeve=FLOAT, pair=pair, side=side, decision_seq=0, leg="probe"), FLOAT, pair, side, 1,
+            OrderType.MARKET, TimeInForce.IOC, 0,
+        )  # fmt: skip
+        paid = self._pays(probe, 1)
+        left = self.spendable(paid[0]) if paid is not None else None
+        if paid is None or left is None:
+            return 0
+        return max(0, left // paid[1])
+
+    def _short_of_cash(self, order: Order) -> bool:
+        """Would this order, filled in full at its worst price, take the currency it pays in under its reserve?"""
+        paid = self._pays(order, order.quantity)
+        if paid is None:
+            return True
+        left = self.spendable(paid[0])
+        return left is None or left < paid[1]
+
     def _reserved(self, pair: str, sleeve: str) -> tuple[int, int]:
-        """(buys, sells) still held for pending orders in a pair, for one sleeve or for the desk."""
+        """(buys, sells) still held for pending orders in a pair, for one sleeve or for the desk.
+
+        The desk is its sleeves. The conversions of the float are counted under `FLOAT` and nowhere else.
+        """
         buys = sells = 0
         for pending in self._pending.values():
+            if sleeve == DESK and pending.order.sleeve == FLOAT:
+                continue
             if pending.order.pair == pair and sleeve in (DESK, pending.order.sleeve):
                 if pending.order.side is Side.BUY:
                     buys += pending.held
@@ -420,11 +525,16 @@ class RiskGate:
 
     def _would_exceed(self, order: Order, scope: str, cap: int) -> bool:
         """Could this order, with every pending order on its side filling in full, take `scope` past `cap`?"""
-        held = self._book.position(scope, order.pair).quantity
+        held = self._held(scope, order.pair)
         buys, sells = self._reserved(order.pair, scope)
         if order.side is Side.BUY:
             return held + buys + order.quantity > cap
         return held - sells - order.quantity < -cap
+
+    def _held(self, scope: str, pair: str) -> int:
+        """A sleeve's position in a pair; for the desk, the sum over its sleeves, which the float is not one of."""
+        held = self._book.position(scope, pair).quantity
+        return held - self._book.position(FLOAT, pair).quantity if scope == DESK else held
 
     def _reduces(self, order: Order) -> bool:
         """Can this order only bring the sleeve's position towards zero, never through it, whatever fills?"""
@@ -468,8 +578,8 @@ class RiskGate:
         out = []
         for (sleeve, pair), quantity in self._book.open_lines().items():
             limits = self._config.pairs.get(pair)
-            if limits is None or (sleeve, pair) in busy:
-                continue
+            if limits is None or (sleeve, pair) in busy or sleeve == FLOAT:
+                continue  # the float is the baseline everything is closed back to: FLATTEN leaves it
             last = self._closing.get((sleeve, pair))
             if last is not None and last[0] not in self._admitted and now - last[1] < self._config.flatten_retry_ns:
                 continue
@@ -489,16 +599,21 @@ class RiskGate:
         """(net result by currency in millionths, the currencies that cannot be valued) for a sleeve or the desk."""
         if self._fees is None:
             self._fees = {name: self._book.fees(name) for name in (DESK, *self._book.sleeves())}
+            for currency, amount in self._fees.get(FLOAT, {}).items():  # what a conversion cost is not the desk's
+                self._fees[DESK][currency] = self._fees[DESK].get(currency, 0) - amount
         lines = self._book.open_lines()
         out: dict[str, int] = {}
         blind: set[str] = set()
         for pair, instrument in self._instruments.items():
             quote = self._quotes.get(pair)
-            if quote is None and any(p == pair and scope in (DESK, s) for s, p in lines):
+            if quote is None and any(p == pair and s != FLOAT and scope in (DESK, s) for s, p in lines):
                 blind.add(instrument.quote)
                 continue
             bid, ask = (quote.bid, quote.ask) if quote else (1, 1)
-            gross = self._book.gross(scope, pair, bid, ask) * int(10 ** (CASH_SCALE - instrument.price_scale))
+            gross = self._book.gross(scope, pair, bid, ask)
+            if scope == DESK:
+                gross -= self._book.gross(FLOAT, pair, bid, ask)  # the float's drift is reported, never judged
+            gross *= int(10 ** (CASH_SCALE - instrument.price_scale))
             out[instrument.quote] = out.get(instrument.quote, 0) + gross
         for currency, amount in self._fees.get(scope, {}).items():
             out[currency] = out.get(currency, 0) - amount
@@ -510,7 +625,7 @@ class RiskGate:
         self._unlatched.clear()
         self._unmarked = False
         # Every sleeve that has limits is measured from the start, so its day opens on nothing, not on its first loss.
-        for scope in (DESK, *sorted(set(self._book.sleeves()) | set(self._config.sleeves))):
+        for scope in (DESK, *sorted((set(self._book.sleeves()) | set(self._config.sleeves)) - {FLOAT})):
             results, blind = self._results(scope)
             self._unmarked = self._unmarked or bool(blind)
             sleeve = None if scope == DESK else scope

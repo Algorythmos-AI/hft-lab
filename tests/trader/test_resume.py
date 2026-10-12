@@ -85,7 +85,7 @@ def test_a_session_that_ends_on_purpose_writes_each_sleeves_state_tied_to_its_jo
     assert (entry["day"], entry["session"], entry["tape"]) == (made.trader.label, 1, head.name)
     assert entry["tape_end"] == [1, len(whole), hashlib.sha256(whole).hexdigest()] == ending(head)
     assert entry["version"] == resume.VERSION == 2, "an entry tied to a tape of one file is of another version"
-    names = ("decisions", "outbox", "risk", "reconcile", "stages", "shadow")
+    names = ("decisions", "outbox", "risk", "reconcile", "stages", "shadow", "inventory")
     assert set(entry["marks"]) == set(names)
     for name in names:
         path = made.day() / "decisions.jsonl" if name == "decisions" else tmp_path / f"{name}.jsonl"

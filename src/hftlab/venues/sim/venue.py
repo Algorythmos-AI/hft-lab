@@ -55,6 +55,7 @@ from hftlab.venues.port import (
     UnknownOrder,
     Unsupported,
     Venue,
+    VenueCash,
     VenueEvent,
     VenueNotice,
     VenuePosition,
@@ -277,6 +278,9 @@ class SimVenue:
         now = self._clock.now_ns()
         return tuple(replace(f, ts_ns=now, seq=n) for n, f in enumerate(f for f in self._fills if f.ts_ns >= ts_ns))
 
+    def cash(self) -> tuple[VenueCash, ...]:
+        raise Unsupported("the shadow venue holds no cash: its book is positions and results, relative to nothing")
+
     # ---- what happens inside ------------------------------------------------------------------------------------
 
     def _known(self, instrument: Instrument) -> None:
@@ -306,9 +310,10 @@ class SimVenue:
                     self._too_late(client_order_id)
             elif ticket.active:
                 ticket.arrived = True
-                if ticket.order.quantity < self.model.min_order_size:
+                least = self.model.least(ticket.instrument.base)
+                if ticket.order.quantity < least:
                     ticket.active = False
-                    reason = f"below the cost model's minimum order size of {self.model.min_order_size}"
+                    reason = f"below the cost model's minimum order size of {least}"
                     self._report(client_order_id, OrderState.REJECTED, reason=reason)
                     continue
                 self._report(client_order_id, OrderState.WORKING, broker=f"S{ticket.number:06d}")

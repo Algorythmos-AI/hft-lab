@@ -108,8 +108,10 @@ def test_the_design_records_exist_in_order():
     topics += ["risk-gate", "order-manager", "host-layer", "snapshot-publish", "trader-loop"]
     topics += ["features-and-labels", "validation", "model-file", "weekly-learning-loop"]
     topics += ["directional-change", "gradient-boosting", "sleeve-state", "deploy-gate", "imported-history"]
-    topics += ["sequence-network"]
-    assert [name[:4] for name in records] == [f"{n:04d}" for n in range(1, len(topics) + 1)]
+    topics += ["sequence-network", "spot-inventory"]
+    taken_elsewhere = {30}  # a number given to a record that is written on another branch and not here yet
+    wanted = [n for n in range(1, len(topics) + len(taken_elsewhere) + 1) if n not in taken_elsewhere]
+    assert [name[:4] for name in records] == [f"{n:04d}" for n in wanted]
     for name, topic in zip(records, topics, strict=True):
         text = read(f"docs/adr/{name}")
         assert topic in name and text.startswith(f"# ADR {name[:4]}: "), name

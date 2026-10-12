@@ -7,6 +7,12 @@ they were scheduled, random quotes come from a seeded generator, and there is no
 Fills come from the top of the book, like a broker's paper account: a marketable order takes the quoted price
 at once. That is optimistic on purpose here. The conservative model is the shadow venue's job (ADR 0003), and
 this one exists to exercise the plumbing: delays, partial fills, rejects, duplicates, reordering, outages.
+
+It can also play a cash account, which is what a broker's spot forex account is when it lends nothing
+(`FakeConfig.cash_only`, ADR 0031). Every execution then moves cash: a buy takes the quote currency and gives the
+base currency, a sell the other way round, and the commission is taken in its own currency. An order the
+account cannot pay for is refused in the two ways a real one is: there is not enough of the currency it pays
+in, or the account may not hold one of the pair's currencies at all. Nothing is ever borrowed.
 """
 from __future__ import annotations
 
@@ -19,6 +25,12 @@ from functools import partial
 from hftlab.core import Instrument, InstrumentKind, Liquidity, Order, OrderType, Side, TimeInForce
 
 MS = 1_000_000
+CASH_SCALE = 6  # the fake's ledger is in millionths of each currency, like the port's
+# What the fake says when it refuses for cash, in the two classes seen on a real paper account. The words that
+# decide the class are the broker's; nothing here names an amount.
+INSUFFICIENT_CASH = "INSUFFICIENT CASH"
+NOT_ALLOWED = "Not allowed to open position in"
+REJECTED_CODE, ODD_LOT_CODE = 201, 399  # the gateway's numbers for an order it refused, and for its odd-lot warning
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +58,13 @@ class FakeConfig:
     gateway_messages: tuple[tuple[int, int, str], ...] = ()
     unanswered_lookups: tuple[tuple[int, int], ...] = ()  # [start, end) spans when an instrument lookup times out
     lookup_timeout_ns: int = 10_000 * MS  # how long such a lookup waits before it gives up
+    # A cash account (ADR 0031). `cash` is what it holds at the start, as (currency, millionths); with
+    # `cash_only` it lends nothing, and `forbidden` are the currencies it may not hold a position in. An order
+    # under `odd_lot_below` (base currency, units) is taken, with the gateway's warning that it is an odd lot.
+    cash: tuple[tuple[str, int], ...] = ()
+    cash_only: bool = False
+    forbidden: tuple[str, ...] = ()
+    odd_lot_below: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +184,7 @@ class FakeMarket:
         self._acks = 0
         self._echoes: list[Happening] = []
         self._carried: dict[tuple[str, InstrumentKind], int] = {}
+        self._cash: dict[str, int] = dict(self.config.cash)
 
     # ---- what is traded, and the link --------------------------------------------------------------------------
 
@@ -225,6 +245,9 @@ class FakeMarket:
         reason = self._reject(order) if self._reject else None
         if reason is None and self.instrument(instrument.pair, instrument.kind) != instrument:
             reason = "no such instrument"
+        barred = [code for code in (instrument.base, instrument.quote) if code in self.config.forbidden]
+        if reason is None and self.config.cash_only and barred:
+            reason = f"{NOT_ALLOWED} {barred[0]}"
         answered = at_ns + self.config.ack_delay_ns
         if reason is not None:
             booked.open = False
@@ -265,6 +288,39 @@ class FakeMarket:
                 key = (booked.instrument.pair, booked.instrument.kind)
                 out[key] = out.get(key, 0) + booked.order.side.sign * booked.executed
         return {key: quantity for key, quantity in out.items() if quantity}
+
+    # ---- cash ----------------------------------------------------------------------------------------------------
+
+    def cash(self) -> dict[str, int]:
+        """What the account holds of each currency it has ever held, in millionths."""
+        return dict(self._cash)
+
+    def post(self, currency: str, amount: int) -> None:
+        """Cash that moves with no execution behind it: interest, a fee, a transfer. Nothing here explains it."""
+        self._cash[currency] = self._cash.get(currency, 0) + amount
+
+    def _pays(self, booked: BookedOrder, quantity: int, price: int) -> tuple[str, int]:
+        """(the currency this much of the order is paid in, how much of it), in millionths."""
+        instrument = booked.instrument
+        if booked.order.side is Side.BUY:
+            return instrument.quote, quantity * price * int(10 ** (CASH_SCALE - instrument.price_scale))
+        return instrument.base, quantity * int(10**CASH_SCALE)
+
+    def _unaffordable(self, booked: BookedOrder, quantity: int, price: int) -> str | None:
+        """Why a cash account cannot execute this much of the order at this price, or None when it can."""
+        if not self.config.cash_only:
+            return None
+        currency, amount = self._pays(booked, quantity, price)
+        return None if self._cash.get(currency, 0) >= amount else INSUFFICIENT_CASH
+
+    def _move_cash(self, booked: BookedOrder, quantity: int, price: int) -> None:
+        if not (self.config.cash_only or self._cash):
+            return
+        instrument, sign = booked.instrument, booked.order.side.sign
+        quote = quantity * price * int(10 ** (CASH_SCALE - instrument.price_scale))
+        self.post(instrument.base, sign * quantity * int(10**CASH_SCALE))
+        self.post(instrument.quote, -sign * quote)
+        self.post(self.config.commission_currency, -self.config.commission)
 
     # ---- time --------------------------------------------------------------------------------------------------
 
@@ -329,6 +385,14 @@ class FakeMarket:
             or (limit >= price if order.side is Side.BUY else limit <= price)
         )
         available = min(unmatched, displayed) if self.config.respect_displayed_size else unmatched
+        if marketable and available > 0 and (short := self._unaffordable(booked, available, price)) is not None:
+            # A cash account lends nothing: the order is refused whole, or what is left of it is taken back.
+            if booked.executed or booked.reserved:
+                self._on_cancel(booked, short, at_ns)
+            else:
+                booked.open = False
+                self._on_reject(booked, short, at_ns)
+            return
         if not marketable or available <= 0 or (order.tif is TimeInForce.FOK and available < unmatched):
             if immediate and arriving:
                 self._on_cancel(booked, "not immediately executable", at_ns)
@@ -347,6 +411,10 @@ class FakeMarket:
     def _execute(self, booked: BookedOrder, quantity: int, price: int, liquidity: Liquidity, at_ns: int) -> None:
         if not booked.open:
             return  # cancelled between the match and the report
+        if (short := self._unaffordable(booked, quantity, price)) is not None:
+            self._on_cancel(booked, short, at_ns)  # another order took the cash between the match and this report
+            return
+        self._move_cash(booked, quantity, price)
         booked.reserved -= quantity
         booked.executed += quantity
         order = booked.order

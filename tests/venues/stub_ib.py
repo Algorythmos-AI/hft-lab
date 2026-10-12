@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from ib_async import CommissionReport, Contract, ContractDetails, Execution, OrderStatus, Ticker, Trade
+from ib_async import AccountValue, CommissionReport, Contract, ContractDetails, Execution, OrderStatus, Ticker, Trade
 from ib_async import Fill as IbFill
 from ib_async import Order as IbOrder
 from ib_async import Position as IbPosition
@@ -270,6 +270,16 @@ class StubIb:
             _, contract = next(v for v in self._contracts.values() if (v[0].pair, v[0].kind) == (pair, kind))
             out.append(IbPosition(account, contract, float(quantity), 0.0))
         return out
+
+    def account_values(self, account: str) -> list[AccountValue]:
+        self._ask("account_values")
+        self._settle()
+        held = [
+            AccountValue(account, "CashBalance", from_scaled(amount, 6), currency, "")
+            for currency, amount in sorted(self.market.cash().items())
+        ]
+        others = [AccountValue(account, "CashBalance", "0", "BASE", ""), AccountValue(account, "Leverage", "1", "", "")]
+        return [*held, *others]
 
     def executions(self) -> list[IbFill]:
         self._ask("executions")

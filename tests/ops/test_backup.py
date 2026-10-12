@@ -107,7 +107,10 @@ def kept(folder) -> list[Entry]:
 def test_what_the_trader_the_lineup_and_training_cannot_make_again_is_on_the_list(lived):
     names = {entry.name for entry in kept(lived)}
     (day,) = (lived / "trader" / "days").iterdir()
-    assert {f"trader/{name}.jsonl" for name in STATE} <= names, "the outbox, both books' journals, latches, stages"
+    # The float's journal exists only where the limits keep a float (ADR 0031); this desk's do not. Where it
+    # exists it is in the trader's folder, which is taken whole.
+    always = {f"trader/{name}.jsonl" for name in STATE if name != "inventory"}
+    assert always <= names, "the outbox, both books' journals, latches, stages"
     assert {"trader/outbox.jsonl", "trader/shadow.jsonl", "trader/stages.jsonl", "trader/lineup.jsonl"} <= names
     assert f"trader/days/{day.name}/decisions.jsonl" in names
     assert (lived / "trader" / resume.FILE).is_file(), "the trader that was stopped saved its sleeves' states"

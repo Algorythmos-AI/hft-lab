@@ -16,6 +16,12 @@ one for the quote currency of every pair it configures, for the desk and for eve
 An order that can only reduce a position has a collar of its own, `exit_collar_ticks`, which the loader refuses
 when it is narrower than the pair's `price_collar_ticks`: wider, never absent (ADR 0015, addendum).
 
+A cash account with a float has a section of its own, `inventory` (ADR 0031). It is optional: without it the
+gate knows nothing of cash and behaves as it did. With it, the float per currency, the reserve the gate keeps
+of each, the smallest entry per pair and the pairs the account cannot hold are limits like the others: checked
+for shape always, and for sense against the pairs configured. A currency of the float other than the hub must
+be the base of a configured pair against the hub, because that pair is how it is bought and sold.
+
 Two keys are kept and must stay null: `desk.max_gross_exposure` and `desk.max_leverage`. Both need a position
 valued in the account currency, and nothing in the platform converts a currency. A value there would be a
 limit nobody enforces, so the loader refuses one.
@@ -43,7 +49,8 @@ MINUTE: Final = 60 * SECOND
 DECIDED: Final = "decided"
 _DECISION = re.compile(r"HFT-DEC-[0-9]{4}")
 _NOT_ENFORCED: Final = ("max_gross_exposure", "max_leverage")
-_RESERVED: Final = ("desk", "unattributed")  # the book's names for the sum of sleeves and for fills nobody here ordered
+# The book's names for the sum of sleeves, for fills nobody here ordered, and for the conversions that fund the float.
+_RESERVED: Final = ("desk", "unattributed", "float")
 
 _TOP: Final = frozenset(
     {"status", "in_force", "decision", "desk", "per_pair", "per_sleeve", "market_guards", "reconciliation", "switches"}
@@ -65,6 +72,14 @@ _GUARDS: Final = frozenset(
 _RECONCILIATION: Final = frozenset({"grace_seconds"})
 _SWITCHES: Final = frozenset({"kill", "flatten", "flatten_retry_seconds"})
 _SWITCH_FILES: Final = ("flatten", "kill")
+_OPTIONAL_TOP: Final = frozenset({"inventory"})
+_INVENTORY: Final = frozenset(
+    {
+        "hub", "float", "reserve", "minimum_entry", "shadow_only", "funding_buffer_bps", "cash_tolerance",
+        "settle_seconds",
+    }
+)  # fmt: skip
+UNIT: Final = 10**CASH_SCALE
 
 
 class RiskConfigError(ValueError):
@@ -118,6 +133,20 @@ class MarketGuards:
 
 
 @dataclass(frozen=True, slots=True)
+class Inventory:
+    """The float of a cash account, and what the gate keeps of it (ADR 0031). Money is in millionths."""
+
+    hub: str  # the currency every traded pair is quoted in: what a buy is paid with
+    float_micro: Mapping[str, int]  # what the account is to hold of each currency once funded, at least
+    reserve_micro: Mapping[str, int]  # no order may take the cash of a currency under this
+    minimum_entry: Mapping[str, int]  # pair -> the smallest order that adds to a position, in base-currency units
+    shadow_only: frozenset[str]  # pairs the account cannot hold a currency of: never sent to the broker
+    funding_buffer_bps: int  # how much more of the hub is raised than the funding's buys are priced at
+    tolerance_micro: int  # how far the venue's cash may be from ours, per currency, and still agree
+    settle_ns: int  # how long after the last fill the venue's cash is taken to include it
+
+
+@dataclass(frozen=True, slots=True)
 class RiskConfig:
     """Limits that are in force. One exists only when every value was set and a decision record is named."""
 
@@ -130,6 +159,7 @@ class RiskConfig:
     kill_switch: str
     flatten_switch: str
     flatten_retry_ns: int  # the least time between two closes proposed for a line whose last one was refused
+    inventory: Inventory | None = None  # None: the account is not run as a cash account with a float
 
 
 class _Reader:
@@ -192,10 +222,69 @@ class _Reader:
         return MappingProxyType(out)
 
 
+def _inventory(read: _Reader, value: object, pairs: Mapping[str, PairLimits]) -> Inventory | None:
+    """The `inventory` section. Every complaint goes to the reader; what comes back is used only if there is none."""
+    block = read.section(value, "inventory", _INVENTORY)
+    hub = block.get("hub")
+    if not isinstance(hub, str) or len(hub) != 3 or not hub.isalpha() or not hub.isupper():
+        read.problems.append(f"inventory.hub must be a three-letter currency code, not {hub!r}")
+        hub = "???"
+    amounts: dict[str, dict[str, int]] = {"float": {}, "reserve": {}}
+    for key, out in amounts.items():
+        for code, units in read.named(block.get(key), f"inventory.{key}").items():
+            try:
+                check_currency(f"inventory.{key}", code)
+            except ValueError:
+                read.problems.append(f"inventory.{key}.{code} is not a three-letter currency code")
+                continue
+            out[code] = read.whole({code: units}, f"inventory.{key}", code, least=0) * UNIT
+    held, kept = amounts["float"], amounts["reserve"]
+    if hub not in held:
+        read.problems.append(f"inventory.float must give the float of the hub, {hub}")
+    for code in sorted(set(held) - {hub}):
+        if f"{code}.{hub}" not in pairs:
+            read.problems.append(f"inventory.float.{code} needs the pair {code}.{hub} in per_pair: how it is bought")
+    for code in sorted(set(kept) - set(held)):
+        read.problems.append(f"inventory.reserve.{code} is a reserve of a currency with no float")
+    for code in sorted(set(kept) & set(held)):
+        if kept[code] >= held[code] > 0:
+            read.problems.append(f"inventory.reserve.{code} leaves nothing of the float of {code} to trade with")
+    entries: dict[str, int] = {}
+    for name, units in read.named(block.get("minimum_entry"), "inventory.minimum_entry").items():
+        size = read.whole({name: units}, "inventory.minimum_entry", name)
+        if name not in pairs:
+            read.problems.append(f"inventory.minimum_entry.{name} is not a pair of per_pair")
+        elif size > pairs[name].max_order_size:
+            read.problems.append(f"inventory.minimum_entry.{name} is larger than the pair's max_order_size")
+        entries[name] = size
+    barred = block.get("shadow_only")
+    if not isinstance(barred, list) or not all(isinstance(name, str) for name in barred):
+        read.problems.append("inventory.shadow_only must be a list of pairs, which may be empty")
+        barred = []
+    for name in barred:
+        try:
+            check_pair(name)
+        except ValueError:
+            read.problems.append(f"inventory.shadow_only: {name!r} is not a currency pair like USD.JPY")
+        if name in pairs:
+            read.problems.append(f"inventory.shadow_only: {name} has limits in per_pair, and is never sent")
+    return Inventory(
+        hub=hub,
+        float_micro=MappingProxyType(held),
+        reserve_micro=MappingProxyType(kept),
+        minimum_entry=MappingProxyType(entries),
+        shadow_only=frozenset(barred),
+        funding_buffer_bps=read.whole(block, "inventory", "funding_buffer_bps", least=0),
+        tolerance_micro=read.money(block, "inventory", "cash_tolerance"),
+        settle_ns=read.whole(block, "inventory", "settle_seconds", least=0) * SECOND,
+    )
+
+
 def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConfig:
     """The limits in a loaded risk file. Raises `RiskNotInForce` for a well-formed file that is not in force."""
     read = _Reader()
-    top = read.section(loaded, "risk", _TOP)
+    with_inventory = isinstance(loaded, dict) and "inventory" in loaded
+    top = read.section(loaded, "risk", _TOP | (_OPTIONAL_TOP if with_inventory else frozenset()))
     in_force, status, decision = top.get("in_force"), top.get("status"), top.get("decision")
     if type(in_force) is not bool:
         read.problems.append(f"risk.in_force must be true or false, not {in_force!r}")
@@ -288,6 +377,8 @@ def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConf
     if len(names) == 2 and names[0] == names[1]:
         read.problems.append("switches.kill and switches.flatten must be two different files")
 
+    inventory = _inventory(read, top.get("inventory"), pairs) if with_inventory else None
+
     if in_force is True:
         read.problems += [f"{name} is null: a limit in force needs a value" for name in read.nulls]
         if status != DECIDED or decision is None:
@@ -308,6 +399,7 @@ def parse_risk_config(loaded: object, source: str = "the risk file") -> RiskConf
         kill_switch=kill,
         flatten_switch=flatten,
         flatten_retry_ns=retry_ns,
+        inventory=inventory,
     )
 
 

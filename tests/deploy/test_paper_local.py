@@ -74,9 +74,10 @@ def test_it_refuses_a_mode_that_is_not_paper_and_a_place_that_is_no_checkout(tmp
     env = checkout(tmp_path)
     done = subprocess.run([str(SCRIPT)], env={**env, "MODE": "other"}, capture_output=True, text=True)
     assert done.returncode == 2 and "MODE is set and is not 'paper'" in done.stderr
-    done = subprocess.run([str(SCRIPT)], env={**env, "HFT_ROOT": str(tmp_path / "none")}, capture_output=True, text=True)
+    nowhere = str(tmp_path / "none")
+    done = subprocess.run([str(SCRIPT)], env={**env, "HFT_ROOT": nowhere}, capture_output=True, text=True)
     assert done.returncode == 2 and "not a checkout" in done.stderr
-    done = subprocess.run([str(SCRIPT)], env={**env, "HFT_PYTHON": str(tmp_path / "none")}, capture_output=True, text=True)
+    done = subprocess.run([str(SCRIPT)], env={**env, "HFT_PYTHON": nowhere}, capture_output=True, text=True)
     assert done.returncode == 2 and "make bootstrap" in done.stderr
     assert not (tmp_path / "var").exists() and not list(tmp_path.glob("called_*"))
 

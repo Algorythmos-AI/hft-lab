@@ -167,6 +167,24 @@ class TapeReading:
 
 
 @dataclass(frozen=True, slots=True)
+class FloatReading:
+    """The float of a cash account, as the trader last said it (ADR 0031). Whole units of each currency.
+
+    These are balances of a private account. They are on this screen, which the owner reads on the host, and in
+    nothing that is published: the snapshot (hftlab.publish) takes the sleeves and the books and not this.
+    """
+
+    phase: str  # none, funding, funded or unfunding
+    cash: Mapping[str, int] | None  # what the venue last said the account holds; None: it has not been asked yet
+    baseline: Mapping[str, int] | None  # what the funding left; None while no float stands
+    drift_micro: Mapping[str, int] | None  # what the float's own lines gained or lost as rates moved; in no result
+    positions: Mapping[str, int]  # "sleeve/pair" -> what the sleeve holds at the broker, around the float
+    paper_fills: Mapping[str, int]  # sleeve -> fills at the broker in the session in hand
+    waiting: tuple[str, ...]  # pairs whose conversion cannot go on
+    shadow_only: tuple[str, ...]  # pairs that are never sent to the broker
+
+
+@dataclass(frozen=True, slots=True)
 class TraderReading:
     """What the trader last said of itself (hftlab.trader writes it on every beat)."""
 
@@ -183,6 +201,7 @@ class TraderReading:
     open_positions: int
     latched: tuple[str, ...]
     tape: TapeReading | None = None  # None: its tapes are under no quota, or it runs code that does not say
+    inventory: FloatReading | None = None  # None: it keeps no float, or it runs code that does not say
 
 
 @dataclass(frozen=True, slots=True)
@@ -386,6 +405,28 @@ def _book(value: object) -> BookReading | None:
     return BookReading(_nets(value.get("net_today_micro")), _nets(value.get("net_total_micro")))
 
 
+def _units(value: object) -> dict[str, int] | None:
+    """Millionths by currency as whole units, rounded towards zero; None when nothing was said."""
+    if not isinstance(value, dict):
+        return None
+    return {str(code): int(amount / 1_000_000) for code, amount in sorted(value.items()) if type(amount) is int}
+
+
+def _float(said: object) -> FloatReading | None:
+    if not isinstance(said, dict) or not isinstance(said.get("phase"), str):
+        return None
+    counts = {}
+    for key in ("positions", "paper_fills_session"):
+        found = said.get(key)
+        counts[key] = {str(k): v for k, v in sorted(found.items()) if type(v) is int} if isinstance(found, dict) else {}
+    names = {key: tuple(map(str, said.get(key) or ())) for key in ("waiting", "shadow_only")}
+    return FloatReading(
+        phase=said["phase"], cash=_units(said.get("cash")), baseline=_units(said.get("baseline")),
+        drift_micro=_nets(said.get("drift_micro")), positions=counts["positions"],
+        paper_fills=counts["paper_fills_session"], waiting=names["waiting"], shadow_only=names["shadow_only"],
+    )  # fmt: skip
+
+
 def _tape(said: object, folder: Path) -> TapeReading | None:
     """The tapes against their limits. The limits are the trader's word; the bytes are counted here, now."""
     if not isinstance(said, dict):
@@ -427,7 +468,7 @@ def _trader(sources: Sources, now_ns: int) -> tuple[TraderReading | None, list[P
             age_ns=max(0, now_ns - at), day=str(said["day"]), connection=str(said["connection"]), sleeves=sleeves,
             shadow=shadow, broker=_book(books.get("broker")), breaks_today=int(books["reconciliation_breaks_today"]),
             open_positions=int(books["open_positions"]), latched=tuple(map(str, said.get("latched", []))),
-            tape=_tape(said.get("tape"), path.parent),
+            tape=_tape(said.get("tape"), path.parent), inventory=_float(said.get("float")),
         )  # fmt: skip
     except (OSError, ValueError, KeyError, TypeError):
         text = f"{path} is there and cannot be read as the trader's status."
@@ -525,6 +566,33 @@ def _money(nets: Mapping[str, int] | None) -> str:
     return ", ".join(shown) or "0"
 
 
+def _amounts(held: Mapping[str, int] | None) -> str:
+    if held is None:
+        return "not said yet"
+    return ", ".join(f"{code} {units:,}" for code, units in held.items() if units) or "nothing"
+
+
+def _float_lines(found: FloatReading) -> list[str]:
+    """The float of a cash account: where it stands, what the account holds, and what the sleeves hold around it."""
+    standing = {
+        "none": "NOT FUNDED: no entry is sent (python -m hftlab.trader --fund-plan)", "funding": "being funded",
+        "funded": "funded", "unfunding": "being taken back",
+    }.get(found.phase, found.phase)  # fmt: skip
+    lines = [f"             float: {standing}; the account holds {_amounts(found.cash)}"]
+    if found.baseline is not None:
+        drift = _money(found.drift_micro)
+        lines.append(f"             float baseline {_amounts(found.baseline)}; drift {drift}, in no result")
+    held = ", ".join(f"{line} {quantity:+,}" for line, quantity in found.positions.items()) or "none"
+    fills = ", ".join(f"{name or 'unattributed'} {count}" for name, count in found.paper_fills.items()) or "none"
+    lines.append(f"             paper positions: {held}; paper fills this session: {fills}")
+    if found.shadow_only:
+        lines.append(f"             on the shadow venue only: {', '.join(found.shadow_only)}")
+    if found.waiting:
+        stuck = ", ".join(found.waiting)
+        lines.append(f"             A CONVERSION IS WAITING: {stuck} (the account cannot pay for it)")
+    return lines
+
+
 def render(reading: Reading) -> str:
     """The one screen."""
     week = reading.weeks[0]
@@ -575,6 +643,8 @@ def render(reading: Reading) -> str:
                 f"             sleeve {sleeve.name}: {sleeve.stage}; {sleeve.trades_today} trade(s) today, "
                 f"{sleeve.trades_total} in all; shadow net {_money(sleeve.net_total_micro)}"
             )
+        if trader.inventory is not None:
+            lines += _float_lines(trader.inventory)
         if trader.latched:
             lines.append(f"             latched: {', '.join(trader.latched)}")
         if trader.tape is not None:

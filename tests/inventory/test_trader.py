@@ -206,3 +206,38 @@ def test_a_plan_for_a_float_that_stands_says_there_is_nothing_to_plan(tmp_path):
     where = dataclasses.replace(desk.settings, state_dir=tmp_path / "state")
     assert fund_plan(where, risk_file, out, now_ns=desk.clock.now_ns()) == EXIT_OK
     assert "nothing to plan" in out.getvalue() and "SELL" not in out.getvalue()
+
+
+# ---- the status screen ------------------------------------------------------------------------------------------
+
+
+def test_the_status_screen_shows_the_float_the_paper_positions_and_fills_and_nothing_of_it_is_published(tmp_path):
+    from hftlab.ops.status import read, render
+    from hftlab.publish.snapshot import build
+    from tests.ops.kit import sources
+
+    folder = tmp_path / "var" / "trader"
+    desk = Bureau(folder)
+    desk.run(70)
+    places = sources(tmp_path, trader_status=folder / "status.json")
+    before = render(read(places, desk.clock.now_ns() + SECOND))
+    assert "float: NOT FUNDED: no entry is sent" in before and "the account holds AUD 1,000,000" in before
+    put_stage(folder, "control", "min_size")
+    desk.restart()
+    desk.fund()
+    for _ in range(60):
+        desk.run(2)
+        if desk.held()[0] or desk.held("AUD.USD")[0]:
+            break
+    reading = read(places, desk.clock.now_ns() + SECOND)
+    found = reading.trader.inventory
+    assert found.phase == "funded" and found.baseline["EUR"] == FLOATS["EUR"] and found.shadow_only == ("USD.JPY",)
+    assert found.paper_fills["float"] >= 1 and found.paper_fills.get("control", 0) >= 1
+    assert len(found.positions) >= 1 and all(line.startswith("control/") for line in found.positions)
+    screen = render(reading)
+    assert "float: funded; the account holds" in screen and "float baseline AUD" in screen and "in no result" in screen
+    assert "paper positions: control/" in screen and "on the shadow venue only: USD.JPY" in screen
+    assert "sleeve control: min_size" in screen and "shadow net" in screen
+    published = json.dumps(build(reading, phases={f"F{n}": "open" for n in range(8)}, version="0123456789ab"))
+    for word in ("baseline", "float", "cash", str(FLOATS["EUR"]), "739"):
+        assert word not in published, f"a balance is on the host's screen and never in the snapshot: {word}"

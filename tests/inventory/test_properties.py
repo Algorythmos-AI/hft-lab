@@ -17,7 +17,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from hftlab.book import FLOAT, effect, expected
@@ -80,8 +80,18 @@ def play(steps, config, *, moves: bool) -> None:
         assert not till.reconciler.check().cash
 
 
+# Found by this test on 2026-10-13: one sleeve's short brought in dollars, another sleeve's entry spent them, and
+# the first sleeve's cover was rejected by the broker for want of a dollar.
+SPENT_COVER = [("order", Side.BUY, 20000, "EUR.USD", "control")] * 13 + [
+    ("order", Side.SELL, 25000, "EUR.USD", "ml"),
+    ("order", Side.BUY, 25000, "EUR.USD", "control"),
+    ("order", Side.BUY, 25000, "EUR.USD", "ml"),
+]
+
+
 @settings(max_examples=40, deadline=None)
 @given(st.lists(STEP, max_size=40), st.sampled_from([1, 2]), st.sampled_from([1, 150]))
+@example(SPENT_COVER, 1, 1)
 def test_no_stream_of_orders_overdraws_the_account_or_parts_the_book_from_the_venues_cash(steps, chunks, ack_ms):
     play(steps, account(fill_chunks=chunks, ack_delay_ns=ack_ms * MS), moves=True)
 

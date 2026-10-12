@@ -42,7 +42,11 @@ those orders would bring in is not counted. On top of that:
   * a pair the account cannot hold a currency of is refused, whatever the order;
   * an order that adds to a position is at least the pair's minimum entry;
   * until a float stands, entries are stopped. Exits never are: an order that can only reduce a sleeve's
-    position is not held to the reserve, because it takes back what the entry paid out;
+    position is not held to the reserve, because it takes back what the entry paid out. It is held to the cash
+    itself: one the account could not pay for is refused here and not sent to be rejected;
+  * what closing every sleeve's open position would pay out is kept aside from entries. A short brings in the
+    currency its cover is paid in, and without this another sleeve's entry could spend it and leave the first
+    with a position it cannot close;
   * the conversions that fund the float are orders of the book's `FLOAT` line. They pass every guard here and
     the reserve, and may go only while a funding an operator asked for is open. The float is not a sleeve: it
     has no position cap, it is not closed by FLATTEN, and what it gains or loses as rates move is not the
@@ -411,9 +415,10 @@ class RiskGate:
                 stopping.append(Reason.NOT_FUNDED)
             if order.quantity < inventory.minimum_entry.get(order.pair, 0) and not self._reduces(order):
                 refusing.append(Reason.ODD_LOT)
-        holds_reserve = floating or (self._float.funded and not self._reduces(order))
-        if inventory is not None and holds_reserve and self._short_of_cash(order):
-            refusing.append(Reason.CASH_RESERVE)
+        if inventory is not None and (floating or self._float.funded):
+            closing = not floating and self._reduces(order)
+            if self._short_of_cash(order, closing=closing):
+                refusing.append(Reason.CASH_RESERVE)
 
         self._forget(now)
         if floating:
@@ -466,14 +471,44 @@ class RiskGate:
             price = quote.ask + limits.exit_collar_ticks * instrument.price_increment
         return instrument.quote, quantity * price * int(10 ** (CASH_SCALE - instrument.price_scale))
 
-    def spendable(self, currency: str) -> int | None:
-        """What is left of a currency above its reserve with every order on its way filled; None: it is not known."""
+    def _owed(self, currency: str) -> int | None:
+        """What closing every sleeve's open position would pay out of a currency, each at the worst price its
+        collar allows. None: one of them cannot be priced."""
+        owed = 0
+        for (sleeve, pair), quantity in self._book.open_lines().items():
+            if sleeve == FLOAT:
+                continue
+            side = Side.SELL if quantity > 0 else Side.BUY
+            closing = Order(
+                client_order_id(sleeve=FLOAT, pair=pair, side=side, decision_seq=0, leg="probe"), sleeve, pair, side,
+                abs(quantity), OrderType.MARKET, TimeInForce.IOC, 0,
+            )  # fmt: skip
+            paid = self._pays(closing, abs(quantity))
+            if paid is None:
+                return None
+            if paid[0] == currency:
+                owed += paid[1]
+        return owed
+
+    def spendable(self, currency: str, *, closing: bool = False) -> int | None:
+        """What is left of a currency with every order on its way filled; None: it is not known.
+
+        For an entry or a conversion: above the reserve, and above what closing the sleeves' positions would
+        take. For an order that only closes (`closing`): all of it, down to nothing.
+        """
         inventory, cash = self._config.inventory, self.cash()
         if inventory is None or cash is None:
             return None
         kept = inventory.reserve_micro.get(currency, 0)
         if self._float.unwinding and currency != inventory.hub:
             kept = 0  # the float is being taken back: all of a currency goes, and only the hub's reserve stays
+        if closing:
+            kept = 0
+        else:
+            owed = self._owed(currency)
+            if owed is None:
+                return None
+            kept += owed
         left = cash.get(currency, 0) - kept
         for pending in self._pending.values():
             if pending.held:
@@ -499,13 +534,16 @@ class RiskGate:
             return 0
         return max(0, left // paid[1])
 
-    def _short_of_cash(self, order: Order) -> bool:
-        """Would this order, filled in full at its worst price, take the currency it pays in under its reserve?"""
+    def _short_of_cash(self, order: Order, *, closing: bool = False) -> bool:
+        """Would this order, filled in full at its worst price, take the currency it pays in under what is kept
+        of it: the reserve and the sleeves' closings for an entry, nothing for an order that only closes?"""
         paid = self._pays(order, order.quantity)
         if paid is None:
-            return True
-        left = self.spendable(paid[0])
-        return left is None or left < paid[1]
+            return not closing  # an exit that cannot be priced is not stopped for cash; the other guards hold
+        left = self.spendable(paid[0], closing=closing)
+        if left is None:
+            return not closing
+        return left < paid[1]
 
     def _reserved(self, pair: str, sleeve: str) -> tuple[int, int]:
         """(buys, sells) still held for pending orders in a pair, for one sleeve or for the desk.

@@ -192,8 +192,8 @@ class IbAsyncClient:
 
     def account_values(self, account: str) -> list[AccountValue]:
         # UNVERIFIED: once asked, the gateway sends the account's values when one changes and at least every
-        # three minutes, and a cash balance arrives as the tag `CashBalance`, once per currency held. The first
-        # call on a connection subscribes and waits for the first full set; later ones read what has arrived.
+        # three minutes. Measured: a cash balance arrives once per currency held, as `$LEDGER-CashBalance`. The
+        # first call on a connection subscribes and waits for the first full set; later ones read what has arrived.
         if self._followed != account:
             self._ib.reqAccountUpdates(account)
             self._followed = account

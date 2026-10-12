@@ -388,7 +388,11 @@ def position_from(position: IbPosition) -> VenuePosition | None:
     return VenuePosition(pair, KINDS[position.contract.secType], quantity) if quantity else None
 
 
-CASH_TAG: Final = "CashBalance"
+# Measured on the paper gateway on 2026-10-12: a followed account's cash arrives as `$LEDGER-CashBalance`, one row
+# per currency held and one for BASE. The plain tag is the one the broker's documents name; a gateway that sends
+# it is read the same way. Where both come for one currency, the ledger row is the one kept.
+CASH_TAG: Final = "$LEDGER-CashBalance"
+PLAIN_CASH_TAG: Final = "CashBalance"
 _ALL_CURRENCIES: Final = "BASE"  # the gateway's row for everything valued in the account's own currency: not a holding
 
 
@@ -400,8 +404,8 @@ def cash_from(values: Iterable[AccountValue]) -> tuple[VenueCash, ...]:
     """
     out: dict[str, int] = {}
     quantum = Decimal(1).scaleb(-CASH_SCALE)
-    for value in values:
-        if value.tag != CASH_TAG or value.currency == _ALL_CURRENCIES:
+    for value in sorted(values, key=lambda value: value.tag == CASH_TAG):  # ledger rows last, so they win
+        if value.tag not in (CASH_TAG, PLAIN_CASH_TAG) or value.currency == _ALL_CURRENCIES:
             continue
         try:
             amount = Decimal(value.value)

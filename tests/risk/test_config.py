@@ -8,9 +8,10 @@ import yaml
 
 from hftlab.risk import RiskConfigError, RiskNotInForce, load_risk_config, parse_risk_config
 from tests.risk.kit import MINUTE, MS, SECOND, limits, raw
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 
-SHIPPED = ROOT / "config" / "risk.yaml"
+SHIPPED = PLACEHOLDER / "risk.yaml"  # the limits before any decision: every one null, none in force
+IN_FORCE = ROOT / "config" / "risk.yaml"
 
 
 def complaint(changes: dict[str, object]) -> str:
@@ -23,12 +24,49 @@ def complaint(changes: dict[str, object]) -> str:
 # ---- the file that is shipped ----------------------------------------------------------------------------------------
 
 
-def test_the_shipped_file_is_well_formed_and_not_in_force_so_nothing_can_be_built_from_it():
+def test_the_shipped_limits_are_in_force_by_a_decision_record_that_exists():
+    shipped = load_risk_config(IN_FORCE)
+    assert shipped.decision == "HFT-DEC-0001"
+    assert (ROOT / "research" / "decisions" / "HFT-DEC-0001-paper-risk-limits-and-float.md").is_file()
+    text = IN_FORCE.read_text()
+    assert "PLACEHOLDER" not in text and text.count("NOT ENFORCED") == 2 and "PROPOSAL" in text
+    assert set(shipped.pairs) == {"EUR.USD", "AUD.USD"} and set(shipped.sleeves) == {"control"}
+    assert shipped.desk.max_open_pairs == len(shipped.pairs)
+
+
+def test_the_shipped_float_covers_what_the_limits_let_the_desk_hold_and_keeps_its_reserve():
+    """Two minimum sizes a pair, long in every pair at once or short in every pair at once, without a refusal."""
+    shipped = load_risk_config(IN_FORCE)
+    inventory, unit = shipped.inventory, 1_000_000
+    assert inventory is not None and inventory.hub == "USD" and inventory.shadow_only == {"USD.JPY", "GBP.USD"}
+    assert set(inventory.float_micro) == {"USD", "EUR", "AUD"} == set(inventory.reserve_micro)
+    assert inventory.minimum_entry == {"EUR.USD": 20_000, "AUD.USD": 25_000}
+    dearest = {"EUR.USD": 1.30, "AUD.USD": 0.80}  # rates well above any of the last ten years' closes
+    longs = 0.0
+    for pair, cap in shipped.pairs.items():
+        least = inventory.minimum_entry[pair]
+        assert cap.max_position == cap.max_order_size == 2 * least, pair
+        spendable = inventory.float_micro[pair[:3]] - inventory.reserve_micro[pair[:3]]
+        assert spendable >= cap.max_position * unit, f"{pair}: the float of {pair[:3]} pays for the largest short"
+        assert cap.max_spread_ticks < cap.price_collar_ticks <= cap.exit_collar_ticks
+        longs += cap.max_position * dearest[pair]
+    assert (inventory.float_micro["USD"] - inventory.reserve_micro["USD"]) / unit >= longs, "and of USD for the longs"
+    control = shipped.sleeves["control"]
+    assert control.max_position == max(inventory.minimum_entry.values()), "one minimum size in any pair"
+    for currency in ("USD", "AUD"):  # the quote currency of the pairs, and the one fees are expected in
+        assert control.loss_latches[currency].daily_loss_micro < shipped.desk.loss_latches[currency].daily_loss_micro
+    assert control.max_orders_per_minute < shipped.desk.max_orders_per_minute
+
+
+# ---- the limits as they were before any decision: every one null -------------------------------------------------
+
+
+def test_the_placeholder_file_is_well_formed_and_not_in_force_so_nothing_can_be_built_from_it():
     with pytest.raises(RiskNotInForce, match="not in force"):
         load_risk_config(SHIPPED)
 
 
-def test_every_limit_in_the_shipped_file_is_null_and_says_it_is_a_placeholder():
+def test_every_limit_in_the_placeholder_file_is_null_and_says_it_is_a_placeholder():
     text = SHIPPED.read_text()
     shipped = yaml.safe_load(text)
     assert shipped["status"] == "placeholder" and shipped["in_force"] is False and shipped["decision"] is None
@@ -40,7 +78,7 @@ def test_every_limit_in_the_shipped_file_is_null_and_says_it_is_a_placeholder():
     assert sum("NOT ENFORCED" in line for line in set_limits) == 2
 
 
-def test_put_in_force_as_it_is_the_shipped_file_is_refused_for_every_null_limit_by_name():
+def test_put_in_force_as_it_is_the_placeholder_file_is_refused_for_every_null_limit_by_name():
     shipped = yaml.safe_load(SHIPPED.read_text())
     shipped.update(in_force=True, status="decided", decision="HFT-DEC-0001")
     with pytest.raises(RiskConfigError) as caught:

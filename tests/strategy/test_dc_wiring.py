@@ -14,7 +14,7 @@ from hftlab.strategy.dc import CONTRARIAN, TREND, DcSleeve
 from hftlab.trader.config import load
 from hftlab.trader.stages import NEVER
 from hftlab.venues.sim import load_cost_model
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.venues.kit import SECOND, plain_costs
 
 SIZES = {"EUR.USD": 20_000}
@@ -49,7 +49,7 @@ def test_the_shipped_settings_hold_the_sleeve_with_every_number_marked_a_placeho
     assert block[0].startswith("    price: mid") and "half the sum of bid and ask" in block[0]
     assert all("# PLACEHOLDER" in line for line in block[1:]), "the variant and all eight numbers"
     assert "IN PERCENT OF THE PRICE" in block[2], "the threshold's unit is said where it is written"
-    sleeve = build(entry, load_cost_model(ROOT / "config" / "cost_model.yaml"))
+    sleeve = build(entry, load_cost_model(PLACEHOLDER / "cost_model.yaml"))
     assert (sleeve.name, sleeve.variant, sleeve.threshold) == ("directional-change", TREND, Fraction(1, 1000))
 
 

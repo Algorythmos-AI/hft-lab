@@ -18,7 +18,7 @@ from hftlab.trader.__main__ import main
 from hftlab.trader.config import FLATTEN_SECONDS, PART_BYTES, SOFT_PERCENT, TraderConfigError, load, parse
 from hftlab.trader.tape import LiveEdge, being_written, heads, housekeep, parts, read_tape, tape_bytes
 from hftlab.venues.view import MarketDataView
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.trader.kit import PAIRS, SECOND, T0, Desk, put_stage, raw_settings
 
 DAY = 86_400 * SECOND
@@ -241,9 +241,9 @@ def test_the_housekeeping_command_compresses_closed_parts_and_says_what_the_tape
     assert main(["--config", str(config), "--housekeep"]) == 0 and "compressed 0 closed" in capsys.readouterr().err
     bounded = raw_settings(state_dir=str(tmp_path / "live"), tape={"part_bytes": 3_000, "quota_bytes": 10_000_000})
     config.write_text(yaml.safe_dump(bounded))
-    assert main(["--config", str(config), "--housekeep"]) == 0
+    assert main(["--config", str(config), "--risk", str(PLACEHOLDER / "risk.yaml"), "--housekeep"]) == 0
     said = capsys.readouterr().err
-    reserve = room.reserve_bytes(parse(bounded), None)  # the shipped limits are not in force: nothing can be sent
+    reserve = room.reserve_bytes(parse(bounded), None)  # these limits are not in force: nothing can be sent
     assert f"bytes on disk, soft limit 9000000, hard limit {10_000_000 - reserve}, a quota of 10000000" in said
     assert 10_000 < reserve < 200_000
     config.write_text(yaml.safe_dump({**bounded, "tape": {"part_bytes": 3_000, "quota_bytes": reserve}}))

@@ -13,10 +13,10 @@ from hftlab.learn.config import LearnConfigError, load
 from hftlab.lineup import read as read_lineup
 from hftlab.models import ModelRegistry, parse
 from tests.learn.kit import DAY, SATURDAY, WIN, dataset, learn_settings, planted, record, weeks
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.venues.kit import T0
 
-SHIPPED = ["--cost-model", str(ROOT / "config/cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
+SHIPPED = ["--cost-model", str(PLACEHOLDER / "cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
            "--feasibility", str(ROOT / "config/feasibility.yaml")]  # fmt: skip
 GB = 1_000_000_000
 

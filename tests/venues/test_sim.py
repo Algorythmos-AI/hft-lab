@@ -6,6 +6,7 @@ import dataclasses
 import random
 
 import pytest
+import yaml
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -27,7 +28,7 @@ from hftlab.venues.guard import GuardedVenue
 from hftlab.venues.port import CommissionEvent, ConnectionState, NotReady, OrderRefused, Unsupported, VenueError
 from hftlab.venues.sim import CostModelError, SimVenue, load_cost_model
 from hftlab.venues.sim.cost import NO_FILL, NORMAL, WIDENED
-from tests.support import ROOT, imports, sources
+from tests.support import PLACEHOLDER, ROOT, imports, sources
 from tests.venues.kit import ASK, BID, EURUSD, INSTRUMENTS, MS, SECOND, T0, USDJPY, an_order, brief, of, plain_costs
 
 IOC, FOK, DAY, GTC = TimeInForce.IOC, TimeInForce.FOK, TimeInForce.DAY, TimeInForce.GTC
@@ -506,15 +507,41 @@ def test_the_cost_model_as_plain_values_leaves_no_parameter_out():
     assert type(costs)(**plain) == costs, "nothing was changed on the way"
 
 
-def test_the_shipped_cost_model_loads_and_says_it_is_a_placeholder():
+def test_the_shipped_cost_model_is_decided_and_says_where_each_value_comes_from():
     costs = load_cost_model(ROOT / "config" / "cost_model.yaml")
-    assert costs.placeholder is True and costs.effective_from == "2026-10-11"
-    assert (costs.latency_min_ns, costs.latency_max_ns) == (20 * MS, 80 * MS)
-    assert costs.commission_rate_bps_x100 == 20 and costs.commission_minimum == {"USD": 2_000_000, "JPY": 300_000_000}
-    assert (costs.min_order_size, costs.slippage_increments, costs.stale_after_ns) == (20_000, 0, 2 * SECOND)
+    assert costs.placeholder is False and costs.effective_from == "2026-10-12"
+    assert (costs.latency_min_ns, costs.latency_max_ns) == (100 * MS, 400 * MS)
+    assert costs.commission_rate_bps_x100 == 20 and costs.commission_minimum == {"USD": 2_000_000, "JPY": 320_000_000}
+    assert (costs.min_order_size, costs.slippage_increments, costs.stale_after_ns) == (20_000, 0, 3 * SECOND)
+    assert costs.min_order_size_by_base == {"USD": 25_000, "AUD": 25_000}
+    assert costs.least("EUR") == costs.least("GBP") == 20_000 and costs.least("AUD") == costs.least("USD") == 25_000
     assert costs.spread_multiplier_x100 == 300 and costs.no_fill_after_ns == 15 * MINUTE
     text = (ROOT / "config" / "cost_model.yaml").read_text()
-    assert text.count("PLACEHOLDER") >= 11 and "TO BE REPLACED BY THE PROBE'S MEASUREMENTS" in text
+    loaded = yaml.safe_load(text)
+    assert (loaded["status"], loaded["decision"]) == ("decided", "HFT-DEC-0002"), "decided, and not yet measured"
+    assert (ROOT / "research" / "decisions" / "HFT-DEC-0002-shadow-cost-model-from-the-probe.md").is_file()
+    assert text.count("published, not measured") >= 3 and "NOT MEASURED" in text and "PLACEHOLDER" not in text
+
+
+def test_the_placeholder_cost_model_the_synthetic_tests_run_on_still_says_it_is_one():
+    costs = load_cost_model(PLACEHOLDER / "cost_model.yaml")
+    assert costs.placeholder is True and (costs.latency_min_ns, costs.latency_max_ns) == (20 * MS, 80 * MS)
+    assert costs.min_order_size_by_base == {} and costs.stale_after_ns == 2 * SECOND
+
+
+@pytest.mark.parametrize(
+    "change",
+    [("status: decided", "status: final"), ("decision: HFT-DEC-0002", "decision: the owner said so"),
+     ("decision: HFT-DEC-0002", "decision: null"), ("  AUD: 25000", "  AUD: many"),
+     ("min_order_size_by_base:", "min_order_size_by_base: 25000\nby_base:")],
+)  # fmt: skip
+def test_a_cost_model_that_is_decided_names_its_record_and_gives_whole_sizes(tmp_path, change):
+    text = (ROOT / "config" / "cost_model.yaml").read_text()
+    assert text.count(change[0]) == 1
+    path = tmp_path / "cost_model.yaml"
+    path.write_text(text.replace(*change))
+    with pytest.raises(CostModelError):
+        load_cost_model(path)
 
 
 @pytest.mark.parametrize(
@@ -525,7 +552,7 @@ def test_the_shipped_cost_model_loads_and_says_it_is_a_placeholder():
      ("  minimum:", "  minimums:"), ("rollover:", "rollovers:")],
 )  # fmt: skip
 def test_a_cost_model_that_is_incomplete_or_inexact_is_refused(tmp_path, change):
-    text = (ROOT / "config" / "cost_model.yaml").read_text()
+    text = (PLACEHOLDER / "cost_model.yaml").read_text()
     assert text.count(change[0]) == 1
     path = tmp_path / "cost_model.yaml"
     path.write_text(text.replace(*change))

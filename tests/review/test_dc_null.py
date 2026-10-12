@@ -22,7 +22,7 @@ from hftlab.strategy.dc import null
 from tests.review.kit import FEE, UNIT, recording
 from tests.shadow.kit import TRADED, session, walk
 from tests.strategy.dc_kit import HIGH, LOW, quotes, zigzag
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.venues.kit import EURUSD, MS, plain_costs
 
 WALKS = 19
@@ -178,7 +178,7 @@ def test_the_command_reads_the_registered_configuration_and_a_recorded_day_and_p
     (day,) = recording(tmp_path / "rec", quotes(zigzag(4)))
     path = tmp_path / "config.yaml"
     path.write_text(yaml.safe_dump({**config(TREND, CONTRA), "pairs": []}))
-    argv = ["--config", str(path), "--day", str(day), "--cost-model", str(ROOT / "config" / "cost_model.yaml"),
+    argv = ["--config", str(path), "--day", str(day), "--cost-model", str(PLACEHOLDER / "cost_model.yaml"),
             "--calendar", str(ROOT / "config" / "calendar")]  # fmt: skip
     assert dc_null.main(argv) == 0
     out, err = capsys.readouterr()
@@ -201,7 +201,7 @@ def test_the_registered_experiments_own_configuration_is_one_the_command_can_rea
     """HFT-EXP-0005 as it stands on main: six sleeves, 99 walks, seed 1. Run here on a synthetic day, two sleeves."""
     registered = ROOT / "research" / "experiments" / "HFT-EXP-0005-directional-change-shadow" / "config.yaml"
     (day,) = recording(tmp_path / "rec", quotes(zigzag(2)))
-    argv = ["--config", str(registered), "--day", str(day), "--cost-model", str(ROOT / "config" / "cost_model.yaml"),
+    argv = ["--config", str(registered), "--day", str(day), "--cost-model", str(PLACEHOLDER / "cost_model.yaml"),
             "--calendar", str(ROOT / "config" / "calendar"), "--sleeve", "dc-trend-010", "dc-contra-020"]  # fmt: skip
     assert dc_null.main(argv) == 0
     said = json.loads(capsys.readouterr().out)

@@ -30,7 +30,7 @@ from hftlab.trader.__main__ import only_one
 from hftlab.trader.session import STATE
 from tests.learn import kit as learning
 from tests.ops.kit import SATURDAY, Host, a_shadow_session, sources
-from tests.support import ROOT, called_name
+from tests.support import PLACEHOLDER, ROOT, called_name
 from tests.trader.kit import Desk, put_stage
 
 STAMP = "20261014T030000Z"
@@ -73,7 +73,7 @@ def test_on_a_host_with_nothing_yet_the_list_is_empty(tmp_path):
 
 # ---- the trader's folder and the learning folder: taken whole, but for what is named ---------------------------------
 
-SHIPPED = ["--cost-model", str(ROOT / "config/cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
+SHIPPED = ["--cost-model", str(PLACEHOLDER / "cost_model.yaml"), "--calendar", str(ROOT / "config/calendar"),
            "--feasibility", str(ROOT / "config/feasibility.yaml")]  # fmt: skip
 
 

@@ -1,61 +1,100 @@
 # Risk limits for the independent risk gate (hftlab.risk, ADR 0015). Read by hftlab.risk.load_risk_config.
 #
-# NOT YET IN FORCE. Every limit below is null: a PLACEHOLDER that marks the shape of the file, not a chosen
-# value. While `in_force` is false the loader checks the file's shape and then refuses it, so no risk gate, and
-# therefore no order manager, can be built from this file as it stands.
+# IN FORCE, by HFT-DEC-0001 (research/decisions/). Every value below is a PROPOSAL that the owner approved by
+# merging the pull request that carried it, and may change: each is one line here, with the record updated or
+# a new one written. The reasoning for each number is in that record, not here.
 #
-# To put limits in force: set every PLACEHOLDER by a decision record (HFT-DEC-NNNN) written in research/,
-# name that record in `decision`, set `status: decided` and `in_force: true`. The loader refuses a file in
-# force that still has a null limit, a key it does not define, or no decision record.
+# The loader refuses a file in force that has a null limit, a key it does not define, or no decision record.
+# Setting `in_force: false` takes every limit out of force at the next start: the trader then runs in
+# shadow-only mode and holds no object that could send an order.
 #
 # Units. Sizes are whole units of the base currency. Prices and distances are in price increments of the pair
-# (ADR 0002). Money is quoted decimal text in the currency it is written under, such as "50.00"; it is never
-# a float, and amounts in different currencies are never added. Times are whole seconds, minutes or
-# milliseconds as each key says.
-status: placeholder                 # placeholder | decided
-in_force: false
-decision: null                      # the HFT-DEC-NNNN that set the values below
+# (ADR 0002): for these pairs one increment is half a pip. Money is quoted decimal text in the currency it is
+# written under, such as "50.00"; it is never a float, and amounts in different currencies are never added.
+# Times are whole seconds, minutes or milliseconds as each key says.
+status: decided                     # placeholder | decided
+in_force: true
+decision: HFT-DEC-0001              # the record that set the values below
 
 desk:
-  max_gross_exposure: null          # PLACEHOLDER, NOT ENFORCED: needs positions valued in one currency, and nothing converts one. Must stay null
-  max_leverage: null                # PLACEHOLDER, NOT ENFORCED: for the same reason. Must stay null
-  max_open_pairs: null              # PLACEHOLDER: pairs with a position or an order in flight at once
-  max_orders_per_minute: null       # PLACEHOLDER: all sleeves together, entries and exits alike
-  max_order_to_trade_ratio: null    # PLACEHOLDER: orders and cancels sent per order that traded, per sleeve and for the desk
-  order_to_trade_window_seconds: null   # PLACEHOLDER: the rolling window that ratio is taken over
-  reject_streak_breaker: null       # PLACEHOLDER: consecutive venue rejects before entries stop until reset
-  loss_latches:                     # one block per quote currency traded; entries stop until an operator resets
-    USD:
-      daily_loss: null              # PLACEHOLDER: loss since the 17:00 New York rollover, marked at the quote
-      drawdown: null                # PLACEHOLDER: fall from the highest result reached
+  max_gross_exposure: null          # NOT ENFORCED: needs positions valued in one currency, and nothing converts one. Must stay null
+  max_leverage: null                # NOT ENFORCED: for the same reason. Must stay null
+  max_open_pairs: 2                 # pairs with a position or an order in flight at once: the two paper pairs
+  max_orders_per_minute: 12         # all sleeves together, entries, exits and the float's conversions alike
+  max_order_to_trade_ratio: 10      # orders and cancels sent per order that traded, per sleeve and for the desk
+  order_to_trade_window_seconds: 600    # the rolling window that ratio is taken over
+  reject_streak_breaker: 3          # consecutive venue rejects before entries stop until reset
+  loss_latches:                     # one block per currency a loss can be in; entries stop until an operator resets
+    USD:                            # the quote currency of every paper pair
+      daily_loss: "300.00"          # loss since the 17:00 New York rollover, marked at the quote
+      drawdown: "400.00"            # fall from the highest result reached
+    AUD:                            # the currency the broker is expected to charge commission in: fees are a loss there
+      daily_loss: "400.00"
+      drawdown: "500.00"
 
-per_pair:                           # one block per traded pair, from config/venues/ibkr.yaml once it is measured
+per_pair:                           # the pairs that go to the broker. USD.JPY and GBP.USD are not: see `inventory.shadow_only`
   EUR.USD:
-    max_position: null              # PLACEHOLDER: long or short, for the desk and for each sleeve, orders in flight counted in full
-    max_order_size: null            # PLACEHOLDER
-    price_collar_ticks: null        # PLACEHOLDER: a limit price, or the touch a market order would take, further than this from the mid is refused
-    exit_collar_ticks: null         # PLACEHOLDER: the collar of an order that can only reduce the sleeve's position. Never narrower than price_collar_ticks
-    max_spread_ticks: null          # PLACEHOLDER: no entries while the quoted spread is wider
-    stale_quote_ms: null            # PLACEHOLDER: no order on a quote the venue has not confirmed for this long
+    max_position: 40000             # two minimum sizes, long or short, for the desk; orders in flight counted in full
+    max_order_size: 40000           # so the largest position closes in one order
+    price_collar_ticks: 4           # two pips from the mid: a limit price, or the touch a market order would take
+    exit_collar_ticks: 20           # ten pips, for an order that can only reduce the sleeve's position
+    max_spread_ticks: 2             # no entries while the quoted spread is wider than one pip
+    stale_quote_ms: 3000            # no order on a quote the venue has not confirmed for this long
+  AUD.USD:
+    max_position: 50000             # two minimum sizes; the minimum is 25,000 where the base currency is AUD
+    max_order_size: 50000
+    price_collar_ticks: 4
+    exit_collar_ticks: 20
+    max_spread_ticks: 2
+    stale_quote_ms: 3000
 
-per_sleeve:                         # each sleeve has its own book and its own latches
+per_sleeve:                         # each sleeve has its own book and its own latches. Only `control` may leave shadow
   control:
-    max_position: null              # PLACEHOLDER: the sleeve's own cap in any one pair; the pair's cap holds as well
-    max_orders_per_minute: null     # PLACEHOLDER
+    max_position: 25000             # one minimum size in either pair (20,000 or 25,000): half the pair's cap
+    max_orders_per_minute: 6
     loss_latches:
       USD:
-        daily_loss: null            # PLACEHOLDER
-        drawdown: null              # PLACEHOLDER
+        daily_loss: "200.00"
+        drawdown: "300.00"
+      AUD:
+        daily_loss: "300.00"
+        drawdown: "400.00"
 
 market_guards:                      # macro-event blackouts take their width from config/calendar/macro_events.yaml
-  rollover_no_entry_minutes_before: null    # PLACEHOLDER: exits only from this long before 17:00 New York
-  rollover_no_entry_minutes_after: null     # PLACEHOLDER: until this long after it
-  weekly_close_no_entry_minutes: null       # PLACEHOLDER: exits only in the last minutes before the Friday close
+  rollover_no_entry_minutes_before: 15      # exits only from this long before 17:00 New York
+  rollover_no_entry_minutes_after: 30       # until this long after it
+  weekly_close_no_entry_minutes: 60         # exits only in the last hour before the Friday close
 
 reconciliation:
-  grace_seconds: null               # PLACEHOLDER: how long a position difference may stand before it is a break
+  grace_seconds: 240                # how long a difference in positions or cash may stand before it is a break
 
 switches:                           # files in the platform's state directory; read before every verdict
   kill: KILL                        # no new entries, exits still managed
-  flatten: FLATTEN                  # no new entries, and every open position is closed
-  flatten_retry_seconds: null       # PLACEHOLDER: how long before a close that was refused is proposed again
+  flatten: FLATTEN                  # no new entries, and every sleeve position is closed, back to the float
+  flatten_retry_seconds: 5          # how long before a close that was refused is proposed again
+
+# The cash account and its float (ADR 0031, HFT-DEC-0001). The broker lends nothing on spot: a buy is paid from
+# the quote currency the account holds and a sell from the base currency. So the account holds a float of each
+# traded currency, funded once (`python -m hftlab.trader --fund-plan`, then `--fund --operator NAME`), and a
+# sleeve's position is a deviation from it. Amounts are whole units of each currency.
+inventory:
+  hub: USD                          # what every paper pair is quoted in, and so what every buy is paid with
+  float:                            # what the account is to hold of each currency once funded, at least
+    USD: 110000                     # two minimum sizes long in both pairs at once, the reserve, and room for prices to move
+    EUR: 50000                      # two minimum sizes short, the reserve, and 5,000 over
+    AUD: 60000                      # the same
+  reserve:                          # no order may take a currency's cash under this, with every order in flight filled
+    USD: 10000
+    EUR: 5000
+    AUD: 5000
+  minimum_entry:                    # the smallest order that adds to a position: the venue's minimum for good pricing
+    EUR.USD: 20000
+    AUD.USD: 25000
+  # Recorded and shadow-traded, never sent to the broker. USD.JPY: the account may not hold yen. GBP.USD: the
+  # probe's run did not capture why its order was refused (HFT-EXP-0008), so nothing shows that cash answers it.
+  # Moving GBP.USD to paper is a probe run that captures the reason, then a new decision record: a `per_pair`
+  # block, a float and a reserve of GBP, a minimum entry of 20,000, and `max_open_pairs: 3`.
+  shadow_only: [USD.JPY, GBP.USD]
+  funding_buffer_bps: 50            # how much more of the hub is raised than the funding's buys are priced at
+  cash_tolerance: "5.00"            # how far the venue's cash may be from ours, per currency, and still agree
+  settle_seconds: 10                # how long after the last fill the venue's cash is taken to include it

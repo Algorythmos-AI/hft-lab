@@ -7,6 +7,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "hftlab"
+# The configuration as it was before any decision record set a value: round placeholder figures, limits not in
+# force, two pairs. Frozen here for the tests that run a command on synthetic data and assert numbers that come
+# out of those figures. They say nothing about the shipped files; the tests named "shipped" read `config/`.
+PLACEHOLDER = ROOT / "tests" / "placeholder"
 
 
 class GitRepo:

@@ -17,7 +17,7 @@ from hftlab.venues.port import CommissionEvent, ConnectionEvent, ConnectionState
 from hftlab.venues.supervisor import Backoff
 from hftlab.venues.view import MarketDataView
 from tests.shadow.kit import BIG, TRADED, constant, kinds, session, walk
-from tests.support import ROOT
+from tests.support import PLACEHOLDER, ROOT
 from tests.venues.kit import EURUSD, INSTRUMENTS, MS, SECOND, T0, plain_costs
 
 
@@ -385,7 +385,8 @@ def test_live_mode_needs_the_venue_to_be_there_at_the_start():
 def recorded_day(tmp_path, seconds: int = 120):
     from hftlab.record import __main__ as record
 
-    assert record.main(["--dry-run-seconds", str(seconds), "--root", str(tmp_path / "rec")]) == 0
+    frozen = ["--config", str(PLACEHOLDER / "recorder.yaml")]
+    assert record.main([*frozen, "--dry-run-seconds", str(seconds), "--root", str(tmp_path / "rec")]) == 0
     return tmp_path / "rec" / "2026-10-07"
 
 
@@ -405,7 +406,8 @@ def test_the_command_runs_a_recorded_day_and_its_journal_verifies(tmp_path, caps
     monkeypatch.chdir(ROOT)
     day = recorded_day(tmp_path)
     capsys.readouterr()
-    assert cli.main(["--day", str(day), "--config", shadow_config(tmp_path)]) == 0
+    costs = ["--cost-model", str(PLACEHOLDER / "cost_model.yaml")]
+    assert cli.main(["--day", str(day), "--config", shadow_config(tmp_path), *costs]) == 0
     out, err = capsys.readouterr()
     result = json.loads(out)
     journal = tmp_path / "journals" / "2026-10-07.jsonl"
@@ -427,10 +429,10 @@ def test_the_command_runs_a_recorded_day_and_its_journal_verifies(tmp_path, caps
     assert cli.main(["--verify", str(journal)]) == 1
     assert "does not verify" in capsys.readouterr().err
 
-    assert cli.main(["--day", str(day), "--config", shadow_config(tmp_path)]) == 2, "never onto an old journal"
+    assert cli.main(["--day", str(day), "--config", shadow_config(tmp_path), *costs]) == 2, "never onto an old journal"
     assert "already holds a journal" in capsys.readouterr().err
     other = tmp_path / "again.jsonl"
-    assert cli.main(["--day", str(day), "--config", shadow_config(tmp_path), "--journal", str(other)]) == 0
+    assert cli.main(["--day", str(day), "--config", shadow_config(tmp_path), "--journal", str(other), *costs]) == 0
     assert json.loads(capsys.readouterr().out)["sleeves"] == result["sleeves"], "the same day, the same result"
 
 

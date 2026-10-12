@@ -44,9 +44,10 @@ themselves. That is all it has been run against:
   ([ADR 0028](adr/0028-imported-history.md)) and has read hand-written rows in tests only. Imported days are
   for fitting a model before enough recordings exist: they are never this venue's results, and they count
   towards no promotion.
-- No experiment on a strategy has been run on real data. The research registry holds 6 hypotheses and 7
-  experiments, and 0 decision records: 6 of the experiments are registered and not run, and 1 is the record
-  of the capability probe's one measured run (`HFT-EXP-0007`), which tests nothing and counts as no trial.
+- No experiment on a strategy has been run on real data. The research registry holds 6 hypotheses and 8
+  experiments, and 0 decision records: 6 of the experiments are registered and not run, and 2 are records
+  of the capability probe's two measured runs (`HFT-EXP-0007`, `HFT-EXP-0008`), which test nothing and count as
+  no trial.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
 - **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
   streams and against the fake broker only (see "Where F5 and F6 stand"). Its gate is not met and code
@@ -194,7 +195,7 @@ not check offline is listed at the end of the runbook.
 | Leak mechanism | Done: `tools/leakcheck.py`, hooks, attestation ([ADR 0006](adr/0006-public-repo-and-leak-mechanism.md)) |
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
-| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 13 records: 6 hypotheses, 7 experiments and 0 decisions. The seventh experiment is not a registration: it is the record of the capability probe's first measured run |
+| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 14 records: 6 hypotheses, 8 experiments and 0 decisions. The seventh and eighth experiments are not registrations: they are the records of the capability probe's two measured runs |
 | ADRs | Done: 0001 to 0008, and 29 records now. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, the weekly loop 0023, the Directional Change sleeve 0024, gradient boosting 0025, sleeve state 0026, the deploy gate 0027, imported history 0028 and the sequence network 0029 |
 | Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). 23 of the first file's 31 requirements are verified by tests they name and the other 8 are open. 12 of the second file's 80 requirements are verified, all of them by tests on synthetic streams; the other 68 are open. Its last 12, on directional change, come from a second release of the knowledge base |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

@@ -12,21 +12,40 @@ var/probe/ibkr-<UTC date>T<UTC time>Z.json (for example ibkr-2026-10-11T213440Z.
   * how often quotes arrive, the gaps between them and the spread, over a sampling window;
   * whether market depth and historical ticks are there.
 
-By default it places NO orders. With --orders it places one minimum-size limit order per pair, five per cent
-below the bid so that it cannot trade, waits for the acknowledgement, cancels it and times both. Whatever
-happens in between, it cancels in a `finally` and then checks that nothing of its own is left working.
+By default it places NO orders. With --orders it places one minimum-size limit order per pair, a BUY five per
+cent below the bid so that it cannot trade, and waits for the broker's own verdict on it. The gateway
+acknowledges an order itself, at once; the broker's servers accept or reject it a moment later. So the probe
+waits, for a bounded time, past the gateway's acknowledgement, and reports per pair one of:
+
+  * `accepted_and_working`: acknowledged, and not turned down in the wait. `placed` is true. The order is then
+    cancelled and the cancel timed;
+  * `rejected`: with the broker's number for it (`reason_code`) and a class from the fixed table in
+    `hftlab.venues.ibkr.refusals` (`reason_class`). `placed` is false, and the order, being dead, is not
+    cancelled. The broker's own words stay in `notices`, which are for the owner's eyes;
+  * `no_answer`: nothing came back in the wait.
+
+`ack_us` is timed to that verdict; `local_ack_us` is the gateway's own first answer. `may_open_position`, at
+the top of the report, sums it up: per side tested, the pairs the account may open a position in, the pairs
+it was refused, each with its class, and the pairs with no verdict. Whatever happens in between, the probe
+cancels in a `finally` and then checks that nothing of its own is left working.
 
 The gateway can be connected to us and cut off from the broker. It then answers no lookup, and says why only
 in status messages. The probe reads those from the moment it connects (`hftlab.venues.ibkr.link` lists them),
 and when a lookup fails while the latest of them says the link is down, the pair gets that one plain reason,
 the report says `upstream_link_down`, no order is placed, and the command exits with status 3.
 
+The paper account gets no market data while the login it belongs to has a session open elsewhere. The gateway
+says so in a message of its own (`hftlab.venues.ibkr.link`). The link is up then, and lookups are answered,
+but no quote arrives: each pair without quotes gets that one plain reason, the report says
+`competing_session`, no order is placed, and the command exits with status 4.
+
 A report is never overwritten. Its name carries the second the probe started, and if a file of that name is
 already there the probe prints the report, leaves the file alone and says so.
 
 Exit status: 0 done; 1 an order of the probe's is still working or a position changed; 2 refused, the venue
 could not be probed at all, or the report could not be kept because its file already exists; 3 the gateway
-was cut off from the broker, so the report measures nothing.
+was cut off from the broker, so the report measures nothing; 4 the other login's session took the market
+data, so the report holds no quotes.
 
 It never overwrites config/venues/ibkr.yaml unless told to with --write-config. Every number in the report is
 an integer or decimal text: durations in microseconds, prices in the instrument's own units.
@@ -65,7 +84,14 @@ from hftlab.core import (
 )
 from hftlab.core._checks import pair as check_pair
 from hftlab.safety.lock import PaperOnlyError
-from hftlab.venues.ibkr.link import DOWN_REASON, UpstreamLink
+from hftlab.venues.ibkr.link import (
+    COMPETING_REASON,
+    DOWN_REASON,
+    UpstreamLink,
+    gateway_code,
+    says_competing_session,
+)
+from hftlab.venues.ibkr.refusals import ORDER_WARNING_CODE, odd_lot_minimum, reason_class
 from hftlab.venues.port import (
     ConnectionEvent,
     ConnectionState,
@@ -77,7 +103,7 @@ from hftlab.venues.port import (
     VenueUnavailable,
 )
 
-SCHEMA = 1
+SCHEMA = 2  # 2: an order's verdict is the broker's, not the gateway's acknowledgement; `may_open_position`
 SECOND = 1_000_000_000
 SLEEVE = "probe"
 KINDS = (InstrumentKind.CASH, InstrumentKind.CFD)
@@ -88,10 +114,16 @@ CONFIG_STATUSES = ("placeholder", "partly_measured", "probed")
 EXIT_ATTENTION = 1
 EXIT_REFUSED = 2
 EXIT_UPSTREAM_DOWN = 3
+EXIT_COMPETING_SESSION = 4
+# The broker's verdict on one of the probe's orders.
+ACCEPTED, REJECTED, NO_ANSWER = "accepted_and_working", "rejected", "no_answer"
+SIDE_TESTED = Side.BUY  # the one side the probe's orders take
+_ENDED_UNASKED = (OrderState.REJECTED, OrderState.CANCELLED, OrderState.EXPIRED)
 NOT_MEASURED = (
     "commissions: a commission is only reported on a fill, and the probe never lets its orders fill",
     "weekly login: what happens at the weekly reset has to be watched over a week, not sampled",
     "server clock offset: the gateway answers in whole seconds, so the offset is good to a second at best",
+    "the SELL side: the probe's orders are buys, so what the account may sell or short is not shown",
 )
 
 
@@ -105,6 +137,9 @@ class ProbeSettings:
     history_ticks: int = 100
     orders: bool = False
     order_wait_ns: int = 10 * SECOND
+    # How long past the gateway's own acknowledgement the broker's servers are given to turn the order down.
+    verdict_wait_ns: int = 3 * SECOND
+    notice_wait_ns: int = SECOND  # and how long the message that explains a rejection may trail the rejection
 
 
 # ---- small pure helpers --------------------------------------------------------------------------------------------
@@ -186,6 +221,8 @@ class Probe:
         self.last_quote: dict[str, Quote] = {}
         self.link = UpstreamLink()
         self.upstream_down = False  # a lookup failed while the gateway's latest word was that it is cut off
+        self.competing = False  # the gateway said the other login's session has the market data
+        self.said: dict[str, list[tuple[str, str]]] = {}  # what the venue said about each order: (code, message)
         self._stuck = 0
 
     def run(self) -> dict[str, Any]:
@@ -206,11 +243,16 @@ class Probe:
                 "orders": None,
             }
             if self.settings.orders and self.upstream_down:
-                report["orders"] = {"placed": False, "reason": DOWN_REASON}
+                report["orders"] = {"attempted": False, "placed": False, "reason": DOWN_REASON}
+            elif self.settings.orders and self.competing:
+                report["orders"] = {"attempted": False, "placed": False, "reason": COMPETING_REASON}
             elif self.settings.orders:
                 report["orders"] = self._orders(report["pairs"])
+            self._drain()  # a message may trail the event it explains by one poll
+            report["may_open_position"] = may_open_position(report["orders"])
             report["disconnects_during_probe"] = self.disconnects
             report["upstream_link_down"] = self.upstream_down
+            report["competing_session"] = self.competing
             for notice in self.notices:  # the gateway may name an account in its own words; the report does not
                 for account in accounts:
                     notice["message"] = notice["message"].replace(account, mask(account))
@@ -249,6 +291,9 @@ class Probe:
             if isinstance(event, VenueNotice):
                 self.notices.append({"code": event.code, "message": event.message})
                 self.link.hear(event.code, event.message)
+                self.competing = self.competing or says_competing_session(event.code, event.message)
+                if event.client_order_id is not None:
+                    self.said.setdefault(event.client_order_id, []).append((event.code, event.message))
             elif isinstance(event, ConnectionEvent) and event.state is ConnectionState.DISCONNECTED:
                 self.disconnects += 1
             elif isinstance(event, Quote):
@@ -316,7 +361,9 @@ class Probe:
         window_ns = self.clock.now_ns() - started
         gaps = [(later.recv_ts_ns - earlier.recv_ts_ns) // 1_000 for earlier, later in pairwise(quotes)]
         spreads = [q.spread for q in quotes]
+        why = {"reason": COMPETING_REASON} if self.competing and not quotes else {}
         return {
+            **why,
             "updates": len(quotes),
             "window_us": window_ns // 1_000,
             "updates_per_second": per_second(len(quotes), window_ns),
@@ -373,7 +420,7 @@ class Probe:
         working = venue.open_orders()
         if working:
             reason = f"the account already has {len(working)} working order(s); the probe places none beside them"
-            return {"placed": False, "reason": reason}
+            return {"attempted": False, "placed": False, "reason": reason}
         before = self._positions()
         venue.mark_reconciled()
         results: dict[str, Any] = {}
@@ -382,7 +429,8 @@ class Probe:
                 form = pairs[pair].get("sampled_as")
                 quote = self.last_quote.get(pair)
                 if form is None or quote is None:
-                    results[pair] = {"placed": False, "reason": "no instrument or no quote to price an order from"}
+                    reason = "no instrument or no quote to price an order from"
+                    results[pair] = {"placed": False, "verdict": NO_ANSWER, "reason": reason}
                     continue
                 try:
                     instrument = venue.instrument(pair, InstrumentKind(form.upper()))
@@ -390,12 +438,15 @@ class Probe:
                 except PaperOnlyError:
                     raise
                 except VenueError as exc:
-                    results[pair] = {"placed": False, "reason": f"{type(exc).__name__}: {exc}"}
+                    reason = f"{type(exc).__name__}: {exc}"
+                    results[pair] = {"placed": False, "verdict": NO_ANSWER, "reason": reason}
         finally:
             left = self._cancel_everything_of_ours()
         after = self._positions()
         return {
-            "placed": True,
+            "attempted": True,
+            "placed": any(result["placed"] for result in results.values()),  # the broker accepted at least one
+            "side": SIDE_TESTED.value,
             "pairs": results,
             "left_working": left,
             "positions_before": before,
@@ -410,33 +461,49 @@ class Probe:
         now = self.clock.now_ns()
         price, quantity = far_below(quote.bid, instrument), smallest_order(instrument)
         order_id = client_order_id(
-            sleeve=SLEEVE, pair=instrument.pair, side=Side.BUY, decision_seq=now // SECOND, attempt=number
+            sleeve=SLEEVE, pair=instrument.pair, side=SIDE_TESTED, decision_seq=now // SECOND, attempt=number
         )
-        terms = (Side.BUY, quantity, OrderType.LIMIT, TimeInForce.DAY)
+        terms = (SIDE_TESTED, quantity, OrderType.LIMIT, TimeInForce.DAY)
         order = Order(order_id, SLEEVE, instrument.pair, *terms, now, price)
         result: dict[str, Any] = {
-            "placed": True,
+            "placed": False,
+            "verdict": NO_ANSWER,
             "client_order_id": order_id,
             "quantity": quantity,
             "limit_price": instrument.format_price(price),
             "bid_at_the_time": instrument.format_price(quote.bid),
         }
         self.venue.place(order, instrument)
-        acknowledged = self._wait_for(order_id, {OrderState.WORKING, OrderState.PARTIALLY_FILLED, OrderState.FILLED})
+        first = self._wait_for(order_id, {OrderState.WORKING, OrderState.PARTIALLY_FILLED, OrderState.FILLED})
         # Timed to the moment the answer was received, not to the end of the poll that returned it.
-        result["ack_us"] = None if acknowledged is None else (acknowledged.ts_ns - now) // 1_000
-        result["state_after_placing"] = acknowledged.state.value if acknowledged else "no answer"
-        if acknowledged is not None and acknowledged.state is OrderState.WORKING:
-            asked = self.clock.now_ns()
-            self.venue.cancel(order_id)
-            cancelled = self._wait_for(order_id, {OrderState.CANCELLED})
-            result["cancel_us"] = None if cancelled is None else (cancelled.ts_ns - asked) // 1_000
-            result["state_after_cancelling"] = cancelled.state.value if cancelled else "no answer"
+        result["local_ack_us"] = None if first is None else (first.ts_ns - now) // 1_000
+        result["ack_us"] = None
+        if first is None:
+            return result
+        ended = first if first.state.is_terminal else self._wait_for_verdict(order_id)
+        if ended is not None and ended.state in _ENDED_UNASKED:
+            # The broker's servers said no, or ended the order by themselves. It is dead: there is nothing to cancel.
+            code, found = self._why(order_id, ended)
+            result.update(verdict=REJECTED, final_state=ended.state.value, reason_code=code, reason_class=found)
+            result["ack_us"] = (ended.ts_ns - now) // 1_000
+        else:
+            # Acknowledged, and not turned down in the wait: the acknowledgement stands as the verdict.
+            result.update(placed=True, verdict=ACCEPTED, ack_us=result["local_ack_us"])
+            if ended is None:
+                asked = self.clock.now_ns()
+                self.venue.cancel(order_id)
+                cancelled = self._wait_for(order_id, {OrderState.CANCELLED})
+                result["cancel_us"] = None if cancelled is None else (cancelled.ts_ns - asked) // 1_000
+                result["state_after_cancelling"] = cancelled.state.value if cancelled else "no answer"
+        for code, message in self.said.get(order_id, []):
+            minimum = odd_lot_minimum(message) if gateway_code(code) == ORDER_WARNING_CODE else None
+            if minimum is not None:  # numbers only: the venue's minimum for good pricing, as its own warning names it
+                result["odd_lot_minimum"] = {"currency": minimum[0], "size": minimum[1]}
         return result
 
-    def _wait_for(self, order_id: str, wanted: set[OrderState]) -> OrderEvent | None:
+    def _wait_for(self, order_id: str, wanted: set[OrderState], wait_ns: int | None = None) -> OrderEvent | None:
         """The first event for `order_id` in a wanted or final state, or None if the wait runs out."""
-        deadline = self.clock.now_ns() + self.settings.order_wait_ns
+        deadline = self.clock.now_ns() + (self.settings.order_wait_ns if wait_ns is None else wait_ns)
         while self.clock.now_ns() < deadline:
             for event in self._step(deadline):
                 if not isinstance(event, OrderEvent) or event.client_order_id != order_id:
@@ -444,6 +511,29 @@ class Probe:
                 if event.state in wanted or event.state.is_terminal:
                     return event
         return None
+
+    def _wait_for_verdict(self, order_id: str) -> OrderEvent | None:
+        """What ended an acknowledged order within the verdict wait, or None: it is still working."""
+        return self._wait_for(order_id, set(), self.settings.verdict_wait_ns)
+
+    def _why(self, order_id: str, ended: OrderEvent) -> tuple[str | None, str]:
+        """The broker's number for a rejection and its class. The message may arrive a poll after the state."""
+
+        def explained() -> tuple[str, str] | None:
+            numbered = [
+                (code, message)
+                for code, message in self.said.get(order_id, [])
+                if gateway_code(code) not in (None, ORDER_WARNING_CODE)
+            ]
+            return numbered[-1] if numbered else None
+
+        deadline = self.clock.now_ns() + self.settings.notice_wait_ns
+        while explained() is None and self.clock.now_ns() < deadline:
+            self._step(deadline)
+        found = explained()
+        if found is None:
+            return None, reason_class(None, ended.reason)  # no number arrived: the order's own last word decides
+        return found[0], reason_class(gateway_code(found[0]), found[1])
 
     def _cancel_everything_of_ours(self) -> list[str]:
         """Cancel whatever of the probe's is still working, then return the ids that are STILL working."""
@@ -466,6 +556,24 @@ class Probe:
         return ["unknown: the venue could not be asked"]
 
 
+def may_open_position(orders: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Per side tested: the pairs the account may open a position in, those it was refused, and those unknown.
+
+    None when no order was sent: nothing was tested. Classes and pair names only, never the broker's words.
+    """
+    if not orders or not orders.get("attempted"):
+        return None
+    pairs: dict[str, Any] = orders["pairs"]
+    return {
+        "sides_tested": [SIDE_TESTED.value],
+        SIDE_TESTED.value: {
+            "accepted": [pair for pair, found in pairs.items() if found["verdict"] == ACCEPTED],
+            "refused": {pair: found["reason_class"] for pair, found in pairs.items() if found["verdict"] == REJECTED},
+            "no_verdict": [pair for pair, found in pairs.items() if found["verdict"] == NO_ANSWER],
+        },
+    }
+
+
 def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
     """The content the probe proposes for config/venues/ibkr.yaml. Decisions stay null: they are the owner's.
 
@@ -480,7 +588,7 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
         chosen = found["forms"][found["sampled_as"]]
         gaps = (found["quotes"] or {}).get("gap_us")
         orders = ((report.get("orders") or {}).get("pairs") or {}).get(pair) or {}
-        ack_us = orders.get("ack_us")
+        ack_us = orders.get("ack_us") if orders.get("verdict") == ACCEPTED else None  # a rejection is no round trip
         pairs.append(
             {
                 "pair": pair,
@@ -603,7 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"probe: {out} already exists and is left as it is; this report is on stdout only", file=sys.stderr)
     if args.write_config and not kept:
         print(f"probe: {args.config_path} left as it is: the report it would cite was not kept", file=sys.stderr)
-    elif args.write_config and report["upstream_link_down"]:
+    elif args.write_config and (report["upstream_link_down"] or report["competing_session"]):
         print(f"probe: {args.config_path} left as it is: nothing was measured", file=sys.stderr)
     elif args.write_config:
         if args.fake and args.config_path == CONFIG_PATH:
@@ -618,6 +726,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if report["upstream_link_down"]:
         print(f"probe: {DOWN_REASON}. This report measures nothing; see the runbook.", file=sys.stderr)
         return EXIT_UPSTREAM_DOWN
+    if report["competing_session"]:
+        print(f"probe: {COMPETING_REASON}. This report holds no quotes; see the runbook.", file=sys.stderr)
+        return EXIT_COMPETING_SESSION
     return 0 if kept else EXIT_REFUSED
 
 

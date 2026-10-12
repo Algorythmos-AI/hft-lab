@@ -12,7 +12,7 @@ import pytest
 
 from hftlab.core import Fill, InstrumentKind, OrderEvent, OrderState, Quote, Side, TimeInForce
 from hftlab.safety import PaperOnlyError
-from hftlab.venues.fake import FakeConfig
+from hftlab.venues.fake import FakeConfig, LateRejection
 from hftlab.venues.port import (
     CommissionEvent,
     ConnectionEvent,
@@ -22,6 +22,7 @@ from hftlab.venues.port import (
     OrderRefused,
     UnknownInstrument,
     UnknownOrder,
+    VenueNotice,
     VenueUnavailable,
 )
 from hftlab.venues.supervisor import Backoff
@@ -231,6 +232,20 @@ def test_a_rejected_order_carries_the_brokers_reason(kind):
     events = h.venue.poll() + h.after(50 * MS)
     assert brief(events) == [("order", "SUBMITTED", 0), ("order", "REJECTED", 0)]
     assert "insufficient margin" in of(events, OrderEvent)[-1].reason and h.venue.open_orders() == ()
+
+
+@both
+def test_an_order_the_brokers_servers_reject_after_the_acknowledgement_ends_rejected_with_its_message(kind):
+    h = Harness(kind, FakeConfig(late_rejections=(LateRejection("EUR.USD", "insufficient_cash_quote_currency"),)))
+    instrument = h.ready()
+    order = an_order(limit=108_400)
+    h.venue.place(order, instrument)
+    events = h.venue.poll() + h.after(50 * MS)
+    assert brief(events) == [("order", "SUBMITTED", 0), ("order", "WORKING", 0), ("order", "REJECTED", 0),
+                             ("notice", "ib:201")]  # fmt: skip
+    (notice,) = of(events, VenueNotice)
+    assert notice.client_order_id == order.client_order_id and "insufficient cash" in notice.message
+    assert "insufficient cash" in of(events, OrderEvent)[-1].reason and h.venue.open_orders() == ()
 
 
 @every

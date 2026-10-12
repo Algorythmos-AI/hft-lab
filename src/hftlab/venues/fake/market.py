@@ -7,6 +7,11 @@ they were scheduled, random quotes come from a seeded generator, and there is no
 Fills come from the top of the book, like a broker's paper account: a marketable order takes the quoted price
 at once. That is optimistic on purpose here. The conservative model is the shadow venue's job (ADR 0003), and
 this one exists to exercise the plumbing: delays, partial fills, rejects, duplicates, reordering, outages.
+
+It can also play the broker's servers turning an order down after the gateway acknowledged it
+(`FakeConfig.late_rejections`): the order is acknowledged and looks working, and `verdict_delay_ns` later it is
+rejected, with a message that carries the gateway's number for a rejection. The messages are the fake's own
+words, written in the shape of the gateway's, one for each kind of refusal.
 """
 from __future__ import annotations
 
@@ -19,6 +24,31 @@ from functools import partial
 from hftlab.core import Instrument, InstrumentKind, Liquidity, Order, OrderType, Side, TimeInForce
 
 MS = 1_000_000
+REJECTION_CODE = 201  # the gateway's number for an order the broker's servers turned down
+WARNING_CODE = 399  # and for a warning about an order that is sent all the same
+# The kinds of late rejection the fake can play, and what it says for each. `{quote}` is the pair's quote currency.
+INSUFFICIENT_CASH = "insufficient_cash_quote_currency"
+CURRENCY_NOT_PERMITTED = "currency_not_permitted"
+OTHER = "other"
+REJECTION_TEXTS = {
+    INSUFFICIENT_CASH: "order rejected - reason: there is insufficient cash [-1.00 {quote}] to obtain the position",
+    CURRENCY_NOT_PERMITTED: "order rejected - reason: not allowed to open position in {quote}",
+    OTHER: "order rejected - reason: the fake broker gives none",
+}
+ODD_LOT_TEXT = "order size is below the {base} {minimum} minimum and will be routed as an odd lot order"
+
+
+@dataclass(frozen=True, slots=True)
+class LateRejection:
+    """Orders of this pair (and side, if given) are acknowledged, then rejected by the broker's servers."""
+
+    pair: str
+    kind: str  # one of REJECTION_TEXTS
+    side: Side | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in REJECTION_TEXTS:
+            raise ValueError(f"a late rejection is one of {sorted(REJECTION_TEXTS)}, not {self.kind!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +76,12 @@ class FakeConfig:
     gateway_messages: tuple[tuple[int, int, str], ...] = ()
     unanswered_lookups: tuple[tuple[int, int], ...] = ()  # [start, end) spans when an instrument lookup times out
     lookup_timeout_ns: int = 10_000 * MS  # how long such a lookup waits before it gives up
+    # The broker's servers turning an order down after the gateway's own acknowledgement.
+    late_rejections: tuple[LateRejection, ...] = ()
+    verdict_delay_ns: int = 3 * MS  # from the acknowledgement to the rejection
+    rejection_notice_delay_ns: int = 0  # the rejection's message arrives this long after the order's last state
+    # An order smaller than this draws the gateway's odd-lot warning when it is acknowledged. 0: no warning.
+    odd_lot_below: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,6 +106,17 @@ class Rejected:
     at_ns: int
     client_order_id: str
     reason: str
+    late: bool = False  # after the acknowledgement: the broker's servers, not the gateway, said no
+
+
+@dataclass(frozen=True, slots=True)
+class Said:
+    """A message of the gateway's about one order, with the gateway's number: a warning, or why it was rejected."""
+
+    at_ns: int
+    client_order_id: str
+    code: int
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +156,7 @@ class CancelTooLate:
     client_order_id: str
 
 
-Happening = QuoteTick | Acked | Rejected | Executed | Commissioned | Cancelled | CancelTooLate
+Happening = QuoteTick | Acked | Rejected | Said | Executed | Commissioned | Cancelled | CancelTooLate
 
 
 @dataclass(slots=True)
@@ -125,6 +172,7 @@ class BookedOrder:
     open: bool = True
     executed: int = 0
     reserved: int = 0  # matched and waiting to be reported as executions
+    doomed: bool = False  # acknowledged, and about to be rejected by the broker's servers: it never trades
 
     @property
     def remaining(self) -> int:
@@ -231,8 +279,20 @@ class FakeMarket:
             self._at(answered, partial(self._on_reject, booked, reason))
             return booked.broker_order_id
         self._at(answered, partial(self._on_ack, booked))
+        late = self._late_rejection(order)
+        if late is not None:
+            booked.doomed = True
+            self._at(answered + max(self.config.verdict_delay_ns, 0), partial(self._on_late_reject, booked, late))
+            return booked.broker_order_id
         self._at(max(booked.eligible_ns, answered), partial(self._match, booked, arriving=True))
         return booked.broker_order_id
+
+    def _late_rejection(self, order: Order) -> str | None:
+        """What the broker's servers will say of this order after the acknowledgement, or None: they take it."""
+        for entry in self.config.late_rejections:
+            if entry.pair == order.pair and entry.side in (None, order.side):
+                return REJECTION_TEXTS[entry.kind].format(quote=order.pair.partition(".")[2])
+        return None
 
     def request_cancel(self, client_order_id: str, at_ns: int) -> None:
         booked = self._orders[client_order_id]
@@ -297,7 +357,23 @@ class FakeMarket:
 
     def _on_ack(self, booked: BookedOrder, at_ns: int) -> None:
         booked.acked = True
-        self._out.append(Acked(at_ns, booked.order.client_order_id, booked.broker_order_id))
+        order = booked.order
+        self._out.append(Acked(at_ns, order.client_order_id, booked.broker_order_id))
+        if order.quantity < self.config.odd_lot_below:
+            text = ODD_LOT_TEXT.format(base=order.pair.partition(".")[0], minimum=self.config.odd_lot_below)
+            self._out.append(Said(at_ns, order.client_order_id, WARNING_CODE, text))
+
+    def _on_late_reject(self, booked: BookedOrder, reason: str, at_ns: int) -> None:
+        if not booked.open:
+            return  # cancelled in the moment between the acknowledgement and the verdict
+        booked.open = False
+        order_id = booked.order.client_order_id
+        self._out.append(Rejected(at_ns, order_id, reason, late=True))
+        said = partial(self._say, Said(at_ns, order_id, REJECTION_CODE, reason))
+        self._at(at_ns + max(self.config.rejection_notice_delay_ns, 0), said)
+
+    def _say(self, said: Said, at_ns: int) -> None:
+        self._out.append(Said(at_ns, said.client_order_id, said.code, said.text))
 
     def _on_reject(self, booked: BookedOrder, reason: str, at_ns: int) -> None:
         self._out.append(Rejected(at_ns, booked.order.client_order_id, reason))
@@ -313,7 +389,7 @@ class FakeMarket:
     def _match(self, booked: BookedOrder, at_ns: int, *, arriving: bool) -> None:
         order = booked.order
         unmatched = booked.remaining - booked.reserved
-        if not booked.open or unmatched <= 0:
+        if not booked.open or booked.doomed or unmatched <= 0:
             return
         immediate = order.tif in (TimeInForce.IOC, TimeInForce.FOK)
         tick = self._top.get(order.pair)

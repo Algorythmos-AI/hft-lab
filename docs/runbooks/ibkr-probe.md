@@ -233,7 +233,7 @@ gateway's own panels show whether it holds. Tell the maintainers which, if any, 
 | Market depth and historical ticks are requested the way the adapter does | `depth` and `historical_ticks`, and any `notices` beside them |
 | The gateway answers a clock request in UTC | `server_time.server` matches the wall clock |
 | An order's reference field carries our id back unchanged | With `--orders`: the round trip completes |
-| A new order is acknowledged as `PreSubmitted` or `Submitted`, and a cancel ends as `Cancelled` | `state_after_placing: WORKING`, `state_after_cancelling: CANCELLED` |
+| A new order is acknowledged as `PreSubmitted` or `Submitted`, and a cancel ends as `Cancelled` | `verdict: accepted_and_working`, `state_after_cancelling: CANCELLED` |
 | A limit price sent as decimal text and a whole-number quantity are accepted | The order is acknowledged, not rejected |
 | A minimum-size order far from the market is accepted and does not trade | `positions_changed: false` |
 | Working orders can be listed for the whole account, with their reference | `left_working: []` after the cancel |

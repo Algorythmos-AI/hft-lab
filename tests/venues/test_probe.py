@@ -12,8 +12,9 @@ from hypothesis import strategies as st
 
 from hftlab.core import InstrumentKind, OrderState, SimClock
 from hftlab.safety import PaperOnlyError
-from hftlab.venues.fake import FakeConfig, build
-from hftlab.venues.ibkr import probe
+from hftlab.venues.fake import FakeConfig, LateRejection, build
+from hftlab.venues.fake.market import REJECTION_TEXTS
+from hftlab.venues.ibkr import link, probe, refusals
 from hftlab.venues.ibkr.probe import Probe, ProbeSettings
 from hftlab.venues.port import ConnectionState, VenueError
 from tests.venues.kit import EURUSD, INSTRUMENTS, MS, SECOND, T0, USDJPY
@@ -56,7 +57,8 @@ def test_by_default_the_probe_places_no_order_and_disconnects_when_done():
     assert report["orders"] is None and broker.market._orders == {}
     assert broker._sent == set()
     assert broker.state is ConnectionState.DISCONNECTED
-    assert report["schema"] == 1 and report["venue"] == "fake" and report["probed_at"] == "2025-10-09T08:53:20Z"
+    assert report["schema"] == 2 and report["may_open_position"] is None
+    assert report["venue"] == "fake" and report["probed_at"] == "2025-10-09T08:53:20Z"
 
 
 def test_a_read_only_probe_never_even_makes_the_connection_ready_for_orders():
@@ -143,7 +145,8 @@ def test_the_server_clock_offset_is_reported():
 def test_the_report_has_no_float_anywhere_and_says_what_it_did_not_measure():
     report, _ = run(dataclasses.replace(FAST, orders=True))
     assert floats_in(report) == [] and json.loads(json.dumps(report)) == report
-    assert len(report["not_measured"]) == 3 and "commission" in report["not_measured"][0]
+    assert len(report["not_measured"]) == 4 and "commission" in report["not_measured"][0]
+    assert "SELL" in report["not_measured"][3]
     assert report["disconnects_during_probe"] == 0 and report["notices"] == []
 
 
@@ -197,7 +200,7 @@ def test_cut_off_with_orders_asked_for_places_nothing_and_asks_the_account_nothi
     broker.market.working = lambda: asked.append("working") or []
     report = Probe(broker, clock, WITH_ORDERS).run()
     assert report["orders"] == {
-        "placed": False, "reason": "the gateway is connected to us but not to the broker's servers",
+        "attempted": False, "placed": False, "reason": "the gateway is connected to us but not to the broker's servers",
     }  # fmt: skip
     assert broker.market._orders == {} and broker._sent == set() and asked == []
 
@@ -267,7 +270,49 @@ def test_the_command_exits_with_a_status_of_its_own_when_the_gateway_is_cut_off(
 
 def test_the_command_still_exits_zero_on_a_healthy_run(tmp_path, capsys):
     assert probe.main(["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path)]) == 0
-    assert json.loads(capsys.readouterr().out)["upstream_link_down"] is False
+    report = json.loads(capsys.readouterr().out)
+    assert report["upstream_link_down"] is False and report["competing_session"] is False
+
+
+# ---- the other login's session has the market data ------------------------------------------------------------------
+
+TAKEN = FakeConfig(depth_levels=5, gateway_messages=((T0 + MS, 10197, "no market data during competing session"),))
+
+
+def test_a_competing_session_gives_each_pair_without_quotes_one_plain_reason():
+    report, broker = run(config=TAKEN, quotes=False)
+    for pair in ("EUR.USD", "USD.JPY"):
+        found = report["pairs"][pair]
+        assert found["forms"]["cash"]["resolves"] is True, "the link is up: lookups are answered"
+        assert found["quotes"]["updates"] == 0 and found["quotes"]["reason"] == link.COMPETING_REASON
+    assert report["competing_session"] is True and report["upstream_link_down"] is False
+    assert "other login" in link.COMPETING_REASON and broker.state is ConnectionState.DISCONNECTED
+
+
+def test_a_competing_session_with_orders_asked_for_places_nothing():
+    report, broker = run(WITH_ORDERS, config=TAKEN, quotes=False)
+    assert report["orders"] == {"attempted": False, "placed": False, "reason": link.COMPETING_REASON}
+    assert report["may_open_position"] is None and broker.market._orders == {} and broker._sent == set()
+
+
+def test_quotes_that_arrive_are_not_blamed_on_a_competing_session_and_silence_alone_is_not_one():
+    heard, _ = run(config=TAKEN)
+    assert heard["competing_session"] is True and "reason" not in heard["pairs"]["EUR.USD"]["quotes"]
+    silent, _ = run(quotes=False)
+    assert silent["competing_session"] is False and "reason" not in silent["pairs"]["EUR.USD"]["quotes"]
+
+
+def test_the_command_exits_with_a_status_of_its_own_on_a_competing_session(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(probe, "_fake_venue", lambda pairs, window_ns: a_venue(TAKEN, quotes=False)[::-1])
+    target = tmp_path / "ibkr.yaml"
+    arguments = ["--fake", "--window-seconds", "1", "--out-dir", str(tmp_path), "--orders"]
+    code = probe.main([*arguments, "--write-config", "--config-path", str(target)])
+    captured = capsys.readouterr()
+    assert code == probe.EXIT_COMPETING_SESSION == 4 != probe.EXIT_UPSTREAM_DOWN
+    assert json.loads(captured.out)["competing_session"] is True
+    assert "other login has a session open elsewhere" in captured.err and "holds no quotes" in captured.err
+    assert not target.exists() and "nothing was measured" in captured.err
+    assert len(list(tmp_path.iterdir())) == 1, "the report is still written"
 
 
 # ---- the lock -------------------------------------------------------------------------------------------------------
@@ -292,7 +337,9 @@ def test_with_orders_one_far_away_minimum_size_order_per_pair_is_placed_timed_an
         result = orders["pairs"][pair]
         assert result["quantity"] == instrument.min_order_size
         assert (result["ack_us"], result["cancel_us"]) == (2_000, 2_000), "the fake's configured delays, exactly"
-        assert (result["state_after_placing"], result["state_after_cancelling"]) == ("WORKING", "CANCELLED")
+        assert (result["placed"], result["verdict"]) == (True, "accepted_and_working")
+        assert result["local_ack_us"] == 2_000 and result["state_after_cancelling"] == "CANCELLED"
+        assert "reason_code" not in result and "reason_class" not in result and "odd_lot_minimum" not in result
         limit, bid = instrument.price(result["limit_price"]), instrument.price(result["bid_at_the_time"])
         assert limit % instrument.price_increment == 0 and bid * 94 // 100 < limit <= bid * 95 // 100 + 5
     booked = list(broker.market._orders.values())
@@ -324,8 +371,129 @@ def test_the_probe_places_nothing_beside_orders_that_are_already_working():
 def test_an_order_the_broker_rejects_is_reported_and_nothing_is_left():
     report, broker = run(WITH_ORDERS, reject=lambda order: "not permitted on this account")
     result = report["orders"]["pairs"]["EUR.USD"]
-    assert result["state_after_placing"] == "REJECTED" and "cancel_us" not in result
+    assert (result["placed"], result["verdict"], result["final_state"]) == (False, "rejected", "REJECTED")
+    assert (result["reason_code"], result["reason_class"]) == (None, "other"), "no number came, and no known words"
+    assert "cancel_us" not in result and "not permitted" not in json.dumps(report["orders"])
+    assert report["orders"]["placed"] is False and report["orders"]["attempted"] is True
     assert report["orders"]["left_working"] == [] and broker.market.working() == []
+
+
+# ---- the broker's own verdict, after the gateway's acknowledgement -------------------------------------------------
+
+
+def refusing(*entries: LateRejection, **options) -> FakeConfig:
+    return FakeConfig(depth_levels=5, late_rejections=entries, **options)
+
+
+BOTH_REFUSED = refusing(
+    LateRejection("EUR.USD", refusals.INSUFFICIENT_CASH), LateRejection("USD.JPY", refusals.CURRENCY_NOT_PERMITTED)
+)
+
+
+@pytest.mark.parametrize("kind", [refusals.INSUFFICIENT_CASH, refusals.CURRENCY_NOT_PERMITTED, refusals.OTHER])
+def test_an_order_acknowledged_and_then_rejected_is_reported_as_rejected_with_code_and_class(kind):
+    report, broker = run(WITH_ORDERS, config=refusing(LateRejection("EUR.USD", kind)))
+    result = report["orders"]["pairs"]["EUR.USD"]
+    assert (result["placed"], result["verdict"], result["final_state"]) == (False, "rejected", "REJECTED")
+    assert (result["reason_code"], result["reason_class"]) == ("ib:201", kind)
+    assert (result["local_ack_us"], result["ack_us"]) == (2_000, 5_000), "the gateway's answer, then the broker's"
+    assert "cancel_us" not in result and "state_after_cancelling" not in result
+    assert report["orders"]["pairs"]["USD.JPY"]["verdict"] == "accepted_and_working"
+    assert report["orders"]["placed"] is True, "one of the two was accepted"
+    assert report["orders"]["left_working"] == [] and broker.market.working() == []
+
+
+def test_a_rejected_order_is_not_cancelled():
+    clock, broker = a_venue(BOTH_REFUSED)
+    asked = []
+    broker.market.request_cancel = lambda order_id, at_ns: asked.append(order_id)
+    report = Probe(broker, clock, WITH_ORDERS).run()
+    assert asked == [] and "cancel-too-late" not in [notice["code"] for notice in report["notices"]]
+    assert report["orders"]["placed"] is False and report["orders"]["attempted"] is True
+
+
+def test_the_summary_says_which_pairs_the_account_may_open_a_position_in_by_side_tested():
+    refused, _ = run(WITH_ORDERS, config=BOTH_REFUSED)
+    assert refused["may_open_position"] == {
+        "sides_tested": ["BUY"],
+        "BUY": {
+            "accepted": [],
+            "refused": {"EUR.USD": "insufficient_cash_quote_currency", "USD.JPY": "currency_not_permitted"},
+            "no_verdict": [],
+        },
+    }
+    mixed, _ = run(WITH_ORDERS, config=refusing(LateRejection("USD.JPY", refusals.CURRENCY_NOT_PERMITTED)))
+    assert mixed["may_open_position"]["BUY"] == {
+        "accepted": ["EUR.USD"], "refused": {"USD.JPY": "currency_not_permitted"}, "no_verdict": [],
+    }  # fmt: skip
+    plain, _ = run(WITH_ORDERS)
+    assert plain["may_open_position"]["BUY"] == {"accepted": ["EUR.USD", "USD.JPY"], "refused": {}, "no_verdict": []}
+    assert refused["orders"]["side"] == "BUY"
+
+
+def test_the_brokers_words_are_in_the_notices_and_in_no_field_of_the_verdict():
+    report, _ = run(WITH_ORDERS, config=BOTH_REFUSED)
+    said = [notice["message"] for notice in report["notices"] if notice["code"] == "ib:201"]
+    assert said == [REJECTION_TEXTS[refusals.INSUFFICIENT_CASH].format(quote="USD"),
+                    REJECTION_TEXTS[refusals.CURRENCY_NOT_PERMITTED].format(quote="JPY")]  # fmt: skip
+    for part in ("orders", "may_open_position", "proposed_config"):
+        text = json.dumps(report[part]).casefold()
+        assert "insufficient cash" not in text and "not allowed" not in text and "rejected - reason" not in text
+
+
+def test_a_rejections_message_that_trails_it_by_a_poll_is_still_found():
+    """Seen on the real gateway: the last order's rejection came, and its message only after the probe had stopped."""
+    late = dataclasses.replace(BOTH_REFUSED, rejection_notice_delay_ns=200 * MS)
+    report, _ = run(WITH_ORDERS, config=late)
+    for pair, found in (("EUR.USD", "insufficient_cash_quote_currency"), ("USD.JPY", "currency_not_permitted")):
+        result = report["orders"]["pairs"][pair]
+        assert (result["reason_code"], result["reason_class"], result["ack_us"]) == ("ib:201", found, 5_000)
+    assert [notice["code"] for notice in report["notices"]] == ["ib:201", "ib:201"]
+
+
+def test_a_rejection_whose_message_never_comes_is_classed_by_the_orders_own_last_word_with_no_code():
+    never = dataclasses.replace(BOTH_REFUSED, rejection_notice_delay_ns=3_600 * SECOND)
+    report, _ = run(WITH_ORDERS, config=never)
+    result = report["orders"]["pairs"]["USD.JPY"]
+    assert (result["verdict"], result["reason_code"], result["reason_class"]) == (
+        "rejected", None, "currency_not_permitted",
+    )  # fmt: skip
+
+
+def test_the_odd_lot_warning_gives_the_venues_minimum_and_is_never_taken_for_the_reason():
+    config = dataclasses.replace(BOTH_REFUSED, odd_lot_below=25_000)
+    report, _ = run(WITH_ORDERS, config=config)
+    euro, yen = (report["orders"]["pairs"][pair] for pair in ("EUR.USD", "USD.JPY"))
+    assert euro["odd_lot_minimum"] == {"currency": "EUR", "size": 25_000}
+    assert yen["odd_lot_minimum"] == {"currency": "USD", "size": 25_000}
+    assert (euro["reason_code"], yen["reason_code"]) == ("ib:201", "ib:201"), "399 is a warning, not the refusal"
+    accepted, _ = run(WITH_ORDERS, config=FakeConfig(depth_levels=5, odd_lot_below=25_000))
+    result = accepted["orders"]["pairs"]["EUR.USD"]
+    assert result["verdict"] == "accepted_and_working" and result["odd_lot_minimum"]["size"] == 25_000
+
+
+def test_a_rejection_is_no_round_trip_for_the_proposed_config():
+    report, _ = run(WITH_ORDERS, config=refusing(LateRejection("EUR.USD", refusals.INSUFFICIENT_CASH)))
+    (euro, yen) = report["proposed_config"]["pairs"]
+    assert euro["order_round_trip_ms"] == {"median": None, "p99": None}
+    assert yen["order_round_trip_ms"] == {"median": 2, "p99": None}
+
+
+def test_an_order_rejected_later_than_the_probe_waits_counts_as_accepted_and_is_cancelled_too_late():
+    """The wait is bounded. A verdict that comes after it is not seen, and the report says only what it saw."""
+    slow = dataclasses.replace(BOTH_REFUSED, verdict_delay_ns=1_500 * MS, cancel_delay_ns=120 * SECOND)
+    report, broker = run(dataclasses.replace(WITH_ORDERS, verdict_wait_ns=SECOND), config=slow)
+    result = report["orders"]["pairs"]["EUR.USD"]
+    assert (result["verdict"], result["state_after_cancelling"]) == ("accepted_and_working", "REJECTED")
+    assert report["orders"]["left_working"] == [] and broker.market.working() == []
+
+
+def test_the_command_reports_rejections_and_still_exits_zero(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(probe, "_fake_venue", lambda pairs, window_ns: a_venue(BOTH_REFUSED)[::-1])
+    code = probe.main(["--fake", "--window-seconds", "1", "--orders", "--out-dir", str(tmp_path)])
+    report = json.loads(capsys.readouterr().out)
+    assert code == 0, "a refusal is a measurement: nothing is left working and no position changed"
+    assert report["may_open_position"]["BUY"]["accepted"] == [] and report["orders"]["placed"] is False
 
 
 def test_an_order_that_gets_no_answer_is_still_cancelled_in_the_end():
@@ -333,7 +501,8 @@ def test_an_order_that_gets_no_answer_is_still_cancelled_in_the_end():
     slow = FakeConfig(depth_levels=5, ack_delay_ns=30 * SECOND, fill_delay_ns=60 * SECOND)
     report, broker = run(WITH_ORDERS, config=slow)
     result = report["orders"]["pairs"]["EUR.USD"]
-    assert (result["ack_us"], result["state_after_placing"]) == (None, "no answer") and "cancel_us" not in result
+    assert (result["ack_us"], result["verdict"], result["placed"]) == (None, "no_answer", False)
+    assert result["local_ack_us"] is None and "cancel_us" not in result
     assert report["orders"]["left_working"] == [] and broker.market.working() == []
 
 
@@ -343,7 +512,7 @@ def test_whatever_goes_wrong_in_between_the_probes_orders_are_cancelled(monkeypa
     real_wait = probe_run._wait_for
     calls = []
 
-    def failing_wait(order_id, wanted):
+    def failing_wait(order_id, wanted, wait_ns=None):
         calls.append(order_id)
         if OrderState.CANCELLED not in wanted:
             raise RuntimeError("something unexpected right after the order was placed")

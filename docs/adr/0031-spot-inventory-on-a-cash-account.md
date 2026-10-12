@@ -182,6 +182,32 @@ odd-lot warning names. They are the cost model's minimum per base currency (so `
 the gate's minimum entry. A fill under them would be priced as an odd lot, and a paper fill priced like no
 normal fill would say nothing about normal fills.
 
+### 9. What the capability file holds, and what a funded float answers
+
+The capability file says what the probe measured (HFT-EXP-0008): a spot order that opens a position from flat
+was refused in every pair, and no sell was tested. The trader holds every sleeve at shadow while that file
+does not show a pair as openable on both sides ([ADR 0019](0019-trader-loop-and-staged-rollout.md)). Read by
+itself that would hold this design at shadow for ever. The file is not edited to say what was not measured.
+Instead the reason for each hold is read (`hftlab.venues.capability.split`):
+
+| What the file says of a pair | With a float in the limits |
+|---|---|
+| Every side not accepted was refused for want of cash, or was not tested | Held only until a float is funded and anchored. From then on the pair is opened on the float, and the gate's cash rules decide each order |
+| A side was refused because the account may not hold the currency, or for a reason that was not captured, or the pair is not described | Held, whatever is funded |
+| The pair is in `inventory.shadow_only` | Not asked about: nothing of it is ever sent |
+
+- Without `inventory` in the limits nothing changes: every hold stands.
+- Without a funded float the hold stands: a promotion is journalled as held, with `ACCOUNT_CANNOT_OPEN` and
+  the reason, and no entry is sent (`NOT_FUNDED`).
+- A sleeve that is above shadow when the float is not there (it was taken back) does not stop the trader from
+  starting: a trader that could not start could not fund the float again. It starts, the gate stops every
+  entry, and exits go on. A hold of the second row does refuse that start, as before.
+- GBP.USD is in the second row as measured: the probe's run did not capture why its order was refused. Until
+  a run does, it belongs in `shadow_only`.
+- "Refused for want of cash, so cash answers it" is an inference, and so is "a sell is paid from the base
+  currency". The first paper orders test both. A refusal by the broker counts towards the reject streak,
+  which stops entries.
+
 ## Consequences
 
 - Capital sits idle. The float the limits propose is worth roughly 270,000 US dollars, to carry positions of

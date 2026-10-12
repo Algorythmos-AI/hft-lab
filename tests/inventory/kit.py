@@ -42,7 +42,7 @@ def account(cash=START, **changes) -> FakeConfig:
     """A cash account: it lends nothing, may not hold yen, and charges its commission in its own currency."""
     settings = {
         "cash": tuple(cash), "cash_only": True, "forbidden": ("JPY",), "commission_currency": "AUD",
-        "odd_lot_below": (("EUR", 20_000), ("AUD", 25_000)),
+        "odd_lot_below": 20_000,
     }  # fmt: skip
     return FakeConfig(**{**settings, **changes})
 

@@ -80,3 +80,18 @@ a live quote source), and answers orders by these rules.
   the direction the model is meant to err in.
 - If measured paper fills ever show the model to be optimistic, that is a defect in the model
   ([ADR 0003](0003-two-books.md)), fixed here and recorded as a decision.
+
+## Note, 2026-10-12: the first measurements, and one thing the model does not know
+
+The capability probe's second run ([`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)) measured, in one thirty-second sample per
+pair in the Asian session: median spreads of 0.2 pip (EUR.USD, AUD.USD) and 0.4 pip (USD.JPY, GBP.USD); a
+median of a third of a second between changes of the top of the book; and the size below which the venue
+routes an order as an odd lot, 20,000 units for EUR and GBP base and 25,000 for USD and AUD base. It measured
+no commission and no latency that describes the host. **No number in `config/cost_model.yaml` is moved by
+it:** one sample is not a calibration, and a decision record sets them.
+
+"A venue that rejects for reasons other than size" is on the list above of what the model leaves out. The same
+run showed how much that is on this account: the broker refuses a spot order that would short a currency, or
+buy one without holding the currency that pays. The shadow venue fills both. A shadow result of a sleeve that
+goes long and short on spot therefore describes trades this account would not take, whatever its costs say.
+The model is not changed here. The trader refuses any stage above `shadow` while the capability file says so.

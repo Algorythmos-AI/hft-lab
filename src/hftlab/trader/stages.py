@@ -10,9 +10,10 @@ A stage changes by rule and by nothing else:
 
   * UP one step, at the close of a trading day, when the rule for that step is met: the configured number of
     clean trading days in a row in the present stage, the decision record that approved the step named in the
-    configuration, the risk limits in force, no latch tripped and no reconciliation break standing. A rule
-    with a number or a record missing is never met, so no default promotes anything. When everything but the
-    limits is there, the refusal is journalled.
+    configuration, the risk limits in force, no latch tripped and no reconciliation break standing, and the
+    venue's capability file showing that the account may open the positions the sleeve needs (`cannot_open`
+    empty: hftlab.venues.capability). A rule with a number or a record missing is never met, so no default
+    promotes anything. When everything but the limits or the account is there, the refusal is journalled.
   * DOWN at once, to `stepped_down`, when a latch that concerns the sleeve trips or a reconciliation break is
     flagged while the sleeve is placing paper orders.
   * DOWN to `shadow` or `off` when an operator asks, with the operator's name in the journal.
@@ -30,7 +31,7 @@ Everything here is a function of the journal, the calendar and the times it is h
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Final
 
@@ -49,6 +50,7 @@ _DECISION = re.compile(r"HFT-DEC-[0-9]{4}")
 PROMOTED, LATCH, BREAK, OPERATOR, MODEL = "PROMOTED", "LATCH", "BREAK", "OPERATOR", "MODEL"
 UNCLEAN_STOP, NOT_RUNNING, TOO_SHORT, STAGE_CHANGED = "UNCLEAN_STOP", "NOT_RUNNING", "TOO_SHORT", "STAGE_CHANGED"
 LIMITS_NOT_IN_FORCE, STILL_LATCHED, STILL_BROKEN = "LIMITS_NOT_IN_FORCE", "STILL_LATCHED", "STILL_BROKEN"
+ACCOUNT_CANNOT_OPEN = "ACCOUNT_CANNOT_OPEN"  # the capability file does not show the positions as openable
 
 
 class StageError(ValueError):
@@ -124,8 +126,12 @@ class Stages:
         calendar: Calendar,
         in_force: bool,
         min_day_ns: int | None,
+        cannot_open: str | Callable[[], str] = "",
     ) -> None:
         self._journal, self._rollout, self._calendar = journal, dict(rollout), calendar
+        # Why the account cannot open what the sleeves need; "": it can. Asked at each close where it can change
+        # while the trader runs: an account with a float can open them once the float is funded (ADR 0031).
+        self._cannot_open = cannot_open if callable(cannot_open) else (lambda: cannot_open)
         self._in_force, self._min_day_ns = in_force, min_day_ns
         self._stage = {name: ladder.start for name, ladder in self._rollout.items()}
         self._days: dict[str, list[tuple[int, str, bool]]] = {name: [] for name in self._rollout}  # day, stage, clean
@@ -279,15 +285,18 @@ class Stages:
         assert rule.clean_days is not None and rule.decision is not None
         if self.clean_run(sleeve) < rule.clean_days:
             return None
-        held = ""
-        if not self._in_force:
+        held, detail = "", ""
+        if why := self._cannot_open():
+            held, detail = ACCOUNT_CANNOT_OPEN, why
+        elif not self._in_force:
             held = LIMITS_NOT_IN_FORCE
         elif latched or broken:
             held = STILL_LATCHED if latched else STILL_BROKEN
         if held:
             if (day, sleeve) not in self._refused:
                 self._refused.add((day, sleeve))
-                self._journal.write("held", day=day, sleeve=sleeve, to=to, cause=held, at_ns=at_ns)
+                said = {"detail": detail} if detail else {}
+                self._journal.write("held", day=day, sleeve=sleeve, to=to, cause=held, at_ns=at_ns, **said)
             return None
         return self._change(sleeve, to, PROMOTED, rule.decision, at_ns)
 

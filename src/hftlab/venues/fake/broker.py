@@ -11,6 +11,10 @@ afterwards with `open_orders` and `executions_since`, exactly as with a real bro
 It can also play a gateway that is up but cut off from the broker: `FakeConfig.gateway_messages` are the status
 messages it sends, as notices with the gateway's own codes, and during `FakeConfig.unanswered_lookups` an
 instrument lookup waits out its timeout and fails, as it does on a real gateway in that state.
+
+And it can play the broker's servers turning an order down after the gateway acknowledged it
+(`FakeConfig.late_rejections`): WORKING first, then REJECTED, and the reason as a notice with the gateway's
+number, tied to the order, as the real gateway sends it.
 """
 from __future__ import annotations
 
@@ -19,10 +23,8 @@ from collections.abc import Callable, Iterable, Sequence
 from hftlab.core import Clock, Fill, Instrument, InstrumentKind, Order, OrderState, Quote, SimClock
 from hftlab.safety.gate import PaperGate, Permit
 from hftlab.venues.fake.market import (
-    INSUFFICIENT_CASH,
-    NOT_ALLOWED,
-    ODD_LOT_CODE,
-    REJECTED_CODE,
+    REFUSED,
+    REJECTION_CODE,
     Acked,
     Cancelled,
     CancelTooLate,
@@ -33,6 +35,7 @@ from hftlab.venues.fake.market import (
     Happening,
     QuoteTick,
     Rejected,
+    Said,
 )
 from hftlab.venues.guard import GuardedVenue
 from hftlab.venues.port import (
@@ -147,11 +150,13 @@ class FakeBroker(GuardedVenue):
         elif isinstance(happening, Acked):
             self._report(happening.client_order_id, OrderState.WORKING, 0, happening.broker_order_id)
         elif isinstance(happening, Rejected):
-            if happening.reason.startswith((INSUFFICIENT_CASH, NOT_ALLOWED)):
+            if happening.reason.startswith(REFUSED) and not happening.late:
                 # A real gateway says it twice: as the order's last state, and as a message with its number.
-                said = f"Order rejected - reason:{happening.reason}"
-                self._emit_notice(f"ib:{REJECTED_CODE}", said, happening.client_order_id)
+                # (A late rejection's message is the market's to send, in its own time.)
+                self._emit_notice(f"ib:{REJECTION_CODE}", happening.reason, happening.client_order_id)
             self._report(happening.client_order_id, OrderState.REJECTED, 0, None, happening.reason)
+        elif isinstance(happening, Said):
+            self._emit_notice(f"ib:{happening.code}", happening.text, happening.client_order_id)
         elif isinstance(happening, Executed):
             self._emit_fill(
                 fill_id=happening.exec_id,
@@ -229,10 +234,6 @@ class FakeBroker(GuardedVenue):
         if not self._gate.holds(permit):
             raise VenueUnavailable("the connection this order was checked for is gone")
         self.market.submit(order, instrument, self._clock.now_ns())
-        least = dict(self.market.config.odd_lot_below).get(instrument.base)
-        if least is not None and order.quantity < least:
-            said = f"order size is below the {instrument.base} {least} minimum and is routed as an odd lot"
-            self._emit_notice(f"ib:{ODD_LOT_CODE}", said, order.client_order_id)
 
     def _cancel(self, client_order_id: str, permit: Permit) -> None:
         if not self._gate.holds(permit):

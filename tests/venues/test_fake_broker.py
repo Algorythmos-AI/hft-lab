@@ -17,7 +17,8 @@ from hftlab.core import (
     TimeInForce,
     WallClock,
 )
-from hftlab.venues.fake import FakeConfig, FakeMarket, build
+from hftlab.venues.fake import FakeConfig, FakeMarket, LateRejection, build
+from hftlab.venues.fake.market import REJECTION_TEXTS
 from hftlab.venues.port import (
     CommissionEvent,
     ConnectionState,
@@ -279,6 +280,62 @@ def test_a_rejected_order_is_reported_with_the_brokers_reason_and_never_works():
     by_state = {e.state.name: e for e in of(events, OrderEvent) if e.client_order_id == an_order(1).client_order_id}
     assert set(by_state) == {"SUBMITTED", "REJECTED"} and by_state["REJECTED"].reason == "insufficient margin"
     assert filled(events) == 20_000 and broker.open_orders() == ()
+
+
+# ---- acknowledged by the gateway, then rejected by the broker's servers ----------------------------------------------
+
+
+@pytest.mark.parametrize("kind", sorted(REJECTION_TEXTS))
+def test_a_late_rejection_is_working_first_then_rejected_with_the_gateways_number_tied_to_the_order(kind):
+    config = FakeConfig(late_rejections=(LateRejection("EUR.USD", kind),))
+    order = an_order()  # marketable: it would have traded
+    events, broker = run(config, order)
+    assert brief(events) == [("order", "SUBMITTED", 0), ("order", "WORKING", 0), ("order", "REJECTED", 0),
+                             ("notice", "ib:201")]  # fmt: skip
+    rejected, (notice,) = of(events, OrderEvent)[-1], of(events, VenueNotice)
+    assert rejected.reason == notice.message == REJECTION_TEXTS[kind].format(quote="USD")
+    assert notice.client_order_id == order.client_order_id
+    assert filled(events) == 0 and broker.open_orders() == () and broker.positions() == ()
+
+
+def test_a_late_rejection_can_be_for_one_side_only_and_its_message_can_trail_it():
+    entry = LateRejection("EUR.USD", "currency_not_permitted", Side.SELL)
+    config = FakeConfig(late_rejections=(entry,), rejection_notice_delay_ns=30 * MS)
+    clock, broker = a_broker(config)
+    broker.place(an_order(1), EURUSD)
+    broker.place(an_order(2, side=Side.SELL), EURUSD)
+    first = broker.poll() + after(clock, broker, 20 * MS)
+    by_order = {e.client_order_id: e.state for e in of(first, OrderEvent)}
+    assert by_order == {an_order(1).client_order_id: OrderState.FILLED,
+                        an_order(2, side=Side.SELL).client_order_id: OrderState.REJECTED}  # fmt: skip
+    assert of(first, VenueNotice) == []
+    assert brief(after(clock, broker, 30 * MS)) == [("notice", "ib:201")]
+
+
+def test_a_cancel_of_an_order_the_broker_already_rejected_is_too_late_and_one_before_the_verdict_wins():
+    config = FakeConfig(late_rejections=(LateRejection("EUR.USD", "other"),), verdict_delay_ns=50 * MS)
+    clock, broker = a_broker(config)
+    broker.place(an_order(1, limit=108_400), EURUSD)
+    after(clock, broker, 100 * MS)
+    broker.cancel(an_order(1).client_order_id)
+    assert brief(after(clock, broker, 5 * MS)) == [("notice", "cancel-too-late")]
+    broker.place(an_order(2, limit=108_400), EURUSD)
+    after(clock, broker, 10 * MS)
+    broker.cancel(an_order(2).client_order_id)
+    assert brief(after(clock, broker, 100 * MS)) == [("order", "CANCELLED", 0)], "no rejection of a cancelled order"
+
+
+def test_an_order_under_the_odd_lot_size_draws_a_warning_and_is_sent_all_the_same():
+    events, _ = run(FakeConfig(odd_lot_below=25_000), an_order())
+    (warning,) = of(events, VenueNotice)
+    assert (warning.code, warning.client_order_id) == ("ib:399", an_order().client_order_id)
+    assert "below the EUR 25000 minimum" in warning.message and filled(events) == 20_000
+    assert of(run(FakeConfig(odd_lot_below=20_000), an_order())[0], VenueNotice) == []
+
+
+def test_a_late_rejection_of_a_kind_the_fake_cannot_play_is_refused_when_it_is_written():
+    with pytest.raises(ValueError, match="late rejection is one of"):
+        LateRejection("EUR.USD", "no such kind")
 
 
 def test_a_working_order_can_be_cancelled():

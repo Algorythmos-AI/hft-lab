@@ -165,30 +165,49 @@ def test_the_placeholders_say_they_are_not_in_force():
     assert risk["status"] == "placeholder" and risk["in_force"] is False
     assert "NOT YET IN FORCE" in read("config/risk.yaml")
     costs = yaml.safe_load(read("config/cost_model.yaml"))
-    assert costs["status"] == "placeholder" and "HFT-EXP-0007" in read("config/cost_model.yaml")
+    text = read("config/cost_model.yaml")
+    assert costs["status"] == "placeholder" and "HFT-EXP-0007" in text and "HFT-EXP-0008" in text
+    assert "A DECISION RECORD MUST SET THESE NUMBERS" in text, "the measured medians are a comment, not a value"
+    assert (costs["version"], costs["effective_from"], costs["min_order_size"]) == (1, "2026-10-11", 20_000)
+    assert costs["latency_us"] == {"min": 20_000, "max": 80_000} and costs["commission"]["rate_bps"] == "0.20"
 
 
 def test_the_capability_file_claims_only_what_was_measured():
-    """The probe's one real run was read-only and at the weekly open: no cost, no timing, no proof of tradability."""
+    """Two runs: read-only at the weekly open, then four rejected test orders from a laptop in the Asian session."""
     from hftlab.venues.ibkr.probe import CONFIG_STATUSES
+    from hftlab.venues.ibkr.refusals import CURRENCY_NOT_PERMITTED, INSUFFICIENT_CASH
 
     text = read("config/venues/ibkr.yaml")
     venue = yaml.safe_load(text)
     assert CONFIG_STATUSES == ("placeholder", "partly_measured", "probed") and venue["status"] in CONFIG_STATUSES
     assert venue["venue"] == "ibkr_paper" and venue["status"] == "partly_measured"
-    assert (venue["probed_at"], venue["probe_record"]) == ("2026-10-11", "HFT-EXP-0007")
-    assert list((ROOT / "research" / "experiments").glob("HFT-EXP-0007-*")), "the record it names exists"
+    assert (venue["probed_at"], venue["probe_record"]) == ("2026-10-12", "HFT-EXP-0008")
+    for record in ("HFT-EXP-0007", "HFT-EXP-0008"):
+        assert list((ROOT / "research" / "experiments").glob(f"{record}-*")) and record in text, "the records exist"
     assert venue["access_route"] is None and venue["instrument_form"] is None, "no decision record exists yet"
     assert venue["weekly_login"] == {"required": None, "observed_behaviour": None}
+    assert venue["good_pricing_min_size_source"] == "broker_odd_lot_warning"
     assert [pair["pair"] for pair in venue["pairs"]] == ["EUR.USD", "USD.JPY", "AUD.USD", "GBP.USD"]
+    measured = {
+        "EUR.USD": (345, 20_000, INSUFFICIENT_CASH),
+        "USD.JPY": (342, 25_000, CURRENCY_NOT_PERMITTED),
+        "AUD.USD": (423, 25_000, INSUFFICIENT_CASH),
+        "GBP.USD": (338, 20_000, None),  # rejected, and the run did not capture the message that says why
+    }
     for pair in venue["pairs"]:
         assert pair["resolves"] == ["cash", "cfd"] and "forms" not in pair and "tradable" not in pair
         assert pair["depth_levels"] == 5 and pair["min_order_size"] == 1 and pair["size_increment"] == 1
         assert set(pair["price_increment"]) == {"cash", "cfd"} and pair["price_scale"] in (3, 5)
-        assert pair["update_interval_ms"] is None, "the weekly open is not a sample of the update rate"
+        interval, good_size, refusal = measured[pair["pair"]]
+        assert (pair["update_interval_ms"], pair["update_interval_session"]) == (interval, "asian")
+        assert pair["good_pricing_min_size"] == good_size
+        assert pair["spot_position_opening"] == {
+            "buy": "refused", "buy_refusal": refusal, "sell": None, "sell_refusal": None,
+        }, "no side of any pair is shown as accepted, and the sell side was not tested"  # fmt: skip
         assert pair["commission"] == {"rate_bps": None, "minimum": None, "currency": None}
-        assert pair["order_round_trip_ms"] == {"median": None, "p99": None}
+        assert pair["order_round_trip_ms"] == {"median": None, "p99": None}, "a laptop in Sydney is not the host"
     assert "NOT the size from which its pricing is" in text and "Not the forms the account may trade" in text
+    assert "NOTHING THAT OPENS A POSITION FROM FLAT" in text and "ONE SAMPLE" in text
 
 
 def test_no_tracked_file_names_an_assistant_or_tool():

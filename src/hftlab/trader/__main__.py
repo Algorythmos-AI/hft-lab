@@ -27,6 +27,11 @@ What it refuses to start on (exit code 2): a venue that is not the registered pa
 that does not pass, settings or risk limits that cannot be read, a sleeve whose stage lets it place paper
 orders while the limits are not in force, and a tape quota that cannot hold the reserve kept for closing.
 
+It also refuses any stage above shadow while the venue's capability file (--capability, config/venues/) does
+not show that the account can open the positions the sleeves need: each configured pair, in its form, bought
+and sold from flat (hftlab.venues.capability). The file is read at every start and for a replay; a sleeve in
+shadow is never held back by it, and a promotion that it holds back is journalled with the reason.
+
 The tapes at a limit are not a reason to refuse (hftlab.trader.room). At their soft limit a session starts on
 exits only and says so; at their hard limit it closes what the broker book holds, ends, and the process waits
 for room, which the housekeeping job makes, and then begins the next session by itself.
@@ -75,6 +80,7 @@ from hftlab.trader.replay import replay_day
 from hftlab.trader.session import Notify, Silent, Trader, TraderRefused
 from hftlab.trader.stages import OFF, SHADOW
 from hftlab.trader.tape import REQUESTS, LiveEdge, TapeError, housekeep, leave_request, tape_bytes
+from hftlab.venues import capability
 from hftlab.venues.port import Venue, VenueError
 from hftlab.venues.sim import CostModel, CostModelError, load_cost_model
 from hftlab.venues.view import MarketDataView, QuoteSource
@@ -112,7 +118,23 @@ def scorer_times(path: Path, settings: Settings) -> Times | None:
 
 
 def config_digest(args: argparse.Namespace) -> str:
-    return digest([args.config, args.risk, args.cost_model, *sorted(args.calendar.glob("*.yaml"))])
+    files = [args.config, args.risk, args.cost_model, args.capability, *sorted(args.calendar.glob("*.yaml"))]
+    return digest(files)
+
+
+def account_cannot_open(
+    args: argparse.Namespace, settings: Settings, risk: RiskConfig | None
+) -> tuple[dict[str, str], dict[str, str]]:
+    """(pairs the capability file holds whatever is funded, pairs it holds only until a float is funded).
+
+    Each is pair -> why the file does not show the account opening a position in it, long and short. Without
+    a float in the limits everything is of the first kind. With one (ADR 0031), a pair refused only for want
+    of cash is of the second, and a pair the limits keep on the shadow venue alone is in neither.
+    """
+    loaded = capability.load(args.capability)
+    if risk is None or risk.inventory is None:
+        return capability.cannot_open(loaded, settings.pairs), {}
+    return capability.split(loaded, settings.pairs, risk.inventory.shadow_only)
 
 
 @contextlib.contextmanager
@@ -158,13 +180,15 @@ def serve(
     config_digest: str,
     should_stop: Callable[[], bool],
     times: Times | None = None,
+    cannot_open: dict[str, str] | None = None,
+    needs_float: dict[str, str] | None = None,
 ) -> int:
     """Session after session until told to stop. Each starts as a restart would: from the journals, blind."""
     sessions = 0
     while not should_stop():
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=notify,
-            config_digest=config_digest, scorer_times=times,
+            config_digest=config_digest, scorer_times=times, cannot_open=cannot_open, needs_float=needs_float,
         )  # fmt: skip
         sessions += 1
         say(f"session {trader.session} of {trader.label}; stages {json.dumps(trader.stages.all(), sort_keys=True)}")
@@ -212,6 +236,7 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         raise TraderRefused(f"{settings.venue} is not a broker's paper account")
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
     times = scorer_times(args.learn, settings)
+    blocked, unfunded = account_cannot_open(args, settings, risk)
     tape = room.edge_options(settings, risk)  # refused here, before any connection, when the quota is too small
     stopping: list[int] = []
     for number in (signal.SIGTERM, signal.SIGINT):
@@ -255,6 +280,16 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         say(f"PAPER: limits in force by {risk.decision}. Orders go to the paper account of {settings.venue}.")
     if model.placeholder:
         say("the cost model is a PLACEHOLDER; no result of this run measures anything")
+    if blocked:
+        say(
+            "SHADOW IS THE HIGHEST STAGE: the capability file does not show that the account can open these "
+            f"positions, long and short: {capability.said(blocked)}"
+        )
+    if unfunded and not blocked:
+        say(
+            "ON THE FLOAT: the account opens these pairs only with cash it holds, so no sleeve goes above shadow "
+            f"and no entry is sent until a float is funded (--fund-plan, --fund): {capability.said(unfunded)}"
+        )
     with only_one(settings.state_dir):
         edge = LiveEdge(
             source, clock, pairs=settings.pairs, switches=file_switches(switch_dir, names),
@@ -264,7 +299,8 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
         try:
             serve(
                 edge, settings, model=model, calendar=calendar, risk=risk, notify=notify,
-                config_digest=config_digest(args), should_stop=should_stop, times=times,
+                config_digest=config_digest(args), should_stop=should_stop, times=times, cannot_open=blocked,
+                needs_float=unfunded,
             )  # fmt: skip
         finally:
             source.disconnect()
@@ -273,10 +309,11 @@ def run_live(args: argparse.Namespace, settings: Settings) -> int:
 
 def run_replay(args: argparse.Namespace, settings: Settings) -> int:
     model, calendar, risk = load_cost_model(args.cost_model), load_calendar(args.calendar), limits(args.risk)
+    blocked, unfunded = account_cannot_open(args, settings, risk)
     with tempfile.TemporaryDirectory(prefix="hft-replay-") as scratch:
         found = replay_day(
             args.replay, Path(scratch), settings, model=model, calendar=calendar, risk=risk,
-            config_digest=config_digest(args),
+            config_digest=config_digest(args), cannot_open=blocked, needs_float=unfunded,
         )  # fmt: skip
     print(json.dumps({"day": args.replay.name, "sessions": [one.as_dict() for one in found]}, indent=2))
     return EXIT_OK if all(one.identical for one in found) else EXIT_FAILED
@@ -369,6 +406,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--risk", type=Path, default=RISK)
     parser.add_argument("--cost-model", type=Path, default=COSTS)
     parser.add_argument("--calendar", type=Path, default=CALENDAR, help="directory with holidays and macro events")
+    parser.add_argument("--capability", type=Path, help="the venue's capability file (default: config/venues/)")
     parser.add_argument("--learn", type=Path, default=LEARN, help="the learning settings: a scorer process's times")
     parser.add_argument("--state-dir", type=Path, help="where KILL and FLATTEN are looked for (default: the host's)")
     parser.add_argument("--journals", type=Path, help="the trader's own folder (default: the config's state_dir)")
@@ -389,6 +427,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         settings = load(args.config)
+        if args.capability is None:
+            args.capability = capability.path_for(settings.venue)
         if args.journals:
             settings = dataclasses.replace(settings, state_dir=args.journals)
         if args.stages:
@@ -415,6 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return run_live(args, settings)
     except (
         TraderRefused, TraderConfigError, ConfigError, RiskConfigError, CostModelError, CalendarError, LearnConfigError,
+        capability.CapabilityError,
     ) as exc:  # fmt: skip
         say(f"refused: {exc}")
         return EXIT_REFUSED

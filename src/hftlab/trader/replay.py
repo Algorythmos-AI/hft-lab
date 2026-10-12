@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -82,6 +82,8 @@ def replay_day(
     calendar: Calendar,
     risk: RiskConfig | None,
     config_digest: str,
+    cannot_open: Mapping[str, str] | None = None,
+    needs_float: Mapping[str, str] | None = None,
 ) -> list[Replayed]:
     """Replay every session of the day folder `day`, each in a folder of its own under `scratch`."""
     state_dir = day.parent.parent
@@ -116,7 +118,7 @@ def replay_day(
         trader = Trader(
             edge, settings, edge.open(), model=model, calendar=calendar, risk=risk, notify=Silent(),
             config_digest=config_digest, folder=folder, status=False, abstained=beside(tape),
-            resumed=marks.get("resumed") == 1,
+            resumed=marks.get("resumed") == 1, cannot_open=cannot_open, needs_float=needs_float,
         )  # fmt: skip
         with contextlib.suppress(TapeEnded):  # the process was gone there; what the replay wrote so far is compared
             trader.run()

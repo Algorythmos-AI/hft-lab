@@ -153,8 +153,9 @@ class IbAsyncClient:
         return self._ib.reqContractDetails(contract)
 
     def subscribe_ticker(self, contract: Contract) -> None:
-        # UNVERIFIED: streaming top-of-book for forex needs no generic ticks and no market-data subscription
-        # on a paper account, and updates arrive every few milliseconds.
+        # Seen on the real paper gateway (HFT-EXP-0007, HFT-EXP-0008): streaming top-of-book for forex needs no
+        # generic ticks and no market-data subscription on a paper account. Updates do NOT arrive every few
+        # milliseconds, as was assumed: about one to three a second per pair in an ordinary session.
         ticker = self._ib.reqMktData(contract, "", False, False)
         # The library keeps one ticker per contract for the life of the process. What it still shows is from an
         # earlier subscription; start from an empty book so a quote is never half old and half new.

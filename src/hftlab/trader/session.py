@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import os
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from enum import Enum, unique
 from pathlib import Path
@@ -77,6 +77,8 @@ from hftlab.trader.config import Settings, TraderConfigError
 from hftlab.trader.slippage import Matched, report
 from hftlab.trader.stages import BREAK, LATCH, MIN_SIZE, OFF, PAPER, SHADOW, STEPPED_DOWN, Change, Stages, day_of
 from hftlab.trader.tape import Beat, Edge, Opened, Request, Step
+from hftlab.venues.capability import NO_FLOAT
+from hftlab.venues.capability import said as say_blocked
 from hftlab.venues.port import (
     CommissionEvent,
     ConnectionEvent,
@@ -212,6 +214,8 @@ class Trader:
         scorer_times: Times | None = None,
         abstained: Path | None = None,
         resumed: bool | None = None,
+        cannot_open: Mapping[str, str] | None = None,
+        needs_float: Mapping[str, str] | None = None,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -238,11 +242,20 @@ class Trader:
             saved, why = None, resume.TAPE
         fsync = settings.fsync
 
+        self._cannot_open, self._needs_float = dict(cannot_open or {}), dict(needs_float or {})
+        self._ledger: funding.FloatLedger | None = None  # the float's journal; None: this run keeps no float
         self._stages = Stages(
             Journal(paths["stages"], fsync=fsync), settings.rollout, calendar=calendar, in_force=risk is not None,
-            min_day_ns=settings.clean_day_ns,
+            min_day_ns=settings.clean_day_ns, cannot_open=self._held_back,
         )  # fmt: skip
         above = self._stages.above_shadow()
+        if above and cannot_open:
+            # Every sleeve trades every configured pair, long or short: one pair the account cannot open is enough.
+            raise TraderRefused(
+                f"{', '.join(above)} may place paper orders by the stage journal, and the capability file does not "
+                f"show that the account can open the positions they need: {say_blocked(cannot_open)}. "
+                "Only shadow is allowed until a probe run recorded in that file shows otherwise"
+            )
         if above and risk is None:
             said = f"{', '.join(above)} may place paper orders by the stage journal"
             raise TraderRefused(f"{said}, and the risk limits are not in force")
@@ -278,7 +291,6 @@ class Trader:
         self._manager: OrderManager | None = None
         self._reconciler: Reconciler | None = None
         self._switched: frozenset[str] | None = frozenset()
-        self._ledger: funding.FloatLedger | None = None  # the float's journal; None: this run keeps no float
         self._shadow_only: frozenset[str] = frozenset()  # pairs the account cannot hold: the shadow venue only
         self._asks: _Listening | None = None
         self._cash_seen: dict[str, int] | None = None  # what the venue last said the account holds, and when
@@ -758,6 +770,19 @@ class Trader:
         self._notify.fire(f"stage.{change.sleeve}.{change.number}", f"Stage of {change.sleeve}: {change.to}", text, 4)
 
     # ---- the float of a cash account (ADR 0031) ---------------------------------------------------------------------
+
+    def _held_back(self) -> str:
+        """Why no sleeve may go above shadow as the account stands; "": nothing holds one back.
+
+        What the capability file holds against a pair stands, whatever is funded. A pair it holds only for want
+        of cash is opened on the float, so it holds a sleeve back until a float is funded and anchored.
+        """
+        if self._cannot_open:
+            return say_blocked(self._cannot_open)
+        ledger = self._ledger
+        if self._needs_float and not (ledger is not None and ledger.funded and ledger.anchor is not None):
+            return f"{say_blocked(self._needs_float)}; and {NO_FLOAT} (ADR 0031)"
+        return ""
 
     def _show_float(self) -> None:
         """Tell the risk gate where the float stands. At every start, and whenever the ledger moves."""

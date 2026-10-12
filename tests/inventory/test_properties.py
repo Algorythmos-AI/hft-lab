@@ -24,7 +24,7 @@ from hftlab.book import FLOAT, effect, expected
 from hftlab.core import OrderEvent, OrderState, Side
 from hftlab.risk import parse_risk_config
 from hftlab.trader import funding
-from hftlab.venues.fake.market import INSUFFICIENT_CASH
+from hftlab.venues.fake.market import REFUSED
 from tests.inventory.kit import AUDUSD, QUOTES, RESERVES, UNIT, Till, account, inventory, limits
 from tests.risk.kit import raw
 from tests.venues.kit import EURUSD, MS
@@ -60,7 +60,8 @@ def play(steps, config, *, moves: bool) -> None:
                 proposal = till.oms.propose(order)
                 heard = till.pump(60 * MS)
                 said = [e.reason for e in heard if isinstance(e, OrderEvent) and e.state is OrderState.REJECTED]
-                assert INSUFFICIENT_CASH not in said, "the gate let through an order the account could not pay for"
+                refused = [reason for reason in said if reason and reason.startswith(REFUSED)]
+                assert not refused, "the gate let through an order the account could not pay for"
                 if proposal.sent and adds and not till.oms.in_flight():
                     assert till.held(pays) >= reserve[pays], (step, till.market.cash())
             cash = till.market.cash()

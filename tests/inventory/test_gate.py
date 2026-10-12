@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from hftlab.book import FLOAT, effect, expected
 from hftlab.core import InstrumentKind, OrderEvent, OrderState, Side
-from hftlab.venues.fake.market import INSUFFICIENT_CASH
+from hftlab.venues.fake.market import INSUFFICIENT_CASH, refusal
 from tests.inventory.kit import RESERVES, UNIT, Till, account, limits
 from tests.venues.kit import MS, SECOND
 
 BUY, SELL = Side.BUY, Side.SELL
+NO_DOLLARS = refusal(INSUFFICIENT_CASH, "USD")
 
 
 def proposed(till: Till, side: Side, quantity: int, **more) -> tuple[bool, str]:
@@ -114,7 +115,7 @@ def test_an_order_the_broker_refuses_for_cash_moves_nothing_and_the_missing_cash
     heard = till.pump(50 * MS)
     assert proposal.sent, "the gate still believed its own figure"
     last = [event for event in heard if isinstance(event, OrderEvent)][-1]
-    assert (last.state, last.reason) == (OrderState.REJECTED, INSUFFICIENT_CASH)
+    assert (last.state, last.reason) == (OrderState.REJECTED, NO_DOLLARS)
     assert till.market.cash() == before and till.oms.book.position("control", "EUR.USD").quantity == 0
     assert not till.oms.in_flight(), "a refused order holds nothing back"
     found = till.reconciler.check()
@@ -137,7 +138,7 @@ def test_a_partial_fill_and_then_a_refusal_for_cash_leaves_the_book_and_the_venu
     till.market.post("USD", -gone)  # the dollars for the second half are no longer there
     heard = till.pump(SECOND)
     last = [event for event in heard if isinstance(event, OrderEvent)][-1]
-    assert last.state is OrderState.CANCELLED and last.reason == INSUFFICIENT_CASH and last.filled_quantity == 20_000
+    assert last.state is OrderState.CANCELLED and last.reason == NO_DOLLARS and last.filled_quantity == 20_000
     assert till.oms.book.position("control", "EUR.USD").quantity == 20_000 and not till.oms.in_flight()
     assert till.market.positions()[("EUR.USD", InstrumentKind.CASH)] == 80_000, "the float's 60,000 and the half"
     till.market.post("USD", gone)

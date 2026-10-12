@@ -42,6 +42,7 @@ from hftlab.venues.fake.market import (
     Happening,
     QuoteTick,
     Rejected,
+    Said,
 )
 from hftlab.venues.ibkr.client import Handlers
 
@@ -328,7 +329,15 @@ class StubIb:
             return
         trade = self._trade_of(self.market._orders[happening.client_order_id])
         status = trade.orderStatus
-        if isinstance(happening, Acked):
+        if isinstance(happening, Said):
+            handlers.error(trade.order.orderId, happening.code, happening.text)
+        elif isinstance(happening, Rejected) and happening.late:
+            # After the acknowledgement. The real gateway's order then ended REJECTED through the adapter, which
+            # only the status Inactive gives for an acknowledged order: inferred from that, not seen as a status.
+            status.status = "Inactive"
+            trade.log.append(TradeLogEntry(at, "Inactive", happening.reason, 201))
+            handlers.order_status(trade)
+        elif isinstance(happening, Acked):
             status.status, status.permId = "Submitted", int(happening.broker_order_id[1:])
             trade.order.permId = status.permId
             trade.log.append(TradeLogEntry(at, "Submitted"))

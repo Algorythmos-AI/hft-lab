@@ -12,6 +12,8 @@
 # WHAT THE ACCOUNT MAY DO ON SPOT, AS MEASURED (HFT-EXP-0008): NOTHING THAT OPENS A POSITION FROM FLAT. Every
 # one-unit BUY was rejected: the account holds none of the currency that pays and may not borrow it, and it may
 # not hold yen at all. Spot on this account is conversion of cash it already holds. The SELL side is not tested.
+# The trader reads `spot_position_opening` and refuses any stage above shadow for a pair it does not show as
+# accepted on both sides (hftlab.venues.capability). That is a permission, not a cost.
 #
 # `status` is one of:
 #   placeholder       nothing measured

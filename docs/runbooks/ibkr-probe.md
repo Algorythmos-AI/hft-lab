@@ -227,7 +227,7 @@ gateway's own panels show whether it holds. Tell the maintainers which, if any, 
 | The handshake alone returns the managed accounts, before anything else is requested | The probe gets past the lock |
 | Forex spot is `CASH` on `IDEALPRO`; a forex CFD is `CFD` on `SMART` with the base currency as symbol | `forms.cash.resolves` and `forms.cfd.resolves` |
 | A contract's `minTick` is its price increment, and `minSize` and `sizeIncrement` are whole base-currency units | `price_increment`, `min_order_size`, `size_increment` look right against the broker's website; a missing or fractional value shows as `resolves: false` with a reason |
-| Streaming top-of-book for forex needs no market-data subscription on paper and updates every few milliseconds | `quotes.updates` is not 0; `gap_us.median` |
+| Streaming top-of-book for forex needs no market-data subscription on paper. How often it changes was assumed to be every few milliseconds; measured on 2026-10-12 it was 1 to 3 changes a second (HFT-EXP-0008) | `quotes.updates` is not 0; `gap_us.median` |
 | Quote prices never have more decimals than the price increment allows | No `translation` notice |
 | The gateway's "no price" is -1 or not-a-number, and "no size" is 0 | No `translation` notice; `first` and `last` look like real quotes |
 | Market depth and historical ticks are requested the way the adapter does | `depth` and `historical_ticks`, and any `notices` beside them |
@@ -246,7 +246,7 @@ One read-only run, at the weekly open (`HFT-EXP-0007`). Against the table above:
 |---|---|
 | Held | The paper id's form, the port, the handshake before anything else, spot and CFD both resolving for EUR.USD, USD.JPY, AUD.USD and GBP.USD, streaming quotes with no market-data subscription, five levels of depth, historical ticks, the clock answered in UTC, no `translation` notice |
 | Held, with a correction already made | The gateway reports a minimum size below one unit for these pairs; the adapter takes it as one whole unit. It is the smallest order the gateway takes, not the size from which its pricing is good |
-| Not shown either way | That quotes update every few milliseconds: at the weekly open they came seconds apart, which says nothing about normal hours |
+| Shown not to hold (2026-10-12, HFT-EXP-0008) | That quotes update every few milliseconds: in normal Asian hours the median gap between changes was about a third of a second. The weekly open, seconds apart, said nothing about normal hours |
 | Seen and not explained | Spot quotes were finer than the spot contract's price increment for three of the four pairs. An order priced straight from a quote could be off the increment and refused. The order round trip will show which grid orders have to be on |
 | Not touched | Every line about orders: Read-Only API was on |
 

@@ -685,7 +685,7 @@ def write_config(path: Path, proposed: dict[str, Any], report_name: str) -> None
         "# Measured values only, and only partly measured: `resolves` is what the gateway describes, not what the\n"
         "# account may trade, and `update_interval_ms` is this run's window: write the session it was taken in\n"
         "# into `update_interval_session` by hand. `spot_position_opening` is what the broker did with the probe's\n"
-        "# own orders.\n"
+        "# own orders; the trader refuses any stage above shadow for a pair it does not show as accepted.\n"
         "# `access_route`, `instrument_form`, `probe_record` and the commission stay null until the owner records\n"
         "# the decisions and a fill has shown the commission. `status` is one of: " + ", ".join(CONFIG_STATUSES) + ".\n"
     )

@@ -199,3 +199,30 @@ sent.
 "A restart closes what it finds" above now holds for a sleeve that starts cold. A sleeve whose state is saved
 at the end of a session and may be believed at the next start is restored, and keeps what it holds
 ([ADR 0026](0026-sleeve-state-across-a-restart.md)). A restart still cancels working orders.
+
+## Addendum, 2026-10-12: no stage above shadow while the account cannot open the positions
+
+The capability probe's second run against the real paper account
+([`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md))
+showed that the account refuses a spot order that opens a position from flat: it holds none of the currency
+that pays and may not borrow it, and it may not hold yen at all. Every sleeve enters long or short from flat.
+A sleeve promoted to `min_size` would have sent orders the broker rejects, each one a fault for the order
+manager and a reason for a latch. So the rollout gets one more condition, read from a file and not chosen:
+
+- The trader reads the venue's capability file at every start (`hftlab.venues.capability`,
+  `config/venues/ibkr.yaml`). For each configured pair, in its configured form, the file must show an order
+  that opens a position as `accepted` on both sides, buy and sell. Anything else holds: refused, not tested,
+  not described, or a form about which nothing is measured.
+- While any pair is held, **no step up is taken**. A rule that is otherwise met is refused at the day's close
+  and the refusal is journalled as `held`, cause `ACCOUNT_CANNOT_OPEN`, with the pair and the reason. It is
+  named before the limits: it is the reason that would remain.
+- While any pair is held, **the trader refuses to start with a sleeve above `shadow`**, whatever the stage
+  journal says, and names the sleeves, the pairs and the reasons.
+- **Shadow is untouched.** A sleeve in `shadow` runs as before, and the shadow venue still fills what this
+  account would refuse ([ADR 0013](0013-shadow-cost-model.md), its note of the same date).
+- The file is one of the settings a session's decisions depend on: it is in the digest, and a replay under
+  another capability file is refused.
+
+Every sleeve trades every configured pair, so one held pair holds every sleeve. Nothing here trades from cash
+balances held in each currency, and nothing trades CFDs: neither is built, and which of them is to be built is
+the owner's choice.

@@ -29,7 +29,8 @@ none of it is installed on a host, and nothing built has met the real market yet
     of cash the account already holds. It cannot be shorted, it cannot be bought without holding the currency
     that pays, and yen cannot be held at all. A sleeve that goes long and short one pair from flat cannot run
     on spot as the account is. It could run only from cash balances held in each currency, or on CFDs, which
-    need a permission that belongs to the owner's real account and is the owner's decision alone.
+    need a permission that belongs to the owner's real account and is the owner's decision alone. Until the
+    capability file shows otherwise, the trader refuses any stage above `shadow`.
 - **The host is small and shared.** The platform lives beside two other desks and must never hurt them
   ([ADR 0007](adr/0007-shared-host-isolation.md)).
 

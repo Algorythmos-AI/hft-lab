@@ -98,7 +98,9 @@ What that does and does not mean:
 - **Not done:** those two runs are all that has touched anything real. Nothing has been recorded from the real
   feed, and no experiment on a strategy has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
   place a broker order. The trader can only once the risk limits are in force and a sleeve has earned a
-  stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. The capability probe can place an order, on the paper
+  stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. It also refuses any stage
+  above `shadow` while the capability file does not show that the account may open the positions a sleeve
+  needs, and today the file shows the opposite. The capability probe can place an order, on the paper
   account, when the owner runs it with `--orders`: it has sent four, and the broker accepted none.
 - **The host layer exists and is tested off the host only:** the units as text, the scripts in dry runs
   against a temporary directory, the publisher against a stand-in for the network. Nothing is installed on

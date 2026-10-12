@@ -94,4 +94,4 @@ it:** one sample is not a calibration, and a decision record sets them.
 run showed how much that is on this account: the broker refuses a spot order that would short a currency, or
 buy one without holding the currency that pays. The shadow venue fills both. A shadow result of a sleeve that
 goes long and short on spot therefore describes trades this account would not take, whatever its costs say.
-The model is not changed here.
+The model is not changed here. The trader refuses any stage above `shadow` while the capability file says so.

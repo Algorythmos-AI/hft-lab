@@ -53,3 +53,11 @@ for event in venue.poll(timeout):      # live: the adapter; replay: the recordin
   already separate processes ([ADR 0004](0004-recorder-separate-from-trader.md)).
 - If the loop is ever shown to be the bottleneck, the adapter can change underneath: the port's contract is
   the event list, not how it was gathered.
+
+## Note, 2026-10-12: the quote gaps have been measured
+
+The claim above is now checked for one half. In an ordinary session the top of the book of a major pair
+changed about one to three times a second on this feed, with a median of a third of a second between changes
+([`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)). The platform was designed for quotes every few milliseconds; against the
+measured rate one loop iteration is smaller still, and the decision stands. The order round trip of tens of
+milliseconds is not measured: the one timing taken is from a laptop, of orders the broker rejected.

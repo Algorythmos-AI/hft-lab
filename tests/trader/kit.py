@@ -95,6 +95,7 @@ class Desk:
         # How the tape is cut and counted: part_bytes, quota_bytes, soft_bytes, reserve_bytes, fsync. What is not
         # given here is what the settings and the limits give, as the command works it out.
         self.edge_options = edge or {}
+        self.cannot_open: dict[str, str] | None = None  # what the capability file holds against the pairs, if given
         self.settings: Settings = parse(settings or raw_settings())
         self.risk = limits({**WIDE, **(changes or {})}) if paper else None
         self.costs = costs or plain_costs()
@@ -132,6 +133,7 @@ class Desk:
         self.trader = Trader(
             self.edge, self.settings, self.edge.open(), model=self.costs, calendar=Calendar(), risk=self.risk,
             notify=self.pages, config_digest=DIGEST, folder=self.folder, scorer_times=self.scorer_times,
+            cannot_open=self.cannot_open,
         )  # fmt: skip
         return self.trader
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import os
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from enum import Enum, unique
 from pathlib import Path
@@ -69,6 +69,7 @@ from hftlab.trader.config import Settings, TraderConfigError
 from hftlab.trader.slippage import Matched, report
 from hftlab.trader.stages import BREAK, LATCH, MIN_SIZE, OFF, PAPER, SHADOW, STEPPED_DOWN, Change, Stages, day_of
 from hftlab.trader.tape import Beat, Edge, Opened, Request, Step
+from hftlab.venues.capability import said as say_blocked
 from hftlab.venues.port import (
     CommissionEvent,
     ConnectionEvent,
@@ -189,6 +190,7 @@ class Trader:
         scorer_times: Times | None = None,
         abstained: Path | None = None,
         resumed: bool | None = None,
+        cannot_open: Mapping[str, str] | None = None,
     ) -> None:
         self._edge, self._settings, self._model, self._risk, self._notify = edge, settings, model, risk, notify
         self._folder = settings.state_dir if folder is None else folder
@@ -217,9 +219,16 @@ class Trader:
 
         self._stages = Stages(
             Journal(paths["stages"], fsync=fsync), settings.rollout, calendar=calendar, in_force=risk is not None,
-            min_day_ns=settings.clean_day_ns,
+            min_day_ns=settings.clean_day_ns, cannot_open=say_blocked(cannot_open or {}),
         )  # fmt: skip
         above = self._stages.above_shadow()
+        if above and cannot_open:
+            # Every sleeve trades every configured pair, long or short: one pair the account cannot open is enough.
+            raise TraderRefused(
+                f"{', '.join(above)} may place paper orders by the stage journal, and the capability file does not "
+                f"show that the account can open the positions they need: {say_blocked(cannot_open)}. "
+                "Only shadow is allowed until a probe run recorded in that file shows otherwise"
+            )
         if above and risk is None:
             said = f"{', '.join(above)} may place paper orders by the stage journal"
             raise TraderRefused(f"{said}, and the risk limits are not in force")

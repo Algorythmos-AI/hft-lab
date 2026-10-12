@@ -4,11 +4,14 @@ from __future__ import annotations
 import pytest
 
 from hftlab.venues.ibkr.link import (
+    COMPETING_REASON,
+    COMPETING_SESSION_CODE,
     DOWN_REASON,
     GATEWAY_LINK_CODES,
     UPSTREAM_DOWN_CODES,
     UpstreamLink,
     gateway_code,
+    says_competing_session,
 )
 
 
@@ -59,3 +62,18 @@ def test_other_notices_change_nothing():
         link.hear(code, text)
     assert link.codes == [2110]
     assert (gateway_code("ib:2110"), gateway_code("translation"), gateway_code("ib:x")) == (2110, None, None)
+
+
+# ---- the other login's session ---------------------------------------------------------------------------------------
+
+
+def test_a_competing_session_is_known_by_its_number_or_by_its_words_and_is_not_a_link_that_is_down():
+    assert COMPETING_SESSION_CODE == 10197 and COMPETING_SESSION_CODE not in GATEWAY_LINK_CODES
+    assert says_competing_session("ib:10197", "anything at all")
+    assert says_competing_session("ib:354", "No market data during COMPETING live SESSION"), "the number is unverified"
+    assert not says_competing_session("ib:2104", "a quote service is there:farm-a")
+    assert not says_competing_session("ib:354", "no market data: not subscribed")
+    assert not says_competing_session("translation", "competing session"), "only the gateway's own messages count"
+    link = heard((10197, "no market data during competing session"))
+    assert link.down is False and link.codes == []
+    assert "other login" in COMPETING_REASON and COMPETING_REASON != DOWN_REASON

@@ -1,0 +1,26 @@
+# HFT-EXP-0008: what the capability probe was run with. RUN ON 2026-10-12. The results are in report.md.
+#
+# This is a record of a run that has happened, not a registration: nothing here was fixed in advance, and no
+# hypothesis is tested. It is the second run of the probe against the real paper gateway and names the first,
+# HFT-EXP-0007. Running the probe again, at another time, from another machine or with other settings, is a
+# new experiment with a new id that names this one.
+earlier_run: HFT-EXP-0007
+command: python -m hftlab.venues.ibkr.probe --orders
+probe_report_schema: 1            # the probe as it was before its order verdict was corrected; see report.md
+venue: ibkr_paper                 # the broker's paper account, through its gateway on the owner's own machine
+machine: the owner's laptop in Sydney   # NOT the host the platform is to run on
+read_only: false                  # the gateway's Read-Only API was off, and --orders was given
+orders_sent: 4                    # one per pair: BUY, 1 unit, a limit about five per cent under the bid, DAY
+orders_accepted_by_the_broker: 0
+orders_left_working: 0
+positions_changed: false
+pairs: [EUR.USD, USD.JPY, AUD.USD, GBP.USD]
+form_sampled: cash                # spot; the CFD form was looked up and neither sampled nor ordered
+window_seconds: 30                # quotes sampled per pair, one pair after the other
+depth_levels_asked: 5
+depth_window_seconds: 5           # the probe's default; the command has no option for it
+history_ticks_asked: 100
+order_wait_seconds: 10
+started_utc: "2026-10-12T01:41:35Z"
+started_sydney: "Monday 12:41"    # the Asian session
+started_new_york: "Sunday 21:41"  # more than four hours after the weekly open

@@ -24,6 +24,15 @@ CONTRACTS: Final = "contracts"
 
 DOWN_REASON: Final = "the gateway is connected to us but not to the broker's servers"
 
+# The paper account shares its market data with the login it belongs to. While that other login has a session
+# of its own open anywhere, the paper session is sent no quotes and the gateway says so, once per request. The
+# link is up and every lookup is answered, so this is a result of its own and not a link that is down. The
+# words were seen on the real paper gateway on 2026-10-12; the number is from the broker's published list and
+# is UNVERIFIED until a report shows it, so the words are recognised on their own as well.
+COMPETING_SESSION_CODE: Final = 10197
+COMPETING_REASON: Final = "no market data: the owner's other login has a session open elsewhere"
+_COMPETING_WORDS: Final = ("competing", "session")
+
 
 @dataclass(frozen=True, slots=True)
 class LinkCode:
@@ -54,6 +63,15 @@ def gateway_code(notice_code: str) -> int | None:
     """The gateway's number in a notice code such as `ib:2110`, or None for any other notice."""
     prefix, _, number = notice_code.partition(":")
     return int(number) if prefix == "ib" and number.isdecimal() else None
+
+
+def says_competing_session(notice_code: str, message: str) -> bool:
+    """Does this notice say that the paper session gets no market data because of the other login's session?"""
+    code = gateway_code(notice_code)
+    if code is None:
+        return False
+    said = message.casefold()
+    return code == COMPETING_SESSION_CODE or all(word in said for word in _COMPETING_WORDS)
 
 
 class UpstreamLink:

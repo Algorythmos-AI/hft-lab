@@ -43,6 +43,8 @@ trader: session 1 of 2026-10-14; stages {"control": "shadow", "idle": "shadow"}
 |---|---|
 | `refused by the paper-only lock` | The gateway is not a paper gateway, or the mode is not paper. Do not work round it |
 | `... may place paper orders by the stage journal, and the risk limits are not in force` | A sleeve's stage is above `shadow` and `config/risk.yaml` is not in force. One of the two is wrong |
+| `... may place paper orders by the stage journal, and the capability file does not show that the account can open the positions they need: PAIR: ...` | A sleeve's stage is above `shadow` and `config/venues/ibkr.yaml` does not show, for that pair, an order that opens a position accepted on both sides. Today it shows the opposite ([`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)): the account refuses a spot order from flat. Only shadow is allowed. The file changes only from a probe run that is recorded; do not edit it to get past this |
+| `cannot read the capability file ...` | The venue's capability file is missing or is not one. The trader does not start without it |
 | `another trader holds ...` | One is already running |
 | `a journal or a tape cannot be used` | A journal does not verify. It is never repaired: keep the file, and read section 6 |
 | `tape.quota_bytes of N cannot hold the reserve ... the quota must be at least M` | The quota is too small for the limits: closing what they allow could not be recorded. Section 8, "If the start is refused" |
@@ -85,8 +87,10 @@ with `clean` and, when it was not, `causes`:
 | `TOO_SHORT` | It ran for less than `clean_day_minutes`, or that is not set yet |
 | `STAGE_CHANGED` | The sleeve's stage changed during the day |
 
-A line of type `held` says a rule was met and the step was refused, and why: `LIMITS_NOT_IN_FORCE`,
-`STILL_LATCHED` or `STILL_BROKEN`.
+A line of type `held` says a rule was met and the step was refused, and why: `ACCOUNT_CANNOT_OPEN` (its
+`detail` names the pair and what the capability file says of it), `LIMITS_NOT_IN_FORCE`, `STILL_LATCHED` or
+`STILL_BROKEN`. At a start the trader also says `SHADOW IS THE HIGHEST STAGE`, with the same pairs and reasons,
+for as long as the capability file holds any of them.
 
 ## 3. Take a sleeve down
 

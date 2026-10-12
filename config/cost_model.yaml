@@ -6,6 +6,13 @@
 # record, and `effective_from` says from which UTC date the new values apply.
 # HFT-EXP-0007 (the probe's first real run) changes nothing here: it sampled the minutes after the weekly open,
 # when spreads are at their widest, placed no order, and so measured no cost and no timing.
+# HFT-EXP-0008 (its second, in the Asian session, with four test orders) changes no number here either. What it
+# measured, for the decision record that sets these numbers to weigh, and for nothing before that:
+#   median spread, one 30-second sample per pair: EUR.USD 0.2 pip, USD.JPY 0.4 pip, AUD.USD 0.2 pip, GBP.USD 0.4 pip
+#   median time between two changes of the top of the book: 345, 342, 423 and 339 ms, in that order
+#   size below which the venue routes an order as an odd lot: 20,000 (EUR, GBP base) and 25,000 (USD, AUD base)
+#   no commission (nothing filled) and no latency (timed from a laptop in Sydney, on orders the broker rejected)
+# One 30-second sample moves nothing. A DECISION RECORD MUST SET THESE NUMBERS; until one does they are placeholders.
 version: 1
 status: placeholder
 effective_from: "2026-10-11"

@@ -11,6 +11,10 @@ afterwards with `open_orders` and `executions_since`, exactly as with a real bro
 It can also play a gateway that is up but cut off from the broker: `FakeConfig.gateway_messages` are the status
 messages it sends, as notices with the gateway's own codes, and during `FakeConfig.unanswered_lookups` an
 instrument lookup waits out its timeout and fails, as it does on a real gateway in that state.
+
+And it can play the broker's servers turning an order down after the gateway acknowledged it
+(`FakeConfig.late_rejections`): WORKING first, then REJECTED, and the reason as a notice with the gateway's
+number, tied to the order, as the real gateway sends it.
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ from hftlab.venues.fake.market import (
     Happening,
     QuoteTick,
     Rejected,
+    Said,
 )
 from hftlab.venues.guard import GuardedVenue
 from hftlab.venues.port import (
@@ -143,6 +148,8 @@ class FakeBroker(GuardedVenue):
             self._report(happening.client_order_id, OrderState.WORKING, 0, happening.broker_order_id)
         elif isinstance(happening, Rejected):
             self._report(happening.client_order_id, OrderState.REJECTED, 0, None, happening.reason)
+        elif isinstance(happening, Said):
+            self._emit_notice(f"ib:{happening.code}", happening.text, happening.client_order_id)
         elif isinstance(happening, Executed):
             self._emit_fill(
                 fill_id=happening.exec_id,

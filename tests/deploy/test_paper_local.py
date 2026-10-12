@@ -20,9 +20,9 @@ SCRIPT = ROOT / "deploy" / "bin" / "hft-paper-local"
 STAND_IN = """#!/bin/sh
 name=$(echo "$2" | tr . _)
 echo "$MODE|$PYTHONPATH|$HFT_STATE_DIR|$*" > "$HFT_ROOT/called_$name"
-[ -f "$HFT_ROOT/refuse_$name" ] && exit 2
 trap 'echo stopped > "$HFT_ROOT/stopped_$name"; exit 0' TERM
 trap '' INT
+[ -f "$HFT_ROOT/refuse_$name" ] && { sleep 1; exit 2; }  # long enough for the other one to be up
 while :; do sleep 0.1; done
 """
 

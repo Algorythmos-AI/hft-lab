@@ -30,13 +30,16 @@ then the parts of the snapshot that later phases make real. More pairs and a sec
 tests against a deterministic fake broker and against synthetic streams and recordings the tests make
 themselves. That is all it has been run against:
 
-- The capability probe has run against the real paper gateway, read-only, once with the market open: on
-  2026-10-11, in the minutes after the weekly open (`HFT-EXP-0007`). EUR.USD, USD.JPY, AUD.USD and GBP.USD
-  each resolve as spot and as a CFD, with five levels of market depth and historical ticks. **Nothing about
-  costs, tradability or order timing is measured:** no order was placed, and the spreads of those minutes are
-  not inputs to the cost model. That is the one thing here that has touched anything real, and F1 is still
-  open. Nothing else has connected to a gateway.
-- **Nothing has traded.** No order has been placed on the paper account. The process that would is written,
+- The capability probe has run twice against the real paper gateway. Read-only on 2026-10-11, in the minutes
+  after the weekly open (`HFT-EXP-0007`): EUR.USD, USD.JPY, AUD.USD and GBP.USD each resolve as spot and as a
+  CFD, with five levels of market depth and historical ticks. With four one-unit test orders on 2026-10-12, in
+  the Asian session, from the owner's laptop (`HFT-EXP-0008`): the top of the book changes about one to three
+  times a second, not every few milliseconds, and **the broker rejected all four orders**. On this account
+  spot currency cannot be bought without holding the currency that pays, cannot be shorted, and yen cannot be
+  held at all. **Commissions, the SELL side, CFDs and the host's order timing are not measured**, and the
+  spreads of neither run are inputs to the cost model. Those two runs are all that has touched anything
+  real, and F1 is still open. Nothing else has connected to a gateway.
+- **Nothing has traded.** No order has been accepted on the paper account: the probe's four were rejected. The process that would is written,
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
 - Nothing has been recorded from the real feed. There is no recorded trading day.
@@ -60,7 +63,7 @@ themselves. That is all it has been run against:
 
 | Gate | State | What closes it |
 |---|---|---|
-| F1 | Open | The capability probe has run once against the real paper account, read-only, at the weekly open ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)). That is not enough for either decision record, and neither is written. Still needed, all by the owner ([runbook](runbooks/ibkr-probe.md)): (1) a second read-only run in liquid hours, London or New York morning, for the update rate and spreads of normal hours; (2) a run with `--orders`, Read-Only API off, for the order round trip and for which form the account may trade at all; (3) each recorded as a new experiment; (4) the decision record on the access route and (5) the decision record on the instrument form, resting on those; (6) the capability file filled in from the liquid-hours run. Commissions and the weekly login are not part of this gate: a fill shows the first (F4) and a week of watching the second |
+| F1 | Open | **Measured now**, by two runs of the capability probe against the real paper account ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md), read-only, at the weekly open; [`HFT-EXP-0008`](../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md), with four test orders, in the Asian session, from the owner's laptop): the four pairs resolve as spot and as a CFD; five levels of depth and historical ticks; the update rate of an ordinary session, about one to three changes a second per pair; median spreads of 0.2 to 0.4 pip in one thirty-second sample; the size below which the venue routes an order as an odd lot (20,000 for EUR and GBP base, 25,000 for USD and AUD base); and what the account does with a spot BUY from flat, which is to refuse it: no paying currency and no borrowing, and no yen at all. **What still blocks the gate, all of it the owner's** ([runbook](runbooks/ibkr-probe.md)): (1) the owner's choice of how a long-and-short sleeve could trade here at all: cash balances held in each currency, or CFDs, which need a permission that belongs to the owner's real account (`HFT-EXP-0008`, finding b). Nothing is built for either; (2) the decision record on the instrument form and (3) the decision record on the access route, both of which now depend on that choice; (4) a probe run with `--orders` **on the host**, with an order the broker accepts, for the order round trip: the one timing taken is from a laptop in Sydney, of rejected orders; (5) a commission, from a fill, which needs an order the broker accepts; (6) each recorded as a new experiment, and the capability file filled in from them. Not part of this gate: the weekly login, which a week of watching shows; the SELL side and the busiest hours are worth a run and block nothing by themselves |
 | F2 | Open | Five recorded trading days with every gap accounted for. Code cannot close it: the days have to pass |
 | F3 | Open | The registered control run (`HFT-EXP-0001`) on those five days, and the owner's decision on it. Code cannot close it either |
 | F4 | Open | The capability probe of F1, risk limits put in force by a decision record, the owner's decision to let the control sleeve place minimum-size paper orders, then the registered run `HFT-EXP-0002`: five trading days on the real paper account with zero reconciliation breaks and the slippage report. Code cannot close it: the days have to pass |
@@ -180,9 +183,9 @@ waits, the timer times) is a first choice, marked as one where it is written.
 | Venue port | Done: `src/hftlab/venues/port.py`, with the shared guard ([ADR 0009](adr/0009-venue-port-guard-and-fake-broker.md), [ADR 0011](adr/0011-synchronous-pumped-port.md)) |
 | Paper lock in stages | Done: before connecting, after the handshake, before every order; a reconnect starts unchecked |
 | IBKR adapter against the fake broker | Done: `src/hftlab/venues/ibkr/` over `ib_async`, `src/hftlab/venues/fake/`, and a contract suite both pass. Written and tested without a gateway |
-| The probe | Written and tested against the fake broker, and run once against the real paper gateway, read-only, at the weekly open ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)). It now says when the gateway is cut off from the broker, with an exit status of its own, and never overwrites a report. **It has not been run in liquid hours, and never with orders** ([runbook](runbooks/ibkr-probe.md)) |
-| Exit gate: the probe report | Open. One report exists: four pairs resolve as spot and as a CFD, with five levels of depth and historical ticks. It holds no update rate or spread of normal hours and no order round trip. Still needed: a read-only run in liquid hours, and a run with `--orders` with Read-Only API off |
-| Exit gate: decision records for the access route and the instrument form | Open, and **not written on purpose**: the evidence for them, the two runs above, does not exist yet. [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
+| The probe | Written and tested against the fake broker, and run twice against the real paper gateway: read-only at the weekly open ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)), and with orders in the Asian session ([`HFT-EXP-0008`](../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)). It says when the gateway is cut off from the broker and when the other login's session has taken the market data, each with an exit status of its own, and never overwrites a report. Since the second run it waits for the broker's own verdict on an order and reports a rejection by number and class, and says per side which pairs the account may open a position in. **It has not been run on the host, in the busiest hours, or with an order the broker accepted** ([runbook](runbooks/ibkr-probe.md)) |
+| Exit gate: the probe report | Open. Two reports exist. Measured: what resolves, depth, history, the update rate and spreads of one ordinary session, the venue's odd-lot size, and that the account refuses a spot BUY from flat. Not measured: commissions, the SELL side, a position funded with cash in the right currency, CFDs, and any order timing from the host |
+| Exit gate: decision records for the access route and the instrument form | Open, and **not written on purpose**: both now depend on the owner's choice between cash balances held in each currency and CFDs, which is the owner's alone. [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
 
 F1 is not finished until the last two rows are. Everything the adapter assumes about the gateway and could
 not check offline is listed at the end of the runbook.

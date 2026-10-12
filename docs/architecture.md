@@ -13,6 +13,11 @@ none of it is installed on a host, and nothing built has met the real market yet
   optimistic. That is why the shadow book, not the broker's paper P&L, is the result of record.
 - **Speed tier.** Quotes update every few milliseconds and an order round trip takes tens of milliseconds.
   "High frequency" here means many trades a day held for seconds to minutes, not microsecond races.
+  - **Measured since, 2026-10-12, and the first half is wrong for this feed**
+    ([`HFT-EXP-0008`](../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)): in an ordinary session the top of the book of a major pair changed about
+    **one to three times a second**, with a median of a third of a second between changes and gaps of several
+    seconds. Changes come in bursts microseconds apart, then nothing. The order round trip is still not
+    measured from the host.
 - **Costs decide everything.** Spread, commission with a per-order minimum, the minimum size for good
   pricing, and the 17:00 New York rollover when spreads widen. The first analysis is a feasibility map: for
   each pair and holding time, is the best possible move bigger than the cost? Strategies are built only
@@ -20,6 +25,11 @@ none of it is installed on a host, and nothing built has met the real market yet
 - **What may be traded is measured, not assumed.** A paper account mirrors the rules of the live account it
   belongs to. The capability probe (F1) records the tradable pairs, their form (spot or CFD), sizes and
   commissions in [`config/venues/ibkr.yaml`](../config/venues/ibkr.yaml).
+  - **Measured since, 2026-10-12** ([`HFT-EXP-0008`](../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)): on this account spot currency is conversion
+    of cash the account already holds. It cannot be shorted, it cannot be bought without holding the currency
+    that pays, and yen cannot be held at all. A sleeve that goes long and short one pair from flat cannot run
+    on spot as the account is. It could run only from cash balances held in each currency, or on CFDs, which
+    need a permission that belongs to the owner's real account and is the owner's decision alone.
 - **The host is small and shared.** The platform lives beside two other desks and must never hurt them
   ([ADR 0007](adr/0007-shared-host-isolation.md)).
 

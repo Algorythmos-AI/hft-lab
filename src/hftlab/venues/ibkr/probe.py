@@ -578,7 +578,9 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
     """The content the probe proposes for config/venues/ibkr.yaml. Decisions stay null: they are the owner's.
 
     `resolves` lists the forms the gateway describes, which is not the forms the account may trade. The update
-    interval is whatever this run's window saw: it belongs in the file only from a run in liquid hours.
+    interval is whatever this run's window saw, and the probe cannot know which session that was: it is written
+    in by hand. `spot_position_opening` is what the broker did with the probe's own order, by side: the probe
+    buys, so the sell side stays null. `good_pricing_min_size` is the size the broker's odd-lot warning named.
     """
     pairs = []
     for pair, found in report["pairs"].items():
@@ -589,6 +591,8 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
         gaps = (found["quotes"] or {}).get("gap_us")
         orders = ((report.get("orders") or {}).get("pairs") or {}).get(pair) or {}
         ack_us = orders.get("ack_us") if orders.get("verdict") == ACCEPTED else None  # a rejection is no round trip
+        spot = found["sampled_as"] == InstrumentKind.CASH.value.lower()
+        bought = {ACCEPTED: "accepted", REJECTED: "refused"}.get(orders.get("verdict", "")) if spot else None
         pairs.append(
             {
                 "pair": pair,
@@ -596,9 +600,17 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
                 "price_scale": chosen["price_scale"],
                 "price_increment": {name: found["forms"][name]["price_increment"] for name in forms},
                 "update_interval_ms": None if gaps is None else gaps["median"] // 1_000,
+                "update_interval_session": None,
                 "depth_levels": (found["depth"] or {}).get("levels") or None,
                 "min_order_size": chosen["min_order_size"],
                 "size_increment": chosen["size_increment"],
+                "good_pricing_min_size": (orders.get("odd_lot_minimum") or {}).get("size"),
+                "spot_position_opening": {
+                    "buy": bought,
+                    "buy_refusal": orders.get("reason_class") if bought == "refused" else None,
+                    "sell": None,
+                    "sell_refusal": None,
+                },
                 "commission": {"rate_bps": None, "minimum": None, "currency": None},
                 "order_round_trip_ms": {"median": None if ack_us is None else ack_us // 1_000, "p99": None},
             }
@@ -610,6 +622,9 @@ def proposed_config(report: dict[str, Any], date: str) -> dict[str, Any]:
         "probe_record": None,
         "access_route": None,
         "instrument_form": None,
+        "good_pricing_min_size_source": (
+            "broker_odd_lot_warning" if any(pair["good_pricing_min_size"] for pair in pairs) else None
+        ),
         "pairs": pairs,
         "weekly_login": {"required": None, "observed_behaviour": None},
     }
@@ -668,7 +683,9 @@ def write_config(path: Path, proposed: dict[str, Any], report_name: str) -> None
         "# Capability file for the Interactive Brokers paper account.\n"
         f"# Written by `python -m hftlab.venues.ibkr.probe --write-config` from {report_name}.\n"
         "# Measured values only, and only partly measured: `resolves` is what the gateway describes, not what the\n"
-        "# account may trade, and `update_interval_ms` is this run's window, good only from liquid hours.\n"
+        "# account may trade, and `update_interval_ms` is this run's window: write the session it was taken in\n"
+        "# into `update_interval_session` by hand. `spot_position_opening` is what the broker did with the probe's\n"
+        "# own orders.\n"
         "# `access_route`, `instrument_form`, `probe_record` and the commission stay null until the owner records\n"
         "# the decisions and a fill has shown the commission. `status` is one of: " + ", ".join(CONFIG_STATUSES) + ".\n"
     )

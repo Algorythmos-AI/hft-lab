@@ -38,9 +38,13 @@ results twice, retrains at the weekend and promotes a new model only when it pas
 "High frequency" here means many trades a day held for seconds to minutes on a quote stream that updates every
 few milliseconds. It does not mean microsecond races or co-location.
 
+**That figure was an assumption and the one measurement so far contradicts it.** On 2026-10-12, in an ordinary
+session, the top of the book of a major pair on this feed changed about one to three times a second
+([`HFT-EXP-0008`](research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)).
+
 ## What exists today
 
-Code, and tests of it. **One read-only run of the capability probe aside, nothing here has met the real market.**
+Code, and tests of it. **Two runs of the capability probe aside, nothing here has met the real market.**
 
 | Piece | Where |
 |---|---|
@@ -85,21 +89,26 @@ What that does and does not mean:
   ([`HFT-EXP-0007`](research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)). EUR.USD,
   USD.JPY, AUD.USD and GBP.USD each resolve as spot and as a CFD, with five levels of market depth. Nothing
   about costs, tradability or order timing is measured: no order was placed, and the spreads of those minutes
-  are not inputs to anything.
-- **Not done:** that run is all that has touched anything real. Nothing has been recorded from the real
+  are not inputs to anything. It ran a second time on 2026-10-12, in the Asian session, from the owner's
+  laptop, with four one-unit test orders ([`HFT-EXP-0008`](research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)). The top of the book changed about one to
+  three times a second, with median spreads of 0.2 to 0.4 pip in one thirty-second sample per pair. **The
+  broker rejected all four orders:** on this account spot currency cannot be bought without holding the
+  currency that pays, cannot be shorted, and yen cannot be held at all. Commissions, the SELL side, CFDs and
+  the host's order timing are not measured.
+- **Not done:** those two runs are all that has touched anything real. Nothing has been recorded from the real
   feed, and no experiment on a strategy has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
   place a broker order. The trader can only once the risk limits are in force and a sleeve has earned a
-  stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. The capability probe can,
-  on the paper account, when the owner runs it with `--orders`.
+  stage above `shadow`; as shipped neither holds, and it runs in shadow-only mode. The capability probe can place an order, on the paper
+  account, when the owner runs it with `--orders`: it has sent four, and the broker accepted none.
 - **The host layer exists and is tested off the host only:** the units as text, the scripts in dry runs
   against a temporary directory, the publisher against a stand-in for the network. Nothing is installed on
   any host, no unit has been loaded by a service manager, and nothing has been published. Recording starts
   only after the owner has run the capability probe, the pre-flight day and the install
   ([runbook](docs/runbooks/install.md)).
-- **F1 is open.** Its gate needs a second read-only run of the capability probe in liquid hours, a run with
-  orders for the round trip and for what the account may trade, and then the two decision records on the
-  access route and the instrument form ([runbook](docs/runbooks/ibkr-probe.md),
-  [roadmap](docs/roadmap.md)). None of those exists.
+- **F1 is open.** The update rate and what the account may do on spot are now measured. Its gate still needs
+  the owner's choice between cash balances held in each currency and CFDs, the two decision records on the
+  access route and the instrument form that rest on it, an order timing taken on the host, and a commission
+  from a fill ([runbook](docs/runbooks/ibkr-probe.md), [roadmap](docs/roadmap.md)). None of those exists.
 - **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days. The command that
   compares the control run with its recording trip by trip, which the registered experiment names, is
   written (`python -m hftlab.review.trip_costs`,

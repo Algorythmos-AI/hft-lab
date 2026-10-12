@@ -46,3 +46,18 @@ paper, and an account list in the handshake that says paper again before anythin
   and that the paper gateway listens on 4002. Both are checked by the lock itself on every connection, so a
   wrong assumption refuses rather than trades.
 - A change of route later costs one adapter and its translation tests, not the platform.
+
+## Note, 2026-10-12: what the probe has shown so far, and what the decision now waits for
+
+The probe has run twice through the gateway route ([`HFT-EXP-0007`](../../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md),
+[`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)). The route works: lookups, quotes, depth, history and orders all pass. Neither
+run reopens point 4. The quote rate it measured, about one to three changes a second per pair, is a property
+of the broker's feed and not of the route.
+
+The second run changed what the research decision depends on. The broker rejected every spot test order: on
+this account spot currency cannot be bought without holding the currency that pays, cannot be shorted, and
+yen cannot be held at all. So the instrument form is no longer a choice between two forms that both trade.
+It is the owner's choice between cash balances held in each currency and CFDs, which need a permission that
+belongs to the owner's real account. The decision on the access route follows that one: which route is right
+depends on what is to be traded through it. Still missing for it as well: an order timing taken on the host.
+This ADR stays the engineering default until those records exist.

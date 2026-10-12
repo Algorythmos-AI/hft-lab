@@ -479,6 +479,24 @@ def test_a_rejection_is_no_round_trip_for_the_proposed_config():
     assert yen["order_round_trip_ms"] == {"median": 2, "p99": None}
 
 
+def test_the_proposed_config_says_what_the_broker_did_with_the_spot_buy_and_nothing_about_the_sell():
+    config = dataclasses.replace(BOTH_REFUSED, odd_lot_below=25_000)
+    proposed = run(WITH_ORDERS, config=config)[0]["proposed_config"]
+    (euro, yen) = proposed["pairs"]
+    assert euro["spot_position_opening"] == {
+        "buy": "refused", "buy_refusal": "insufficient_cash_quote_currency", "sell": None, "sell_refusal": None,
+    }  # fmt: skip
+    assert yen["spot_position_opening"]["buy_refusal"] == "currency_not_permitted"
+    assert euro["good_pricing_min_size"] == 25_000
+    assert proposed["good_pricing_min_size_source"] == "broker_odd_lot_warning"
+    assert euro["update_interval_session"] is None, "the probe cannot know the session: it is written in by hand"
+    accepted = run(WITH_ORDERS)[0]["proposed_config"]
+    assert accepted["pairs"][0]["spot_position_opening"]["buy"] == "accepted"
+    assert accepted["pairs"][0]["good_pricing_min_size"] is None and accepted["good_pricing_min_size_source"] is None
+    unasked = run()[0]["proposed_config"]["pairs"][0]["spot_position_opening"]
+    assert unasked == {"buy": None, "buy_refusal": None, "sell": None, "sell_refusal": None}, "no order, no claim"
+
+
 def test_an_order_rejected_later_than_the_probe_waits_counts_as_accepted_and_is_cancelled_too_late():
     """The wait is bounded. A verdict that comes after it is not seen, and the report says only what it saw."""
     slow = dataclasses.replace(BOTH_REFUSED, verdict_delay_ns=1_500 * MS, cancel_delay_ns=120 * SECOND)
@@ -629,9 +647,11 @@ def test_the_capability_file_is_written_only_when_asked_and_never_the_real_one_f
     assert proposed["pairs"][0]["resolves"] == ["cash", "cfd"] and proposed["pairs"][1]["resolves"] == ["cash"]
     assert proposed["pairs"][0]["price_increment"] == {"cash": "0.00005", "cfd": "0.00005"}
     assert all("forms" not in pair and pair["size_increment"] == 1_000 for pair in proposed["pairs"])
-    assert set(proposed["pairs"][0]) == set(yaml.safe_load(probe.CONFIG_PATH.read_text())["pairs"][0]), (
+    shipped = yaml.safe_load(probe.CONFIG_PATH.read_text())
+    assert set(proposed["pairs"][0]) == set(shipped["pairs"][0]) and set(proposed) == set(shipped), (
         "the file the probe would write has the shape of the file in the repository"
     )
+    assert set(proposed["pairs"][0]["spot_position_opening"]) == set(shipped["pairs"][0]["spot_position_opening"])
     assert target.read_text().startswith("# Capability file")
 
 

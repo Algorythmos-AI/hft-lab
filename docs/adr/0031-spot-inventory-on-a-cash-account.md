@@ -96,6 +96,10 @@ The venue port has a fourth question, `cash()`: the account's cash per currency,
 - The broker adapter reads the account's values and keeps the cash balances. UNVERIFIED: that the gateway
   reports a balance per currency under the tag the adapter reads, and sends a changed balance promptly after
   a fill. The first reconciliation after the trader starts shows the first; the first paper fill the second.
+  Note of 2026-10-13: the first start showed the first to be wrong. The gateway sends the balance as
+  `$LEDGER-CashBalance`, not the plain tag, so the trader read an account with cash in it as empty and refused
+  to plan a float. The adapter now reads the measured tag, and the plain one where a gateway sends it. The
+  second point stays unverified.
 - The reconciler compares the venue's cash with anchor plus fills, per currency, within a tolerance. A
   currency further off is a difference like a position's: the same grace time, the same break, the same
   consequences (entries stop, sleeves on paper are stepped down, the owner is paged).
@@ -232,3 +236,12 @@ Instead the reason for each hold is read (`hftlab.venues.capability.split`):
   them at the broker, and the reserve rule sees that, because it works on the account's cash.
 - **No automatic top-up.** A float worn down by losses and fees is not refilled. `--unfund` and `--fund` do
   it, when an operator says so.
+
+## Note of 2026-10-13: the cash a cover needs is kept aside from entries
+
+Section 5 said an exit is not held to the reserve because it takes back what the entry paid out. That holds for
+one sleeve and not for two. A short brings in the currency its cover is paid in; another sleeve's entry could
+spend it, and the cover was then rejected by the broker for want of cash (found by the generated-order test).
+The gate now keeps aside from entries, in each currency, what closing every sleeve's open position would pay
+out at the worst price its collar allows. An order that only closes is still not held to the reserve, but it
+is held to the cash itself: one the account could not pay for is refused by the gate and not sent.

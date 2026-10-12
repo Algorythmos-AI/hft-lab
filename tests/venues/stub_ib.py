@@ -276,10 +276,11 @@ class StubIb:
         self._ask("account_values")
         self._settle()
         held = [
-            AccountValue(account, "CashBalance", from_scaled(amount, 6), currency, "")
+            AccountValue(account, "$LEDGER-CashBalance", from_scaled(amount, 6), currency, "")
             for currency, amount in sorted(self.market.cash().items())
         ]
-        others = [AccountValue(account, "CashBalance", "0", "BASE", ""), AccountValue(account, "Leverage", "1", "", "")]
+        base = AccountValue(account, "$LEDGER-CashBalance", "0", "BASE", "")
+        others = [base, AccountValue(account, "Leverage", "1", "", "")]
         return [*held, *others]
 
     def executions(self) -> list[IbFill]:

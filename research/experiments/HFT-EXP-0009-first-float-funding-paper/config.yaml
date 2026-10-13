@@ -1,0 +1,36 @@
+# HFT-EXP-0009: what the first funding of the float was run with. RUN ON 2026-10-12 (UTC). The results are in
+# report.md.
+#
+# This is a record of a run that has happened, not a registration: nothing here was fixed in advance, and no
+# hypothesis is tested. It is the first time this platform's own order path sent an order to the real paper
+# account. It names HFT-EXP-0008, the probe's run whose four test orders the broker rejected. Funding again,
+# taking the float back, or a funding from another machine is a new experiment with a new id that names this
+# one.
+earlier_run: HFT-EXP-0008
+command: python -m hftlab.trader --fund --operator NAME   # a request left for the trader that was already running
+started_with: make paper-local                            # the recorder and the trader, against a gateway on the same machine
+venue: ibkr_paper                 # the broker's paper account, through its gateway on the owner's own machine
+machine: the owner's laptop in Sydney   # NOT the host the platform is to run on
+limits: HFT-DEC-0001              # in force: the float, the reserves, the order sizes, twelve orders a minute
+cost_model: HFT-DEC-0002          # the shadow venue's; nothing of it was changed by this run
+trading_day: "2026-10-13"         # the day that began at 17:00 New York on 2026-10-12
+trader_session: 2                 # of that trading day; it had been running for 14 minutes
+started_utc: "2026-10-12T22:43:13Z"
+started_sydney: "Tuesday 09:43"   # the Asian session
+started_new_york: "Monday 18:43"  # 1 h 43 min after the rollover, outside the window the cost model widens
+
+float_asked_for: {USD: 110000, EUR: 50000, AUD: 60000}   # config/risk.yaml, whole units of each currency
+funding_buffer_bps: 50
+account_held_before: AUD only     # how much is the account's own matter and is not in this repository
+targets: {AUD.USD: -239049, EUR.USD: 50000}   # the float's line in each pair, signed base-currency units
+order_type: MARKET
+time_in_force: IOC
+largest_order: {AUD.USD: 50000, EUR.USD: 40000}   # config/risk.yaml, per_pair max_order_size
+
+orders_sent: 7                    # five sells of AUD.USD, then two buys of EUR.USD
+orders_accepted_by_the_broker: 7
+orders_filled_in_full: 7
+partial_fills: 0
+orders_rejected: 0
+orders_left_working: 0
+sleeve_orders: 0                  # every sleeve was in shadow before, during and after

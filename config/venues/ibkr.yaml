@@ -15,6 +15,18 @@
 # The trader reads `spot_position_opening` and refuses any stage above shadow for a pair it does not show as
 # accepted on both sides (hftlab.venues.capability). That is a permission, not a cost.
 #
+# NOTE OF 2026-10-13, FROM FILLS AND NOT FROM A PROBE RUN (HFT-EXP-0009). The values below are a probe's to set
+# and none is changed by this note. The first funding of the float, on 2026-10-12 from the owner's laptop,
+# showed with the paying currency in the account what the probe showed without it:
+#   AUD.USD  SELL  accepted, five market orders of at most 47,810, paid from Australian dollars the account held
+#   EUR.USD  BUY   accepted, two market orders of 25,000, paid from US dollars the account held by then
+# `spot_position_opening` stays as the probe measured it: it describes a one-unit order from flat without the
+# paying currency, and a sell of EUR.USD, a buy of AUD.USD and both sides of GBP.USD are still not tested.
+# The commission on each of those seven fills was 2.874 AUD: charged in the account's own currency, and equal
+# to the broker's published minimum of USD 2.00 an order. `commission` stays null in every pair: the rate above
+# the minimum is not measured, and this file's status is not `probed`. `order_round_trip_ms` stays null: the
+# timings of those orders are from a laptop, not the host.
+#
 # `status` is one of:
 #   placeholder       nothing measured
 #   partly_measured   contract descriptions and what is on offer are measured; costs, timings and tradability are not

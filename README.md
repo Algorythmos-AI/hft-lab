@@ -44,7 +44,7 @@ session, the top of the book of a major pair on this feed changed about one to t
 
 ## What exists today
 
-Code, and tests of it. **Two runs of the capability probe aside, nothing here has met the real market.**
+Code, and tests of it. **Two runs of the capability probe and the first funding of the float aside, nothing here has met the real market.**
 
 | Piece | Where |
 |---|---|
@@ -73,7 +73,7 @@ Code, and tests of it. **Two runs of the capability probe aside, nothing here ha
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
 | Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
-| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 2 records of measurements (the capability probe's two real runs), and 3 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 3 records of measurements (the capability probe's two real runs and the first funding of the float), and 3 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
 | The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate with its pruning of old checkouts (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
@@ -95,8 +95,16 @@ What that does and does not mean:
   broker rejected all four orders:** on this account spot currency cannot be bought without holding the
   currency that pays, cannot be shorted, and yen cannot be held at all. Commissions, the SELL side, CFDs and
   the host's order timing are not measured.
-- **Not done:** those two runs are all that has touched anything real. Nothing has been recorded from the real
-  feed, and no experiment on a strategy has been run on real data. **Nothing has traded.** The recorder and the shadow runner cannot
+- **The first orders, 2026-10-12:** the owner funded the float on the paper account from a laptop
+  ([`HFT-EXP-0009`](research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)). Seven market orders, five
+  sells of AUD.USD and two buys of EUR.USD, were all accepted and filled at the quoted touch or better, in 28
+  seconds. Each was charged 2.874 AUD, the published minimum of USD 2.00, in the account's own currency. Cash
+  reconciled exactly for three and a half hours and so did positions; then the gateway lost and regained its
+  connection to the broker, listed no positions any more, and the trader stopped in a reconciliation break.
+  The commission above the minimum, slippage on a sleeve's orders in busy hours and any timing from the host
+  are not measured.
+- **Not done:** those runs are all that has touched anything real. Nothing has been recorded from the real
+  feed, and no experiment on a strategy has been run on real data. **No sleeve has traded:** the only fills are the float's seven conversions. The recorder and the shadow runner cannot
   place a broker order. The trader can only once the risk limits are in force and a sleeve has earned a
   stage above `shadow`. The limits are in force by a decision record (HFT-DEC-0001), written as a proposal the
   owner approves by merging it; every sleeve still starts in `shadow`, and only the control sleeve has a rule
@@ -104,8 +112,9 @@ What that does and does not mean:
   that the account may open the positions a sleeve needs, and the file shows the opposite: the account lends
   nothing on spot. The one answer built for that is a float of cash in each traded currency, funded by the
   owner ([ADR 0031](docs/adr/0031-spot-inventory-on-a-cash-account.md),
-  [runbook](docs/runbooks/paper-trading-on-spot.md)); until it is funded nothing is sent. None of it has run
-  against the real gateway. The capability probe can place an order, on the paper
+  [runbook](docs/runbooks/paper-trading-on-spot.md)); until it is funded nothing is sent. It was funded once, on
+  2026-10-12 ([`HFT-EXP-0009`](research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)), and no sleeve
+  order has gone to the real gateway. The capability probe can place an order, on the paper
   account, when the owner runs it with `--orders`: it has sent four, and the broker accepted none.
 - **The host layer exists and is tested off the host only:** the units as text, the scripts in dry runs
   against a temporary directory, the publisher against a stand-in for the network. Nothing is installed on

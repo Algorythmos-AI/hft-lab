@@ -9,6 +9,14 @@
 # A change to this file is an evaluation change: it needs a decision record, and `effective_from` says from
 # which UTC date the new values apply.
 #
+# NOTE OF 2026-10-13 (HFT-EXP-0009). No value here is changed by it; the values are HFT-DEC-0002's. Seven fills
+# of our own on the paper account on 2026-10-12 were each charged 2.874 AUD, which is the published minimum of
+# USD 2.00 an order, in the account's own currency: the commission MINIMUM is now measured, and agrees with the
+# value below. The rate above the minimum is still published, not measured (no order was large enough to reach
+# it). Slippage is still NOT MEASURED: those seven fills were at the quoted touch or better, small orders in a
+# quiet hour, and say nothing about a sleeve's orders in busy hours. The broker's acceptance of those orders
+# was seen 462 to 1,812 ms after sending, from a laptop: longer than `latency_us.max`, and not the host's.
+#
 # The spread is not a number here: the shadow venue fills against the recorded quote, so the measured spreads
 # (EUR.USD and AUD.USD about 0.2 pip, GBP.USD and USD.JPY about 0.4 pip in ordinary hours) are in every fill
 # already. What the measured spreads set is the spread guard in config/risk.yaml.

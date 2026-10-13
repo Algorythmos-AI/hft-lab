@@ -43,7 +43,7 @@ trader: session 1 of 2026-10-14; stages {"control": "shadow", "idle": "shadow"}
 |---|---|
 | `refused by the paper-only lock` | The gateway is not a paper gateway, or the mode is not paper. Do not work round it |
 | `... may place paper orders by the stage journal, and the risk limits are not in force` | A sleeve's stage is above `shadow` and `config/risk.yaml` is not in force. One of the two is wrong |
-| `... may place paper orders by the stage journal, and the capability file does not show that the account can open the positions they need: PAIR: ...` | A sleeve's stage is above `shadow` and `config/venues/ibkr.yaml` does not show, for that pair, an order that opens a position accepted on both sides. Today it shows the opposite ([`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)): the account refuses a spot order from flat. Only shadow is allowed. The file changes only from a probe run that is recorded; do not edit it to get past this |
+| `... may place paper orders by the stage journal, and the capability file does not show that the account can open the positions they need: PAIR: ...` | A sleeve's stage is above `shadow` and `config/venues/ibkr.yaml` does not show, for that pair, an order that opens a position accepted on both sides. Today it shows the opposite ([`HFT-EXP-0008`](../../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)): the account refuses a spot order from flat. Only shadow is allowed. The file changes only from a probe run that is recorded; do not edit it to get past this. With a float in the limits this refusal is for a pair held whatever is funded; see the note of 2026-10-13 under section 2 |
 | `cannot read the capability file ...` | The venue's capability file is missing or is not one. The trader does not start without it |
 | `another trader holds ...` | One is already running |
 | `a journal or a tape cannot be used` | A journal does not verify. It is never repaired: keep the file, and read section 6 |
@@ -91,6 +91,16 @@ A line of type `held` says a rule was met and the step was refused, and why: `AC
 `detail` names the pair and what the capability file says of it), `LIMITS_NOT_IN_FORCE`, `STILL_LATCHED` or
 `STILL_BROKEN`. At a start the trader also says `SHADOW IS THE HIGHEST STAGE`, with the same pairs and reasons,
 for as long as the capability file holds any of them.
+
+Note of 2026-10-13. That is the hold without a float. The paper account is now run with one
+([ADR 0031](../adr/0031-spot-inventory-on-a-cash-account.md), section 9), and then, while no pair is held for
+another reason, the trader says `ON THE FLOAT` at a start and not `SHADOW IS THE HIGHEST STAGE`: a pair that was refused only for want of cash, or
+whose side was not tested, is held until the float is funded and anchored, and after that the risk gate's cash
+rules decide each order. A pair the account may not hold at all, or whose refusal was not captured, is still
+held whatever is funded, unless the limits keep it on the shadow venue alone. The float was funded on the real
+paper account on 2026-10-12, and the same session ended in a reconciliation break after a reconnection
+([HFT-EXP-0009](../../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md));
+[paper-trading-on-spot.md](paper-trading-on-spot.md), section 8, says what that run showed.
 
 ## 3. Take a sleeve down
 
@@ -150,6 +160,14 @@ at all is sent until it is gone.
 5. When the two agree again the trader writes `break_cleared` and pages `Reconciliation break over`. The
    sleeves stay `stepped_down`: the way back to `min_size` is the rule, counted from the step down.
 6. Write down what it was. A break with no explanation is not closed by going away.
+
+Note of 2026-10-13. The first break on the real paper account was a blind one of another kind: the broker's
+side held nothing the trader did not know, and the gateway had stopped listing the float's own conversions as
+positions after it lost and regained its connection to the broker
+([HFT-EXP-0009](../../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)). The book was right and
+the list was empty. Steps 3 and 4 do not end that one, and while the connection is not made safe a request to
+take the float back or to anchor again is answered `NOT_SETTLED`. What ends it is not written yet: see
+[paper-trading-on-spot.md](paper-trading-on-spot.md), section 8.
 
 ## 6. A latch
 

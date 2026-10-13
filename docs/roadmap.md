@@ -37,9 +37,15 @@ themselves. That is all it has been run against:
   times a second, not every few milliseconds, and **the broker rejected all four orders**. On this account
   spot currency cannot be bought without holding the currency that pays, cannot be shorted, and yen cannot be
   held at all. **Commissions, the SELL side, CFDs and the host's order timing are not measured**, and the
-  spreads of neither run are inputs to the cost model. Those two runs are all that has touched anything
-  real, and F1 is still open. Nothing else has connected to a gateway.
-- **Nothing has traded.** No order has been accepted on the paper account: the probe's four were rejected. The process that would is written,
+  spreads of neither run are inputs to the cost model. Those two runs and the funding below are all that has
+  touched anything real, and F1 is still open.
+- **The float was funded once, on 2026-10-12, from the owner's laptop** ([`HFT-EXP-0009`](../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)):
+  seven market orders, five sells of AUD.USD and two buys of EUR.USD, all accepted and filled at the quoted
+  touch or better, each charged 2.874 AUD (the published minimum of USD 2.00) in the account's own currency.
+  Cash reconciled exactly, and positions did until the gateway lost and regained its connection to the broker:
+  after that it listed no positions and the trader stopped in a reconciliation break. The commission above
+  the minimum, slippage on a sleeve's orders in busy hours and any timing from the host are not measured.
+- **No sleeve has traded.** The only orders accepted on the paper account are those seven conversions: the probe's four were rejected. The process that would is written,
   and as shipped it cannot: the risk limits are not in force, so it runs in shadow-only mode, and every
   sleeve's stage is `shadow` with no promotion rule that could be met.
 - Nothing has been recorded from the real feed. There is no recorded trading day.
@@ -47,10 +53,10 @@ themselves. That is all it has been run against:
   ([ADR 0028](adr/0028-imported-history.md)) and has read hand-written rows in tests only. Imported days are
   for fitting a model before enough recordings exist: they are never this venue's results, and they count
   towards no promotion.
-- No experiment on a strategy has been run on real data. The research registry holds 6 hypotheses and 8
-  experiments, and 3 decision records: 6 of the experiments are registered and not run, and 2 are records
-  of the capability probe's two measured runs (`HFT-EXP-0007`, `HFT-EXP-0008`), which test nothing and count as
-  no trial.
+- No experiment on a strategy has been run on real data. The research registry holds 6 hypotheses and 9
+  experiments, and 3 decision records: 6 of the experiments are registered and not run, and 3 are records
+  of measurements that were made (the capability probe's two runs, `HFT-EXP-0007` and `HFT-EXP-0008`, and
+  the first funding of the float, `HFT-EXP-0009`), which test nothing and count as no trial.
 - Every number in the cost model, the recorder's quota and the feasibility settings is a placeholder.
 - **F5 has not started as a phase, and F6 is open.** F6's weekly loop is written and tested on synthetic
   streams and against the fake broker only (see "Where F5 and F6 stand"). Its gate is not met and code
@@ -185,7 +191,7 @@ waits, the timer times) is a first choice, marked as one where it is written.
 | IBKR adapter against the fake broker | Done: `src/hftlab/venues/ibkr/` over `ib_async`, `src/hftlab/venues/fake/`, and a contract suite both pass. Written and tested without a gateway |
 | The probe | Written and tested against the fake broker, and run twice against the real paper gateway: read-only at the weekly open ([`HFT-EXP-0007`](../research/experiments/HFT-EXP-0007-capability-probe-weekly-open/report.md)), and with orders in the Asian session ([`HFT-EXP-0008`](../research/experiments/HFT-EXP-0008-capability-probe-orders-asian-session/report.md)). It says when the gateway is cut off from the broker and when the other login's session has taken the market data, each with an exit status of its own, and never overwrites a report. Since the second run it waits for the broker's own verdict on an order and reports a rejection by number and class, and says per side which pairs the account may open a position in. **It has not been run on the host, in the busiest hours, or with an order the broker accepted** ([runbook](runbooks/ibkr-probe.md)) |
 | The consequence in the trader | Done: the trader refuses any stage above `shadow` for a sleeve while the capability file does not show both sides of its pairs as accepted (`hftlab.venues.capability`). With the shipped files every sleeve stays in `shadow`, and the refusal names the reason. Neither inventory accounting nor CFD support is built |
-| Exit gate: the probe report | Open. Two reports exist. Measured: what resolves, depth, history, the update rate and spreads of one ordinary session, the venue's odd-lot size, and that the account refuses a spot BUY from flat. Not measured: commissions, the SELL side, a position funded with cash in the right currency, CFDs, and any order timing from the host |
+| Exit gate: the probe report | Open. Two reports exist. Measured: what resolves, depth, history, the update rate and spreads of one ordinary session, the venue's odd-lot size, and that the account refuses a spot BUY from flat. Not measured: commissions, the SELL side, a position funded with cash in the right currency, CFDs, and any order timing from the host. Since then, from fills and not from the probe ([`HFT-EXP-0009`](../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)): the commission's minimum and its currency, a sell of AUD.USD and a buy of EUR.USD with the cash behind them. Still not measured: the commission above the minimum, the other sides, GBP.USD, CFDs, and any order timing from the host |
 | Exit gate: decision records for the access route and the instrument form | Open, and **not written on purpose**: both now depend on the owner's choice between cash balances held in each currency and CFDs, which is the owner's alone. [ADR 0010](adr/0010-access-route.md) is the engineering default until then |
 
 F1 is not finished until the last two rows are. Everything the adapter assumes about the gateway and could
@@ -199,7 +205,7 @@ not check offline is listed at the end of the runbook.
 | Leak mechanism | Done: `tools/leakcheck.py`, hooks, attestation ([ADR 0006](adr/0006-public-repo-and-leak-mechanism.md)) |
 | Core types | Done: `src/hftlab/core/` |
 | Paper lock | Done as a checked function with its isolation tests. The adapter that calls it is F1 |
-| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 17 records: 6 hypotheses, 8 experiments and 3 decisions. The seventh and eighth experiments are not registrations: they are the records of the capability probe's two measured runs |
+| Registry | Done: lint and trial count. The first two records came with F3, the next two with F4, and the learning loop, the Directional Change sleeve and the two later kinds of model each registered their first run. It holds 18 records: 6 hypotheses, 9 experiments and 3 decisions. The seventh, eighth and ninth experiments are not registrations: they are the records of the capability probe's two measured runs and of the first funding of the float |
 | ADRs | Done: 0001 to 0008, and 30 records now. Later phases added 0009 to 0016 and 0019, the host layer 0017 and 0018, the foundations of F5 and F6 0020 to 0022, the weekly loop 0023, the Directional Change sleeve 0024, gradient boosting 0025, sleeve state 0026, the deploy gate 0027, imported history 0028, the sequence network 0029 and the float of a cash account 0031 (0030 is the number of a record that is not on this branch) |
 | Requirements | Seeded by engineering judgement in [`requirements/requirements.yaml`](requirements/requirements.yaml), and taken from the private knowledge base, cited by id, in [`requirements/kb-requirements.yaml`](requirements/kb-requirements.yaml). 23 of the first file's 31 requirements are verified by tests they name and the other 8 are open. 12 of the second file's 80 requirements are verified, all of them by tests on synthetic streams; the other 68 are open. Its last 12, on directional change, come from a second release of the knowledge base |
 | Exit gate | `make ci` is green locally. Making `test` and `leakcheck` required checks is done on GitHub by the owner |

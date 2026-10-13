@@ -166,6 +166,7 @@ def test_what_is_in_force_names_the_decision_record_that_set_it_and_says_it_is_a
     costs = yaml.safe_load(read("config/cost_model.yaml"))
     assert (costs["status"], costs["decision"]) == ("decided", "HFT-DEC-0002")
     assert "HFT-EXP-0008" in read("config/cost_model.yaml") and "NOT MEASURED" in read("config/cost_model.yaml")
+    assert "HFT-EXP-0009" in read("config/cost_model.yaml"), "the fills that measured the commission minimum are named"
     assert "HFT-DEC-0003" in read("config/trader.yaml")
     records = sorted(path.name for path in (ROOT / "research" / "decisions").glob("HFT-DEC-*.md"))
     assert [name[:12] for name in records] == ["HFT-DEC-0001", "HFT-DEC-0002", "HFT-DEC-0003"]
@@ -213,6 +214,9 @@ def test_the_capability_file_claims_only_what_was_measured():
         assert pair["order_round_trip_ms"] == {"median": None, "p99": None}, "a laptop in Sydney is not the host"
     assert "NOT the size from which its pricing is" in text and "Not the forms the account may trade" in text
     assert "NOTHING THAT OPENS A POSITION FROM FLAT" in text and "ONE SAMPLE" in text
+    # The first fills (HFT-EXP-0009) are a note in the file and change none of the probe's values above.
+    assert "HFT-EXP-0009" in text and list((ROOT / "research" / "experiments").glob("HFT-EXP-0009-*"))
+    assert "FROM FILLS AND NOT FROM A PROBE RUN" in text
 
 
 def test_no_tracked_file_names_an_assistant_or_tool():

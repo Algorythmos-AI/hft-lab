@@ -3,6 +3,8 @@
 - **Status:** accepted, 2026-10-12. Built and tested against the fake broker and synthetic data only. Nothing
   here has connected to a gateway and no order has been placed by it. Three things it relies on about the
   real gateway are marked UNVERIFIED below, each with what will show it.
+  Note of 2026-10-13: the float has since been funded on the real paper account, with seven fills. What
+  became of each UNVERIFIED point is in the last section, "Note of 2026-10-13: what the first funding showed".
 - **Context:** F4. [ADR 0019](0019-trader-loop-and-staged-rollout.md) built the trader, and
   [ADR 0015](0015-risk-gate.md) and [ADR 0016](0016-order-manager-and-outbox.md) the gate and the order
   manager it sends through. The capability probe's run with test orders on 2026-10-12 showed that none of it
@@ -245,3 +247,39 @@ spend it, and the cover was then rejected by the broker for want of cash (found 
 The gate now keeps aside from entries, in each currency, what closing every sleeve's open position would pay
 out at the worst price its collar allows. An order that only closes is still not held to the reserve, but it
 is held to the cash itself: one the account could not pay for is refused by the gate and not sent.
+
+## Note of 2026-10-13: what the first funding showed
+
+The owner funded the float on the real paper account on 2026-10-12 at 22:43 UTC
+([HFT-EXP-0009](../../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)): five sells of
+AUD.USD and two buys of EUR.USD, seven fills, from a laptop. The text above is left as it was written. Against
+each point it marked UNVERIFIED:
+
+| The point | Where | What the run showed |
+|---|---|---|
+| A sell is paid from the base currency | Context; section 9 | **Held, for AUD.USD.** Five sells were accepted with Australian dollars in the account. A sell of EUR.USD has not been sent, and neither has a sell of a currency the account does not hold |
+| "Refused for want of cash, so cash answers it" | Section 9 | **Held, for EUR.USD.** Two buys were accepted with US dollars in the account. A buy of AUD.USD has not been sent |
+| The gateway sends a changed balance promptly after a fill | Section 4 | **Held, as far as it was looked at.** The first reconciliation after the last fill, 31 s later, had all three balances right. Nothing finer is shown |
+| Cash reconciles: the venue's cash is the anchor plus the fills | Section 4 | **Held.** For 3 h 31 min, in 211 checks, Australian dollars and euros to the millionth and US dollars to the fourth decimal place the gateway gives, the commissions included |
+| The gateway lists a spot conversion as a position in its pair | Section 4, "the one that matters most" | **Held on the connection the conversions were made on, and not after it.** The same 211 checks were answered with the float's line in each pair. Then the gateway lost its connection to the broker for ten minutes, and from its return the positions were answered with nothing. The trader opened a reconciliation break and stopped there. See below |
+| Which currency the commission is charged in | Consequences | **The account's own, Australian dollars**: 2.874 AUD a fill, which is the published minimum of USD 2.00. The limits already hold a loss latch in that currency. The rate above the minimum is not measured |
+
+What the fifth row means for this design:
+
+- Section 2 says the venue's positions still equal the book's desk positions, so reconciliation of positions
+  is unchanged. That is so only while the gateway goes on listing the float's conversions. After one
+  reconnection it did not, and position reconciliation cannot tell a position that is no longer listed from
+  one that has gone.
+- The break did what a break is for: nothing was sent. It is also not a state the trader leaves by itself.
+  Section 4 expected this failure, if it came, within the grace time of the first conversion, and named the
+  answer: take the float back with `--unfund`. It came hours later and by another road, on a connection that
+  has to be made safe before any order may go, the float's included: while it is not, a request to fund, to
+  take the float back or to anchor again is answered `NOT_SETTLED` and nothing is done. So the answer section 4
+  named is not there in the state this run ended in.
+- Reconciliation on cash alone is still not built, and this note does not decide that it is to be. Whether
+  the listing ends with the connection, with the gateway's day, or for another reason has not been measured:
+  that needs a run that looks, and its own record.
+- Why it is not known: the tape holds the adapter's answer to each fresh request, and nothing about the
+  reason.
+
+Nothing in the decision above is changed by this note.

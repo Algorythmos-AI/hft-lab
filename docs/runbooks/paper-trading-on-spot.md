@@ -11,6 +11,11 @@ first step).
 Everything here is the owner's to run. Nothing in it has been run against a real gateway: it is tested on the
 fake broker only, and section 8 lists what the first real run will show.
 
+Note of 2026-10-13: sections 3 and 4 have now been run once against the real paper gateway, from a laptop
+([HFT-EXP-0009](../../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md)). The float was
+funded with seven fills, and the same session later ended in a reconciliation break. Section 8 says what
+that run showed against each assumption. Sections 5 to 7 are as they were.
+
 ## 1. What will happen, in order
 
 1. The trader starts with every sleeve in `shadow`. It sends nothing.
@@ -137,7 +142,8 @@ Look at the account in the broker's own client. If the cause is innocent:
 
 ## 8. What the first real run shows, and what to do if it goes the other way
 
-None of this has been seen on the real gateway.
+None of this has been seen on the real gateway. (Written before the first run. The note under the table says
+what it showed.)
 
 | What is assumed | What shows it | If it is not so |
 |---|---|---|
@@ -146,3 +152,36 @@ None of this has been seen on the real gateway.
 | A changed balance arrives soon after a fill | The same | The same |
 | A sell is paid from the base currency the account holds | The first conversion that sells, and the first paper sell | The broker refuses it. Three refusals in a row stop entries |
 | The commission is charged in the account's own currency | The first paper fill | A commission in a currency with no loss latch stops entries (`UNLATCHED_CURRENCY`): add the latch by a decision record |
+
+### Note of 2026-10-13: what the first run showed
+
+The float was funded on 2026-10-12 at 22:43 UTC: five sells of AUD.USD and two buys of EUR.USD, all filled, in
+28 seconds, not the few minutes section 4 expects. The record is
+[HFT-EXP-0009](../../research/experiments/HFT-EXP-0009-first-float-funding-paper/report.md). Row by row:
+
+| What was assumed | What the run showed |
+|---|---|
+| The gateway reports a cash balance per currency | It does, under another tag than the adapter first read. The first start read the account as empty and `--fund-plan` refused; the adapter was corrected, and the plan then printed |
+| A spot conversion is listed as a position in its pair | **Yes while the connection lasted, no after it.** No difference in 211 checks over 3 h 31 min. Then the gateway lost its connection to the broker for ten minutes, and from its return it listed no position at all. The trader opened a break and has sent nothing since |
+| A changed balance arrives soon after a fill | Yes: all three balances were right at the first check, 31 s after the last fill, and stayed equal to the trader's own figures, commissions included |
+| A sell is paid from the base currency the account holds | Yes for AUD.USD: five sells accepted. A sleeve's sell, and a sell of EUR.USD, have not been sent |
+| The commission is charged in the account's own currency | Yes: Australian dollars, 2.874 AUD an order, which is the published minimum of USD 2.00. The limits hold a loss latch in that currency, so no entry was stopped by it |
+
+What that changes in this runbook, until it is settled by a design record:
+
+- **A reconnection can end in a break that nothing here ends.** The table's answer for the second row is
+  `--unfund`. In the state that run ended in, the connection is not made safe, and the trader answers
+  `--unfund`, `--fund` and `--reanchor` with `NOT_SETTLED`. Whether the gateway lists the positions again after
+  it or the trader is started afresh has not been tried. Stop (Ctrl-C) is safe: it sends nothing and keeps
+  the journals. Do not edit a journal to get past it.
+- **In that state the tape fills.** The trader asks the venue on every beat and the tape keeps each answer:
+  about 85 MB an hour in that run, against a quota of 1 GB. [trader.md](trader.md), section 8, says what
+  happens at the soft and at the hard limit, and how closed parts are compressed (`trader --housekeep`). A
+  trader left in a break overnight gets to the limits.
+- **A competing login did it.** The ten minutes without the broker ended with the gateway's message that
+  there is no market data during a competing session: the first limit of section 7. It costs more than
+  quotes.
+- A day with a break in it is not a clean day, so the control sleeve's step up waits for a later one.
+
+Still not seen on the real gateway: a sleeve's order, an exit, `--unfund`, `--reanchor`, a refusal by the
+broker, the daily logout and the weekly reset.

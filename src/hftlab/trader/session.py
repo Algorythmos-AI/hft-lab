@@ -127,7 +127,8 @@ class Why(Enum):
     NO_INVENTORY = "NO_INVENTORY"  # this run keeps no float: the limits have no `inventory`, or are not in force
     ALREADY_FUNDED = "ALREADY_FUNDED"  # a float stands: there is nothing to do
     IN_PROGRESS = "IN_PROGRESS"  # a funding or an unfunding has not ended
-    NOT_SETTLED = "NOT_SETTLED"  # the connection is not safe, an order is on its way, or a fill is too recent
+    NOT_SETTLED = "NOT_SETTLED"  # an order is on its way, or a fill is too recent: ask again in a moment
+    CONNECTION_NOT_SAFE = "CONNECTION_NOT_SAFE"  # no connection, or one whose orders and executions are not settled
     NO_CASH = "NO_CASH"  # the venue could not be asked what cash the account holds
     CANNOT_COVER = "CANNOT_COVER"  # the account cannot be given the float from what it holds, or a quote is missing
     NOT_FUNDED = "NOT_FUNDED"  # there is no float to take back
@@ -587,7 +588,7 @@ class Trader:
                     self._changed(change)
         elif request.what == "lineup":
             self._renew, done = True, 1  # the turn is finished; the next session reads the lineup as it is now
-        elif request.what in (funding.FUND, funding.UNFUND, "anchor"):
+        elif request.what in (funding.FUND, funding.UNFUND, funding.ANCHOR):
             said = self._on_float_request(request, now)
             done = int(not said)
         self._write(
@@ -824,20 +825,36 @@ class Trader:
 
         Nothing is converted here. A funding is opened in the ledger, and `_convert` takes it forward one
         order at a time, on every beat, through the order manager.
+
+        A new anchor (`--reanchor`) is the way out of a break in cash, so neither a break nor a conversion that
+        cannot go on stands in its way, and no sleeve has to be flat. It is taken when, and only when:
+
+          * the limits hold a float (`NO_INVENTORY`);
+          * the connection has been made safe: every working order taken back, the executions booked
+            (`CONNECTION_NOT_SAFE`). Until then the book is not known to be what the venue did;
+          * no order is on its way and no fill was booked within the settle time (`NOT_SETTLED`): the venue's
+            cash may be a moment behind a fill;
+          * the venue says what cash it holds (`NO_CASH`).
+
+        The new anchor is the venue's cash less everything the book's fills moved, so from then on the book is
+        taken to be what happened: the float's lines and every sleeve's position are restated from it. The
+        ledger's entry holds the operator, how much of each currency that explained away, and those positions.
         """
         ledger, manager, risk = self._ledger, self._manager, self._risk
         if ledger is None or manager is None or risk is None or risk.inventory is None:
             return Why.NO_INVENTORY.value
         inventory, book = risk.inventory, manager.book
         what, operator = request.what, request.operator
-        if ledger.converting and not (what == funding.UNFUND and ledger.phase == funding.FUNDING):
+        anchoring = what == funding.ANCHOR
+        if ledger.converting and not anchoring and not (what == funding.UNFUND and ledger.phase == funding.FUNDING):
             return Why.IN_PROGRESS.value
         if what == funding.FUND and ledger.funded:
             return Why.ALREADY_FUNDED.value
         if what == funding.UNFUND and ledger.phase == funding.NONE:
             return Why.NOT_FUNDED.value
-        settled = now - self._fill_at >= inventory.settle_ns
-        if manager.blind or manager.in_flight() or not settled:
+        if manager.blind:
+            return Why.CONNECTION_NOT_SAFE.value
+        if manager.in_flight() or now - self._fill_at < inventory.settle_ns:
             return Why.NOT_SETTLED.value
         if what == funding.UNFUND:
             if not self._sleeves_flat():
@@ -849,8 +866,8 @@ class Trader:
             seen = self._ask_cash(now)
             if seen is None:
                 return Why.NO_CASH.value
-            if what == "anchor":
-                ledger.set_anchor(anchor_of(seen, book), operator=operator, why="operator", at_ns=now)
+            if anchoring:
+                self._reanchor(seen, operator, now)
             else:
                 quotes = {pair: (quote.bid, quote.ask) for pair, quote in self._last.items()}
                 try:
@@ -865,6 +882,22 @@ class Trader:
         self._write("float", event=what, phase=ledger.phase, pairs=list(ledger.order), operator=operator)
         self._show_float()
         return ""
+
+    def _reanchor(self, seen: Mapping[str, int], operator: str, now: int) -> None:
+        """Take the venue's cash as where the account stands, and write down what that explained away."""
+        assert self._ledger is not None and self._manager is not None
+        ledger, book = self._ledger, self._manager.book
+        absorbed: dict[str, int] = {}
+        if ledger.anchor is not None:
+            ours = expected(ledger.anchor, book)
+            absorbed = {c: seen.get(c, 0) - ours.get(c, 0) for c in sorted(set(seen) | set(ours))}
+        anchor = anchor_of(seen, book)
+        lines = sorted(item for item in book.open_lines().items() if item[0][0] != FLOAT)
+        ledger.reanchor(
+            anchor, operator=operator, at_ns=now, absorbed={c: a for c, a in absorbed.items() if a},
+            restated=[[name, pair, held] for (name, pair), held in lines], baseline=expected(anchor, book, FLOAT),
+        )  # fmt: skip
+        self._recheck = True  # a break in cash ends by a comparison that agrees, written down: made on the next turn
 
     def _convert(self, now: int) -> None:
         """On a beat: the next order of a funding or an unfunding, or its end. One order at a time, in order.

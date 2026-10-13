@@ -16,6 +16,12 @@ fills moved (`hftlab.book.cash`). A currency further off than the tolerance is a
 it has the same grace time and opens the same break. Until an anchor stands the venue is asked and nothing is
 compared.
 
+Spot on a cash account is the exception to the second question (ADR 0031, note of 2026-10-13). The broker
+lists a conversion as a position only on the connection that saw its fills: on the next connection it lists
+none, though nothing was sold. So with `spot_on_cash` a position of kind CASH is not compared at all, listed or
+not: what the venue says of it is no evidence either way. The cash is what is compared for it, and cash is
+kept across connections. Every other form of instrument is compared exactly as before.
+
 A break is a flag (`broken`), a `BreakEvent` for whoever must stop entries, and a line in the journal. It stays
 set until a later check finds the positions agreeing AND that agreement has been written to the journal, which
 is the record an operator reads. It survives a restart: the journal is read when the reconciler is built.
@@ -92,11 +98,16 @@ class Reported(Protocol):
     def executions_since(self, ts_ns: int) -> tuple[Fill, ...]: ...
 
 
-def differences(book: Book, reported: Iterable[VenuePosition]) -> tuple[Difference, ...]:
+def differences(
+    book: Book, reported: Iterable[VenuePosition], *, spot_on_cash: bool = False
+) -> tuple[Difference, ...]:
     """Every pair and form in which the venue's position is not the book's desk position; empty when they agree.
 
     A venue position in a pair the book has no instrument for, or in another form than the book trades the pair
     in, is a difference: the book holds none of it.
+
+    With `spot_on_cash` nothing of kind CASH is a difference, whatever the venue lists or does not list: the
+    account's cash is what such a position is reconciled on (see the module's text).
     """
     theirs: dict[tuple[str, str], int] = {}
     for position in reported:
@@ -106,7 +117,7 @@ def differences(book: Book, reported: Iterable[VenuePosition]) -> tuple[Differen
     out = []
     for pair, kind in sorted(set(ours) | set(theirs)):
         mine, venue = ours.get((pair, kind), 0), theirs.get((pair, kind), 0)
-        if mine != venue:
+        if mine != venue and not (spot_on_cash and kind == InstrumentKind.CASH.value):
             out.append(Difference(pair, InstrumentKind(kind), mine, venue))
     return tuple(out)
 
@@ -138,11 +149,13 @@ class Reconciler:
         sink: Callable[[object], object] | None = None,
         overlap_ns: int = 5 * MINUTE,
         cash: CashCheck | None = None,
+        spot_on_cash: bool = False,
     ) -> None:
         if grace_ns < 0 or overlap_ns < 0:
             raise ValueError("the grace time and the overlap cannot be negative")
         self._source, self._book, self._journal, self._clock = source, book, journal, clock
         self._grace_ns, self._overlap_ns, self._cash = grace_ns, overlap_ns, cash
+        self._spot_on_cash = spot_on_cash
         self._last_cash: tuple[CashDifference, ...] = ()
         self._sink = sink if sink is not None else book.take
         self._now = 0
@@ -186,7 +199,7 @@ class Reconciler:
         recovered = tuple(fill for fill in executed if not self._book.has(fill.fill_id) and self._recover(fill, now))
         latest = max((fill.venue_ts_ns or 0 for fill in executed), default=0)
         self._since = max(self._since, latest - self._overlap_ns)
-        found = differences(self._book, reported)
+        found = differences(self._book, reported, spot_on_cash=self._spot_on_cash)
         short: tuple[CashDifference, ...] = ()
         if self._cash is not None and anchor is not None and seen is not None:
             short = cash_differences(anchor, self._book, seen, self._cash.tolerance)

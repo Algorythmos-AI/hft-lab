@@ -309,6 +309,7 @@ class Trader:
             self._manager = OrderManager(
                 edge.venue, self._gate, Outbox(paths["outbox"], fsync=fsync), clock=self._clock,
                 instruments=self._instruments.values(), asks=asks, witness=edge.witness,
+                spot_on_cash=risk.inventory is not None,
             )  # fmt: skip
             if risk.inventory is not None:
                 self._ledger = funding.FloatLedger(Journal(paths[funding.FILE], fsync=fsync))
@@ -319,6 +320,7 @@ class Trader:
             self._reconciler = Reconciler(
                 asks, self._manager.book, Journal(paths["reconcile"], fsync=fsync), clock=self._clock,
                 grace_ns=risk.reconciliation_grace_ns, sink=self._from_reconciler, cash=cash,
+                spot_on_cash=risk.inventory is not None,
             )  # fmt: skip
             self._show_float()
             if opened.state is ConnectionState.READY:
@@ -360,6 +362,7 @@ class Trader:
         self._quoted_at: dict[str, int] = {}
         self._beat_at = opened.at_ns
         self._checked_at = opened.at_ns
+        self._recheck = False  # a connection was just made safe on a cash account: its cash is compared at once
         self._latched: set[str] = set()
         self._broken = False
         self._breaks = 0
@@ -684,8 +687,11 @@ class Trader:
         assert self._manager is not None and self._reconciler is not None and self._gate is not None
         if self._manager.blind:
             self._manager.reconcile()
-        elif now - self._checked_at >= self._settings.reconcile_ns:
-            self._checked_at = now
+            # On a cash account the manager compares no spot position (ADR 0031, note of 2026-10-13): the cash is
+            # what says whether the book is the account's, so it is compared on the first turn after this one.
+            self._recheck = self._ledger is not None
+        elif self._recheck or now - self._checked_at >= self._settings.reconcile_ns:
+            self._checked_at, self._recheck = now, False
             found = self._reconciler.check()
             if found.seen_cash is not None:
                 self._cash_seen, self._cash_at = dict(found.seen_cash), now
@@ -747,7 +753,7 @@ class Trader:
             if broken:
                 self._breaks += 1
                 self._stages.mark(now, BREAK)
-                text = "The venue's positions are not the book's. Entries are stopped; see the trader runbook."
+                text = "The venue's positions or cash are not the book's. Entries are stopped; see the trader runbook."
                 self._notify.fire("reconciliation_break", "Reconciliation break", text, 5)
                 for sleeve in self._names:
                     self._step_down(sleeve, BREAK, "", now)

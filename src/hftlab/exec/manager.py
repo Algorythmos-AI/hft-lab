@@ -23,6 +23,13 @@ between:
   4. the venue's positions must equal the book's; while they do not, the connection is not marked;
   5. only then `mark_reconciled()`.
 
+Step 4 has one exception: spot on a cash account with a float (`spot_on_cash`, ADR 0031, note of 2026-10-13).
+The broker lists such a position only on the connection that saw its fills, so on a new connection an empty
+list says nothing. A position of kind CASH is then not compared here, listed or not. What stands in for it is
+not in this class: the reconciler compares the account's cash with the anchor and the book's fills, and the
+trader runs that comparison as soon as this manager has marked a connection. Steps 1 to 3 are unchanged, and
+so is step 4 for every other form of instrument.
+
 An order whose fate cannot be established is never sent again. It is settled as dead by step 3, and if the
 venue later speaks of it after all, that is a fault: it is recorded, entries stop, and a fill is booked all the
 same, because the book has to say what the venue says.
@@ -148,6 +155,7 @@ class OrderManager:
         skew_ns: int = 2 * MINUTE,
         asks: Asked | None = None,
         witness: Witness | None = None,
+        spot_on_cash: bool = False,
     ) -> None:
         if not isinstance(gate, RiskGate):
             raise TypeError("the order manager is built on the risk gate itself; there is no stand-in for it")
@@ -155,6 +163,7 @@ class OrderManager:
         # The questions go through `asks` when one is given: the same venue, seen by whoever records its answers.
         self._asks: Asked = venue if asks is None else asks
         self._witness = witness
+        self._spot_on_cash = spot_on_cash  # spot is reconciled on cash, by the reconciler: see the module's text
         self._instruments = {instrument.pair: instrument for instrument in instruments}
         self._book = Book(self._instruments.values())
         self._orders: dict[str, Tracked] = {}
@@ -381,7 +390,7 @@ class OrderManager:
         for tracked in list(self._orders.values()):
             if tracked.stage in IN_FLIGHT:
                 self._settle(tracked)
-        differing = differences(self._book, reported)
+        differing = differences(self._book, reported, spot_on_cash=self._spot_on_cash)
         if differing:
             if differing != self._differing:
                 self._differing = differing

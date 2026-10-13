@@ -15,6 +15,10 @@ instrument lookup waits out its timeout and fails, as it does on a real gateway 
 And it can play the broker's servers turning an order down after the gateway acknowledged it
 (`FakeConfig.late_rejections`): WORKING first, then REJECTED, and the reason as a notice with the gateway's
 number, tied to the order, as the real gateway sends it.
+
+On a cash account (`FakeConfig.cash_only`) it lists a spot position as the real gateway was measured to
+(HFT-EXP-0009): only on the connection that saw its executions. What was executed before a connection was made
+is not in that connection's position list. The cash is, on every connection.
 """
 from __future__ import annotations
 
@@ -73,6 +77,7 @@ class FakeBroker(GuardedVenue):
         self._reported: dict[str, tuple[OrderState, int]] = {}
         self._pumped_ns = clock.now_ns()
         self._messages = sorted(market.config.gateway_messages, key=lambda said: said[0])
+        self._unlisted: dict[tuple[str, InstrumentKind], int] = {}  # spot executed before this connection
         self._said = 0
 
     @property
@@ -97,6 +102,9 @@ class FakeBroker(GuardedVenue):
         self.market.advance(now)  # whatever happened while nobody was connected was never delivered
         self._pumped_ns = now
         self._link = True
+        if self.market.config.cash_only:
+            executed = self.market.executed_positions()
+            self._unlisted = {key: held for key, held in executed.items() if key[1] is InstrumentKind.CASH}
         self._say_what_is_due(now)
         return self.market.config.accounts
 
@@ -267,7 +275,10 @@ class FakeBroker(GuardedVenue):
 
     def _positions(self) -> tuple[VenuePosition, ...]:
         self._settle()
-        return tuple(VenuePosition(pair, kind, qty) for (pair, kind), qty in sorted(self.market.positions().items()))
+        listed = self.market.positions()
+        for key, before in self._unlisted.items():
+            listed[key] = listed.get(key, 0) - before
+        return tuple(VenuePosition(pair, kind, qty) for (pair, kind), qty in sorted(listed.items()) if qty)
 
     def _executions_since(self, ts_ns: int) -> tuple[Fill, ...]:
         self._settle()

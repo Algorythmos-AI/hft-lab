@@ -9,11 +9,15 @@ cash is still a break. Made-up balances.
 from __future__ import annotations
 
 from hftlab.book import FLOAT, differences
+from hftlab.calendar import rollover_near
 from hftlab.core import InstrumentKind, Side
 from hftlab.journal import read
+from hftlab.trader.tape import read_tape
 from hftlab.venues.port import ConnectionState, VenuePosition
-from tests.inventory.kit import TRADED, UNIT, Bureau, Till, account, put_stage
+from tests.inventory.kit import TRADED, UNIT, Bureau, Till, account, put_stage, settings
 from tests.venues.kit import EURUSD, MS, SECOND, T0
+
+HOUR = 3_600 * SECOND
 
 DOWN = T0 + 45 * SECOND  # after the funding, which takes about half a minute here
 BACK = DOWN + 6 * SECOND
@@ -192,3 +196,56 @@ def test_only_spot_is_left_to_the_cash_and_only_when_asked(tmp_path):
     found = differences(book, stray, spot_on_cash=True)
     assert [(d.pair, d.kind, d.ours, d.venue) for d in found] == [("EUR.USD", InstrumentKind.CFD, 0, 5)]
     assert EURUSD in TRADED
+
+
+# ---- what is still asked on a new connection, the replay, and the day ---------------------------------------------
+
+
+def test_a_new_connection_is_still_asked_for_its_working_orders_and_its_executions_before_anything_goes(tmp_path):
+    desk = funded(tmp_path / "day", dropped())
+    desk.run(60)
+    desk.stop()
+    rows = read_tape(desk.day() / "session-001.tape.jsonl")
+    back = next(n for n, row in enumerate(rows) if row[0] == "step" and row[1] >= BACK and row[2] == "RECONCILING")
+    safe = next(n for n, row in enumerate(rows) if n > back and row[0] == "step" and row[2] == "READY")
+    asked = [row[1] for row in rows[back:safe] if row[0] == "ask"]
+    assert asked == ["executions_since", "positions"], "written out: these answers are not the last ones"
+    # No working order, as when the session began: that answer is the last one again, counted and not written.
+    assert next(row[2] for row in rows[safe:] if row[:2] == ["same", "open_orders"]) >= 1
+    listed = next(row[3] for row in rows[back:safe] if row[:2] == ["ask", "executions_since"])
+    booked = desk.trader.broker_book.snapshot()["fills"]
+    assert listed and {fill[0] for fill in listed} <= set(booked), "every execution it lists is in the book, once"
+    assert not [row for row in rows[back:safe] if row[0] == "sent"], "and no order was sent before it was safe"
+    turn = next(n for n, row in enumerate(rows) if n > safe and row[0] == "step")
+    again = [row[1] for row in rows[safe:turn] if row[0] == "ask"]
+    assert again[:1] == ["executions_since"], "and on the next turn the reconciler compares, the cash with it"
+
+
+def test_a_funded_day_with_a_reconnection_in_it_replays_byte_for_byte(tmp_path):
+    desk = funded(tmp_path / "day", dropped())
+    desk.run(150)
+    desk.stop()
+    assert len([f for f in desk.of("broker_fill") if f["sleeve"] == "control" and f["at_ns"] > BACK]) >= 2
+    replayed = desk.replay(tmp_path / "scratch")
+    assert [(one.identical, one.stopped) for one in replayed] == [(True, True)], replayed
+
+
+def test_a_link_the_gateway_lost_and_found_again_does_not_by_itself_make_the_day_unclean(tmp_path):
+    """ADR 0019: a day is not clean for a latch, a break, a change of stage, an unclean stop or too short a run.
+    A reconnection is none of those, and with nothing found to differ after it the day stays clean."""
+    close = rollover_near(T0 + 12 * HOUR)
+    down = close - 60 * SECOND
+    config = account(outages=((down, down + 10 * SECOND),))
+    desk = Bureau(tmp_path, config, settings=settings(clean_day_minutes=1), at_ns=close - 1_200 * SECOND)
+    desk.quoted = desk.clock.now_ns()
+    desk.fund()  # well before the close: nothing is converted in the minutes around a rollover
+    desk.run(1_000, quotes=False)
+    desk.quoted = desk.clock.now_ns()
+    assert desk.clock.now_ns() < down and desk.float_lines()
+    assert desk.run(200) is True, "the day closed under it"
+    desk.stop()
+    states = [entry["state"] for entry in desk.of("connection")]
+    assert "DISCONNECTED" in states and states[-1] == "READY" and desk.broker.positions() == ()
+    days = [e for e in read(tmp_path / "stages.jsonl")[1] if e["type"] == "day"]
+    assert [(e["sleeve"], e["clean"], e["causes"]) for e in days] == [("control", 1, []), ("idle", 1, [])]
+    assert not [e for e in read(tmp_path / "stages.jsonl")[1] if e["type"] == "dirty"] and breaks(desk) == []

@@ -283,3 +283,76 @@ What the fifth row means for this design:
   reason.
 
 Nothing in the decision above is changed by this note.
+
+## Note of 2026-10-13: spot is reconciled on cash, and a position the venue lists is no evidence
+
+This note changes the decision. The note before it left the question open; it was then looked at on a new
+connection to the same paper account, reading only: the request for positions was answered with nothing, the
+account's portfolio was empty, and the cash balances were the float's, to the unit.
+
+**What was wrong.** Section 2 says "the venue's positions still equal the book's desk positions, so
+reconciliation of positions is unchanged", and section 4 builds on it. For spot on this cash account that
+holds only inside one connection: the broker lists a conversion as a position on the connection that saw its
+fills, and on every later connection it lists none. Nothing was sold in between. So an empty list after a
+reconnection or a restart says nothing, and a list with something in it says nothing a later connection will
+repeat. **The cash is the only thing the broker keeps saying.**
+
+**What reconciliation rests on now**, wherever the limits hold `inventory`:
+
+1. *Positions of spot are not compared.* Neither the order manager, in the fourth step of making a connection
+   safe ([ADR 0016](0016-order-manager-and-outbox.md)), nor the reconciler treats what the venue lists of an
+   instrument of kind CASH as a difference, whether it lists a position the book does not hold, lists none
+   where the book holds one, or lists another quantity. Every other form of instrument is compared exactly
+   as before, and without `inventory` in the limits so is spot.
+2. *A connection is safe* when the venue lists no working order (each one found is asked to be cancelled
+   first), its executions since the last known time are booked, each once, and every order that was on its
+   way is settled by that evidence. Those three steps are unchanged, and they are still taken on a first
+   connection, after a restart and after every reconnection.
+3. *Cash is compared* on the first turn after a connection has been made safe and then on the reconciler's
+   schedule: the venue's cash in each currency against the anchor plus what every fill in the book moved. A
+   currency further off than `inventory.cash_tolerance` is a difference. A difference that has stood for
+   `reconciliation.grace_seconds` at a comparison is the break: entries stop, the sleeves on paper are
+   stepped down, the owner is paged. Exits go on.
+4. *Everything else works from the book.* FLATTEN closes each sleeve's line as the book holds it, back to the
+   float. A position found at a start is the book's. An exit after a reconnection is sized by the book.
+
+What that comparison cannot see, said plainly: a difference smaller than the tolerance in every currency; two
+errors that cancel in cash; and, before an anchor stands, anything at all. During the grace time after a
+reconnection entries are not stopped, as they were not for any difference in cash before. A fill the book
+never heard of moves two currencies by its whole size, so it is seen unless it is very small.
+
+**The way out of a break in cash.** `--reanchor --operator NAME` is taken when, and only when: the limits
+hold a float; the connection has been made safe (`CONNECTION_NOT_SAFE` otherwise); no order is on its way and
+no fill was booked within `inventory.settle_seconds` (`NOT_SETTLED`: ask again); and the venue says what cash
+it holds (`NO_CASH`). A standing break does not stop it, nor a funding or an unfunding that cannot go on, nor
+a sleeve that holds a position. The new anchor is the venue's cash less everything the book's fills moved,
+so the book is taken as what happened: the float's lines and every sleeve's position are restated from it.
+The float's journal gets one `anchor` entry with the operator's name, `absorbed` (how far the venue's cash
+was from the old anchor and the fills, by currency), `restated` (each sleeve position the book held) and the
+float's `baseline` from then on. The reconciler compares on the same turn, writes `break_cleared`, and
+entries may go again. A sleeve that was stepped down stays stepped down: its way back is the stage rule.
+It is an operator's statement that the difference is understood. Nothing checks that it is.
+
+**Two things found beside it, and changed with it.**
+
+- *The tape.* While a connection could not be made safe the venue was asked on every turn and every answer
+  written out, the same answer each time: about 85 MB an hour. The asking now waits 250 ms after a try that
+  did not end it, then twice as long each time up to 30 s, and starts again at once on a new connection. And
+  an answer that is the last written answer to its question over again is counted, not written (tape format
+  2: `hftlab.trader.tape` says how a replay is held to the count). The gateway also sends every commission
+  report of the day again with each list of executions; the adapter passes one on once.
+- *Error 322.* The broker library answered each "connectivity restored" from the gateway with a new request
+  for the account summary and cancelled none, so the third was refused. Nothing here reads a summary. That
+  answer of the library's is removed; the account's values are asked for once per connection.
+
+**What only the real gateway can show**, UNVERIFIED until it has:
+
+- that the cash balances are right, and current, straight after the gateway regains its link without the
+  socket closing (they were read right on a new socket; the measured break never got as far as asking);
+- that a changed balance still arrives within the settle time on such a connection;
+- that after the gateway's message 1101 the account's values come again when asked for again;
+- that no error 322 follows a third reconnection;
+- a sleeve's exit on a connection that lists no position: whether the broker takes a sell of a currency
+  held only as float cash without a listed position (the first sells of the funding say it should);
+- whether the list of positions ever comes back, at the gateway's daily restart or otherwise. Nothing depends
+  on it any more.

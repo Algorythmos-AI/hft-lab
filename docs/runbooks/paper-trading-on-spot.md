@@ -119,8 +119,23 @@ To end for good: `touch var/FLATTEN`, wait until the screen shows no paper posit
 the screen says `NOT FUNDED`, `rm var/FLATTEN`, then Ctrl-C.
 
 A reconciliation break on **cash** (the broker posted interest or a fee that no fill explains) stops entries.
-Look at the account in the broker's own client. If the cause is innocent:
+Exits go on. Look at the account in the broker's own client. If the cause is innocent:
 `python -m hftlab.trader --reanchor --operator NAME` takes the broker's cash as where the account stands.
+
+Since the note of 2026-10-13 in [ADR 0031](../adr/0031-spot-inventory-on-a-cash-account.md), cash is the
+only thing spot is reconciled on: the positions the broker lists are not compared. What the running trader
+answers to `--reanchor`, in the day's decisions (`grep '"request"' var/trader/days/<date>/decisions.jsonl | tail -1`):
+
+| `refused` | What it means | What to do |
+|---|---|---|
+| (empty), `done: 1` | The anchor was taken. `var/trader/inventory.jsonl` has an `anchor` line with your name, `absorbed` (what it explained away, by currency) and `restated` (the sleeve positions it took from the book). The break clears on the same turn | Read `absorbed`. It should be what you saw in the broker's client |
+| `NOT_SETTLED` | An order is on its way, or a fill is fresher than `settle_seconds` | Ask again in a few seconds |
+| `CONNECTION_NOT_SAFE` | There is no connection, or its working orders and executions are not settled yet | Wait for the connection. If it stays, it is not a break in cash: [trader.md](trader.md), section 5 |
+| `NO_CASH` | The gateway did not say what the account holds | Ask again; look at the gateway |
+
+It is taken with a sleeve holding a position, with a break standing and while a funding or an unfunding
+cannot go on. A sleeve that the break stepped down stays `stepped_down`. `--unfund` in a break: reanchor
+first, then flatten, then unfund.
 
 ## 7. Known limits
 
@@ -185,3 +200,31 @@ What that changes in this runbook, until it is settled by a design record:
 
 Still not seen on the real gateway: a sleeve's order, an exit, `--unfund`, `--reanchor`, a refusal by the
 broker, the daily logout and the weekly reset.
+
+### Note of 2026-10-13, later: what was changed, and how that run's break ends
+
+The first two points above are settled by the last note in
+[ADR 0031](../adr/0031-spot-inventory-on-a-cash-account.md).
+
+- **A reconnection no longer ends in that break.** Spot is reconciled on cash. A position list that is empty
+  after a reconnection or a restart is not a difference, and neither is one that is full.
+- **The trader that was stopped in that break** starts as any other (`make paper-local`). It makes the
+  connection safe, compares the cash, and if the cash is the book's it writes `break_cleared` in
+  `var/trader/reconcile.jsonl` and pages `Reconciliation break over`, by itself. If the cash is not the
+  book's, a break in cash stands after four minutes: section 6 says what to do. Do not edit a journal.
+- **The tape no longer fills.** A connection that cannot be made safe is asked after 250 ms, then after
+  twice as long each time, up to once in 30 s; an answer that repeats the last one is counted on the tape,
+  not written. An hour in that state is an hour of beats.
+- **Error 322** (`Maximum number of account summary requests exceeded`) in the trader's and the recorder's
+  log came from the broker library, which asked for the account summary again at each reconnection. It no
+  longer does. Seen again, it is news: report it.
+- A day with a break in it is still not a clean day. A link the gateway lost and found again, with nothing
+  differing afterwards, does not by itself make a day unclean, and never did.
+
+What the next run on the real gateway should show, and what to do if it does not:
+
+| What is expected | What shows it | If it is not so |
+|---|---|---|
+| After a reconnection: no break, and the cash compared within a second or two | The status screen: no break, and the float's cash with a fresh time | A break in cash after four minutes: look at the account, then section 6 |
+| A sleeve's exit is accepted with no position listed | The first paper exit after a reconnection | The broker refuses it; three refusals in a row stop entries. Stop, and report it |
+| No error 322 after three reconnections | `var/log/trader.log`, `var/log/recorder.log` | Report it with the lines before it |

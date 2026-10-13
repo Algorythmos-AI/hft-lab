@@ -5,13 +5,22 @@ client below is a pass-through with no logic of its own, so the adapter can be t
 implements the same dozen calls, and what remains untested without a gateway is only what each line here
 says it does.
 
-Two things here lean on how `ib_async` 2.1.0 is built, both read from its source and pinned by the lock file:
+Three things here lean on how `ib_async` 2.1.0 is built, all read from its source and pinned by the lock file:
 
   * `handshake` calls `ib.client.connectAsync` rather than `ib.connect`. `ib.connect` also fetches positions,
     orders and executions before it returns, and the paper-only lock must see the account list before
     anything else is asked of the gateway.
   * It therefore sets `ib.wrapper.clientId` itself, as `ib.connect` would have, because the library keys its
     orders by it.
+  * The library answers the gateway's message 1102 ("connectivity restored") by itself, with a new request for
+    the account summary, and never cancels the one before. The gateway allows two at a time, so the third
+    time its link came back it refused with error 322, in the trader and in the recorder alike (HFT-EXP-0009).
+    Nothing here reads an account summary: the cash comes from the account's values. So that answer of the
+    library's is taken off its error event when the client is built, and no summary is ever asked for.
+
+What is asked about the account, and how often: its values, once per connection (`account_values`). The
+subscription ends with the socket, and with the gateway's message 1101 ("restored, data lost"), after which it
+is asked for once more. A caller that never asks for cash (the recorder) asks nothing about the account at all.
 """
 from __future__ import annotations
 
@@ -87,6 +96,9 @@ class IbClient(Protocol):
     def historical_bid_ask(self, contract: Contract, end: datetime, count: int) -> list[HistoricalTickBidAsk]: ...
 
 
+DATA_LOST = 1101  # the gateway is back and has dropped its subscriptions, the account's values among them
+
+
 def _ensure_event_loop() -> None:
     """The library runs its own event loop from synchronous code and expects the thread to have one already.
 
@@ -117,6 +129,15 @@ class IbAsyncClient:
         # Without this a request the gateway never answers blocks for ever; with it the request raises.
         self._ib.RequestTimeout = request_timeout_s
         self._followed: str | None = None  # the account whose values this connection has asked to be told
+        # The library's own answer to 1102 asks for the account summary again each time (the module's text).
+        answer = getattr(self._ib, "_onError", None)
+        if answer is not None:
+            self._ib.errorEvent -= answer
+        self._ib.errorEvent += self._on_message
+
+    def _on_message(self, request: int, code: int, message: str, contract: object) -> None:
+        if code == DATA_LOST:
+            self._followed = None  # the gateway dropped what it was asked to send: the next reading asks again
 
     def listen(self, handlers: Handlers) -> None:
         ib = self._ib

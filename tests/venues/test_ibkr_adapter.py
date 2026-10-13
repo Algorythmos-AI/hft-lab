@@ -455,6 +455,57 @@ def test_the_real_client_wires_the_librarys_events_to_the_adapter(ib):
     assert events[1].state is OrderState.WORKING and events[1].ts_ns > 1_700_000_000 * SECOND
 
 
+def test_the_real_client_asks_for_no_account_summary_however_often_the_gateways_link_comes_back(ib, monkeypatch):
+    """Error 322 (HFT-EXP-0009): the library asked for the summary again at every 1102 and cancelled none."""
+    asked: list[tuple] = []
+    monkeypatch.setattr(ib.client, "reqAccountSummary", lambda *said: asked.append(said))
+    monkeypatch.setattr(ib.client, "getReqId", lambda: 9)  # as on a socket that is open
+    asyncio.set_event_loop(asyncio.new_event_loop())  # the library's answer waits on a future: it needs a loop
+    ib.errorEvent.emit(-1, 1102, "restored - data maintained", None)
+    assert len(asked) == 1, "what the library does when left to itself: the reason for what follows"
+    client = IbAsyncClient(ib)
+    venue = IbkrVenue(clock=WallClock(), client=client, gate=PaperGate(port=4002, env={"MODE": "paper"}))
+    for code in (1100, 1102, 1100, 1102, 1100, 1101, 1100, 1102):
+        ib.errorEvent.emit(-1, code, "the gateway's link", None)
+    assert len(asked) == 1, "with the client built, nothing asks for a summary"
+    assert [e.code for e in of(venue.poll(), VenueNotice)].count("ib:1102") == 3, "the adapter still hears it"
+
+
+def test_the_real_client_asks_for_the_accounts_values_once_per_connection(ib, monkeypatch):
+    subscribed: list[str] = []
+    monkeypatch.setattr(ib, "reqAccountUpdates", lambda account="": subscribed.append(account))
+    monkeypatch.setattr(ib, "accountValues", lambda account="": [])
+    monkeypatch.setattr(ib, "run", lambda *awaited: None)
+    monkeypatch.setattr(ib.client, "connectAsync", lambda *said: None)
+    monkeypatch.setattr(ib.client, "getAccounts", lambda: ["DU1234567"])
+    client = IbAsyncClient(ib)
+    for _ in range(50):
+        assert client.account_values("DU1234567") == []
+    assert subscribed == ["DU1234567"], "read fifty times, asked for once"
+    ib.errorEvent.emit(-1, 1100, "lost", None)
+    ib.errorEvent.emit(-1, 1102, "restored - data maintained", None)
+    client.account_values("DU1234567")
+    assert len(subscribed) == 1, "the gateway kept the subscription: it is not asked for again"
+    ib.errorEvent.emit(-1, 1101, "restored - data lost", None)
+    for _ in range(5):
+        client.account_values("DU1234567")
+    assert len(subscribed) == 2, "it said it dropped it: once more"
+    assert client.handshake("127.0.0.1", 4002, 77, 1.0) == ["DU1234567"]
+    for _ in range(5):
+        client.account_values("DU1234567")
+    assert len(subscribed) == 3, "and once on a new socket"
+
+
+def test_what_the_recorder_holds_of_the_venue_can_ask_nothing_about_the_account():
+    from hftlab.venues.view import MarketDataView
+
+    for question in ("cash", "positions", "open_orders", "executions_since", "managed_accounts", "place", "cancel"):
+        assert not hasattr(MarketDataView, question), question
+    with open(CLIENT, encoding="utf-8") as source:
+        calls = [node for node in ast.walk(ast.parse(source.read())) if isinstance(node, ast.Call)]
+    assert not [called_name(node) for node in calls if "AccountSummary" in called_name(node)]
+
+
 def test_the_real_client_never_dials_when_the_lock_refuses_and_fails_cleanly_when_not_connected(ib):
     client = IbAsyncClient(ib)
     gate = PaperGate(port=4001, env={"MODE": "paper"})

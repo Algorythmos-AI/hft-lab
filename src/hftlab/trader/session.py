@@ -96,6 +96,13 @@ ANSWERS_PER_EVENT: Final = 64
 STATE: Final = ("outbox", "risk", "reconcile", "stages", "shadow", funding.FILE)
 SEEDS: Final = 1_000_000  # the shadow venue's seed is the configured one times this, plus the session's number
 SLEEVE, FLATTEN, INHERIT, ALIGN = "sleeve", "flatten", "inherit", "align"  # where an order came from
+# While a connection is being made safe the venue is asked again only after a wait that doubles from the first
+# to the longest (ENGINEERING DEFAULTS). Asked on every turn, a connection that could not be made safe was asked
+# four times a second for eight hours (HFT-EXP-0009). A new connection is asked at once.
+SAFE_FIRST_NS: Final = 250_000_000
+SAFE_LONGEST_NS: Final = 30_000_000_000
+PRESSING_NS: Final = 1_000_000_000  # under this wait a turn is asked for sooner than the next beat would bring one
+_UP: Final = (ConnectionState.RECONCILING, ConnectionState.READY)
 FLOAT_STUCK: Final = "float-stuck"  # the alert of a funding that cannot go on by itself
 UNVERIFIED: Final = -1  # in a mark, where the number of entries would be: the journal's chain does not verify
 _SLEEVE_LATCHES: Final = (Reason.DAILY_LOSS_SLEEVE.value, Reason.DRAWDOWN_SLEEVE.value)
@@ -363,6 +370,8 @@ class Trader:
         self._quoted_at: dict[str, int] = {}
         self._beat_at = opened.at_ns
         self._checked_at = opened.at_ns
+        self._safe_wait = 0  # how long the last try to make the connection safe is waited after; 0: none failed
+        self._safe_at = opened.at_ns  # and when the next one may be made
         self._recheck = False  # a connection was just made safe on a cash account: its cash is compared at once
         self._latched: set[str] = set()
         self._broken = False
@@ -472,7 +481,8 @@ class Trader:
         """Take turns until the edge has no more or the day is over. True when the day's close was seen."""
         try:
             while not (self._day_over or self._renew or self._flat):
-                step = self._edge.next(urgent=self._manager is not None and self._manager.blind)
+                blind = self._manager is not None and self._manager.blind
+                step = self._edge.next(urgent=blind and self._safe_wait < PRESSING_NS)
                 if step is None:
                     break
                 self.step(step)
@@ -540,6 +550,7 @@ class Trader:
                     if event.state.is_terminal:
                         del self._watching[event.client_order_id]
         if isinstance(event, ConnectionEvent):
+            self._safe_wait, self._safe_at = 0, now  # whatever was waited for, this is another connection
             self._write("connection", state=event.state.value)
             market.append(event)
 
@@ -687,7 +698,12 @@ class Trader:
     def _keep_safe(self, now: int) -> None:
         assert self._manager is not None and self._reconciler is not None and self._gate is not None
         if self._manager.blind:
-            self._manager.reconcile()
+            if self._connection in _UP and now >= self._safe_at:
+                if self._manager.reconcile():
+                    self._safe_wait = 0
+                else:
+                    self._safe_wait = min(SAFE_LONGEST_NS, max(SAFE_FIRST_NS, 2 * self._safe_wait))
+                    self._safe_at = now + self._safe_wait
             # On a cash account the manager compares no spot position (ADR 0031, note of 2026-10-13): the cash is
             # what says whether the book is the account's, so it is compared on the first turn after this one.
             self._recheck = self._ledger is not None

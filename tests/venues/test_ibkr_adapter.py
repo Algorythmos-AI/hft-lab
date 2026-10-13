@@ -18,7 +18,15 @@ from hftlab.safety import VENUES, PaperGate, PaperOnlyError
 from hftlab.venues.fake import FakeConfig
 from hftlab.venues.ibkr.adapter import IbkrSettings, IbkrVenue
 from hftlab.venues.ibkr.client import IbAsyncClient
-from hftlab.venues.port import ConnectionEvent, ConnectionState, NotReady, OrderRefused, VenueNotice, VenueUnavailable
+from hftlab.venues.port import (
+    CommissionEvent,
+    ConnectionEvent,
+    ConnectionState,
+    NotReady,
+    OrderRefused,
+    VenueNotice,
+    VenueUnavailable,
+)
 from hftlab.venues.supervisor import Backoff
 from tests.support import called_name, sources
 from tests.venues.kit import ASK, BID, MS, SECOND, T0, Harness, an_order, brief, of
@@ -318,6 +326,25 @@ def test_orders_and_executions_this_platform_did_not_send_are_not_its_events(ref
     h.venue._on_execution(trade, fill)
     h.venue._on_commission(trade, fill, fill.commissionReport)
     assert h.venue.poll() == []
+
+
+def test_a_commission_report_the_gateway_sends_again_is_passed_on_once():
+    """Measured (HFT-EXP-0009): every report of the day comes again each time the executions are asked for."""
+    h, _ = ready()
+    ours = an_order().client_order_id
+    trade = a_trade(ours, "Filled", filled=20000.0)
+    execution = Execution(execId="x.1", time=NOW, side="BOT", shares=20000.0, price=1.0851, orderRef=ours)
+    report = CommissionReport(execId="x.1", commission=2.0, currency="USD")
+    fill = IbFill(trade.contract, execution, report, NOW)
+    for _ in range(4):
+        h.venue._on_commission(trade, fill, report)
+    assert [(e.fill_id, e.commission, e.currency) for e in of(h.venue.poll(), CommissionEvent)] == [
+        ("x.1", 2_000_000, "USD")
+    ]
+    h.venue._on_commission(trade, fill, report)
+    assert h.venue.poll() == []
+    h.venue._on_commission(trade, fill, CommissionReport(execId="x.1", commission=2.5, currency="USD"))
+    assert [e.commission for e in of(h.venue.poll(), CommissionEvent)] == [2_500_000], "a changed one is news"
 
 
 def test_what_cannot_be_translated_exactly_becomes_a_notice_never_a_rounded_event():

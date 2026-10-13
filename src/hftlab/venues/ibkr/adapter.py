@@ -81,6 +81,7 @@ class IbkrVenue(GuardedVenue):
         self._trades: dict[str, Trade] = {}
         self._acknowledged: set[str] = set()
         self._reported: dict[str, tuple[OrderState, int]] = {}
+        self._charged: dict[str, tuple[int, str]] = {}  # the commission passed on for each execution
         self._streaming: set[Instrument] = set()
         self._deep: set[Instrument] = set()
         self._upstream = True
@@ -335,7 +336,12 @@ class IbkrVenue(GuardedVenue):
 
     def _on_commission(self, trade: Trade, fill: IbFill, report: CommissionReport) -> None:
         if is_ours(fill.execution.orderRef or trade.order.orderRef) and (parsed := translate.commission_from(report)):
-            self._emit_commission(*parsed)
+            # Measured (HFT-EXP-0009): the gateway sends every report of the day again each time the executions
+            # are asked for. A report that says what was passed on already is not passed on again.
+            fill_id, commission, currency = parsed
+            if self._charged.get(fill_id) != (commission, currency):
+                self._charged[fill_id] = (commission, currency)
+                self._emit_commission(fill_id, commission, currency)
 
     # ---- reconciliation queries ---------------------------------------------------------------------------------
 

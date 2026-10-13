@@ -228,10 +228,6 @@ def test_a_blown_out_spread_at_the_hard_limit_pages_and_the_trader_stays_up_and_
     assert len(blocked) > 10 and {(e["code"], e["sent"]) for e in blocked} == {("PRICE_COLLAR", 0)}
     waits = [later["at_ns"] - earlier["at_ns"] for earlier, later in itertools.pairwise(blocked)]
     assert min(waits) >= 5 * SECOND, "refused closes come again at the gate's own interval, and no faster"
-    rows = read_tape(desk.day() / HEAD)
-    asked = [row[1] for row in rows[next(n for n, row in enumerate(rows) if row[0] == "step" and row[5:] == [HARD]) :]
-             if row[0] == "ask"]  # fmt: skip
-    assert asked.count("positions") >= 1, "the reconciler went on looking at the broker's positions"
     turns = desk.trader.summary()["turns"]
     wide(3)
     assert desk.trader.summary()["turns"] == turns + 3, "and the session goes on taking its turns"
@@ -240,6 +236,11 @@ def test_a_blown_out_spread_at_the_hard_limit_pages_and_the_trader_stays_up_and_
     assert desk.trader.flat_at_hard_limit and desk.held() == (0, 0, 0) and desk.positions() == {}
     assert desk.of("tape_flat")[0]["overdue"] == 1 and TAPE_OVERDUE in desk.pages.resolved
     desk.stop()
+    rows = read_tape(desk.day() / HEAD)
+    late = rows[next(n for n, row in enumerate(rows) if row[0] == "step" and row[5:] == [HARD]) :]
+    # An answer that repeats the last one is counted in a `same` line and not written again.
+    looks = sum(1 if row[0] == "ask" else row[2] for row in late if row[0] in ("ask", "same") and row[1] == "positions")
+    assert looks >= 1, "the reconciler went on looking at the broker's positions"
     assert tape_bytes(tmp_path / "live" / "days") <= NEAR["quota_bytes"]
     assert identical(desk, tmp_path / "scratch", ["stopped"])
 

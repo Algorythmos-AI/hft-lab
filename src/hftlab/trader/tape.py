@@ -10,9 +10,26 @@ are recorded here, one JSON line each, at the edge where they enter:
                                                   turn and on the turn it changes, where the tapes have a quota
     ["ask", question, state, answer, error]       a question to the venue, and what it said or how it failed
                                                   (open orders, positions, executions, and the account's cash)
+    ["same", question, n]                         the n times this question was asked since its last `ask` line it
+                                                  was answered as on that line, and nothing was written for them
     ["sent", verb, client order id, how, state]   how a send or a cancel went, as the order manager saw it
     ["stop", at]                                  the session ended on purpose
     ["dark"]                                      the reserve is used up: the session went on, and wrote no more here
+
+An answer that is the last written answer to the same question over again is not written again (format 2, said
+in the `marks` line as `"format": 2`). The trader asks the same three or four questions for as long as it
+runs, and for hours they are answered the same: written out each time, that was most of a tape (HFT-EXP-0009).
+What keeps a replay honest about the lines that are not there:
+
+  * the trader is handed the answer that is on the tape, the very same objects, when the venue repeats itself.
+    "The same" leaves out one thing: the time at which an execution was listed, which is the time of the asking
+    and so is new every time. The trader is shown the listing it was shown first, so what it saw and what the
+    tape holds are one thing, and a replay hands it exactly that again;
+  * a replay that asks a question where the tape has no line for it is given the last answer to that question,
+    and counts. The count is checked against the `same` line, which is written just before the next `ask`
+    line of that question and, for whatever is still counted, just before `stop`. A replay that asked more
+    often or less often than the session did fails there. A tape of format 1 has no such lines and is read as
+    it always was: every question needs its line.
 
 `at` is the time of the turn, taken from the clock once and never read again inside the turn: it is the only
 time anything decided on that turn knows. A beat is the part of a turn that happens on a timer: the switches
@@ -125,6 +142,7 @@ URGENT_NS: Final = 250 * MS  # while a connection is being made safe, a turn is 
 UP: Final = (ConnectionState.RECONCILING, ConnectionState.READY)
 REQUESTS: Final = "requests"  # in the trader's state directory: one small file per thing an operator asked for
 HEAD: Final = ".tape.jsonl"  # what a session's head is called after its number; the session counts these
+FORMAT: Final = 2  # of the lines of a tape; 2: an answer repeated is counted, not written (the module's text)
 PART_BYTES: Final = 64_000_000  # ENGINEERING DEFAULT: a part is closed at the first turn after it has grown to this
 _PART: Final = re.compile(r"\.part-(?P<number>[0-9]{4,})\.(?P<day>[0-9]{4}-[0-9]{2}-[0-9]{2})\.jsonl(?P<gz>\.gz)?")
 _TAIL: Final = 1 << 12  # more than a `stop` line: where the end of a part is looked at
@@ -299,6 +317,15 @@ _ANSWERS: Final[dict[str, tuple[Callable[[Any], Row], Callable[[Row], Any]]]] = 
 _ERRORS: Final[dict[str, type[VenueError]]] = {
     "VenueUnavailable": VenueUnavailable, "NotReady": NotReady, "Unsupported": Unsupported,
 }  # fmt: skip
+_LISTED_AT: Final = 6  # in a fill's row: when it was heard of. In a listing that is the time of the asking
+
+
+def _lasting(question: str, row: Row) -> bytes:
+    """An `ask` line without what is new at every asking: two answers with the same one of these are the same."""
+    if question == "executions_since" and row[3] is not None:
+        listed = [[*fill[:_LISTED_AT], None, *fill[_LISTED_AT + 1 :]] for fill in row[3]]
+        row = [*row[:3], listed, *row[4:]]
+    return _line(row)
 
 
 # ---- the files of a tape: a head, and parts by UTC day and by size ---------------------------------------------------
@@ -475,18 +502,53 @@ def read_requests(folder: Path) -> tuple[Request, ...]:
 
 
 class _Recorded:
-    """The venue's three questions, asked of the venue and written to the tape with what it said."""
+    """The venue's questions, asked of the venue and written to the tape with what it said.
+
+    An answer that is the last written one over again is counted and not written, and the caller is handed
+    the answer that was written (the module's text says why that is the same thing).
+    """
 
     def __init__(self, venue: Asked, edge: LiveEdge) -> None:
         self._venue, self._edge = venue, edge
+        self._written: dict[str, tuple[bytes, tuple[Any, ...]]] = {}  # the last line of each question, and its answer
+        self._again: dict[str, int] = {}  # how often each has been answered so since
+
+    def begin(self) -> None:
+        """A new session's tape: nothing has been written on it yet, so nothing can be said to repeat."""
+        self._written.clear()
+        self._again.clear()
+
+    def flush(self) -> None:
+        """Write down what is still only counted. Before the tape's `stop`, so that a replay can check it."""
+        for question in sorted(self._again):
+            if self._again[question]:
+                self._edge.write(["same", question, self._again[question]])
+        self._again.clear()
 
     def _ask(self, question: str, answer: Callable[[], tuple[Any, ...]]) -> tuple[Any, ...]:
+        failure: VenueError | None = None
+        found: tuple[Any, ...] = ()
         try:
             found = answer()
-        except VenueError as failure:
-            self._edge.write(["ask", question, self._edge.state.value, None, type(failure).__name__])
-            raise
-        self._edge.write(["ask", question, self._edge.state.value, [_ANSWERS[question][0](item) for item in found]])
+        except VenueError as raised:
+            failure = raised
+        state = self._edge.state.value
+        row: Row = ["ask", question, state, None, type(failure).__name__]
+        if failure is None:
+            row = ["ask", question, state, [_ANSWERS[question][0](item) for item in found]]
+        lasting, written = _lasting(question, row), self._written.get(question)
+        if written is not None and written[0] == lasting and not self._edge.dark:
+            self._again[question] = self._again.get(question, 0) + 1
+            if failure is not None:
+                raise failure
+            return written[1]
+        if self._again.get(question):
+            self._edge.write(["same", question, self._again[question]])
+        self._again[question] = 0
+        self._edge.write(row)
+        self._written[question] = (lasting, found)
+        if failure is not None:
+            raise failure
         return found
 
     def open_orders(self) -> tuple[OpenOrder, ...]:
@@ -630,7 +692,9 @@ class LiveEdge:
         self._stream = path.open("xb")  # a tape is written once; a name that is taken is a mistake, not a retry
         self._file, self._number, self._day, self._size = path, 0, "", 0
         self.dark, self._told, self._pending = False, ROOM if self._hard is None else None, []
-        for row in (*self._head, ["marks", dict(marks)]):
+        if self._asks is not None:
+            self._asks.begin()
+        for row in (*self._head, ["marks", {**marks, "format": FORMAT}]):
             self._put(row, _line(row))
         self._shut_part()  # the head is on the disk, and is never written again; the turns go into parts
         if self._fsync:
@@ -758,6 +822,8 @@ class LiveEdge:
 
     def stop(self, at_ns: int) -> None:
         if self._file is not None:
+            if self._asks is not None:
+                self._asks.flush()
             self.write(["stop", at_ns])  # not written by a session that went dark: its tape has its last line
             self._shut_part()
             self._file = None
@@ -894,7 +960,7 @@ class _Replayed:
         self._edge = edge
 
     def _ask(self, question: str) -> tuple[Any, ...]:
-        row = self._edge.take("ask", question)
+        row = self._edge.answer(question)
         self._edge.state = ConnectionState(row[2])
         if row[3] is None:
             raise _ERRORS.get(row[4], VenueError)("the recording says the venue could not be asked")
@@ -924,6 +990,9 @@ class ReplayEdge:
         self.state = ConnectionState(opened[4])
         described = tuple(instrument_of(entry) for entry in opened[3])
         self._opened = Opened(opened[1], opened[2], described, self.state)
+        self._format = int(self._rows[1][1].get("format", 1))
+        self._answered: dict[str, Row] = {}  # the last `ask` line of each question
+        self._repeats: dict[str, int] = {}  # how often the replay was given it again with no line of its own
         self._venue = ReplayVenue(self, opened[2], self._opened.instruments) if paper else None
         self._asks = _Replayed(self)
 
@@ -959,7 +1028,48 @@ class ReplayEdge:
         self._at += 1
         return row
 
+    def answer(self, question: str) -> Row:
+        """The `ask` line that answers this question now: the next line, or the last one where the tape counts.
+
+        A tape of format 2 does not write an answer that repeats the last one to its question. So where the
+        next line is not this question's, the replay is given that last answer again, and the number of times
+        is checked against the tape's `same` line when it comes.
+        """
+        row = self._rows[self._at] if self._at < len(self._rows) else None
+        last = self._answered.get(question)
+        if row is not None and row[0] == "same" and row[1] == question:
+            if last is not None and self._repeats.get(question, 0) < row[2]:
+                self._repeats[question] = self._repeats.get(question, 0) + 1
+                return last  # one of the times the line counts: the answer was the same
+            self._counted(row)
+            row = self._rows[self._at] if self._at < len(self._rows) else None
+            if row is None or row[:2] != ["ask", question]:
+                self.take("ask", question)  # a count that is not the session's last word is followed by the answer
+        mine = row is not None and row[:2] == ["ask", question]
+        if mine or self._format < FORMAT or last is None:
+            taken = self.take("ask", question)
+            self._answered[question], self._repeats[question] = taken, 0
+            return taken
+        if row is not None and row[0] == "dark":
+            raise TapeEnded()  # whether the session asked before or after its tape ended, nothing says
+        self._repeats[question] = self._repeats.get(question, 0) + 1
+        return last
+
+    def _counted(self, row: Row) -> None:
+        """Take a `same` line: the replay must have been given that answer again exactly as often as it says."""
+        question, times = row[1], row[2]
+        given = self._repeats.get(question, 0)
+        if self._format < FORMAT or given != times:
+            raise TapeError(
+                f"line {self._at + 1}: the recording says {question!r} was answered the same {times} time(s) and "
+                f"the replay asked {given} time(s)"
+            )
+        self._repeats[question] = 0
+        self._at += 1
+
     def next(self, *, urgent: bool) -> Step | None:
+        while self._at < len(self._rows) and self._rows[self._at][0] == "same":
+            self._counted(self._rows[self._at])  # the counts a session wrote down as it stopped
         if self._at >= len(self._rows):
             return None
         if self._rows[self._at][0] in ("stop", "dark"):

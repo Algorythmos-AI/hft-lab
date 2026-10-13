@@ -443,7 +443,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.fund or args.unfund or args.reanchor:
                 if args.fund + args.unfund + args.reanchor != 1:
                     raise TraderRefused("one of --fund, --unfund and --reanchor at a time")
-                what = funding.FUND if args.fund else funding.UNFUND if args.unfund else "anchor"
+                what = funding.FUND if args.fund else funding.UNFUND if args.unfund else funding.ANCHOR
                 return ask(settings, what, "float", "", args.operator)
             if args.reset:
                 return ask(settings, "reset", args.reset, "", args.operator)

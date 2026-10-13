@@ -115,6 +115,10 @@ class Bureau(Desk):
     def ledger(self) -> list[dict[str, object]]:
         return read(self.folder / "inventory.jsonl")[1]
 
+    def reconciled(self) -> list[dict[str, object]]:
+        """What the reconciler wrote down: nothing at all while the venue and the book agree."""
+        return read(self.folder / "reconcile.jsonl")[1]
+
     def fund(self, seconds: int = 30) -> None:
         """Ask for the float and let the trader convert until it stands."""
         self.run(3)
@@ -126,7 +130,10 @@ class Bureau(Desk):
 class Till:
     """The risk gate, the order manager and the reconciler on a cash account, with no trader above them."""
 
-    def __init__(self, folder: Path, config: FakeConfig | None = None, *, risk: RiskConfig | None = None) -> None:
+    def __init__(
+        self, folder: Path, config: FakeConfig | None = None, *, risk: RiskConfig | None = None,
+        spot_on_cash: bool = True,
+    ) -> None:  # fmt: skip
         self.folder, self.risk = folder, risk or limits()
         self.clock = SimClock(T0)
         self.market = FakeMarket(TRADED, config or account())
@@ -137,13 +144,15 @@ class Till:
             journal=Journal(folder / "risk.jsonl"),
         )  # fmt: skip
         self.oms = OrderManager(
-            self.broker, self.gate, Outbox(folder / "outbox.jsonl"), clock=self.clock, instruments=TRADED
-        )
+            self.broker, self.gate, Outbox(folder / "outbox.jsonl"), clock=self.clock, instruments=TRADED,
+            spot_on_cash=spot_on_cash,  # as the trader builds it wherever the limits hold a float
+        )  # fmt: skip
         self.anchor: dict[str, int] | None = None
         check = CashCheck(self.broker.cash, lambda: self.anchor, self.risk.inventory.tolerance_micro)
         self.reconciler = Reconciler(
             self.broker, self.oms.book, Journal(folder / "reconcile.jsonl"), clock=self.clock,
             grace_ns=self.risk.reconciliation_grace_ns, sink=self.oms.handle, cash=check,
+            spot_on_cash=spot_on_cash,
         )  # fmt: skip
         self.number = 0
         self.broker.connect()

@@ -36,6 +36,8 @@ from hftlab.risk import Inventory, PairLimits
 UNIT: Final = 10**CASH_SCALE
 NONE, FUNDING, FUNDED, UNFUNDING = "none", "funding", "funded", "unfunding"
 FUND, UNFUND = "fund", "unfund"
+ANCHOR: Final = "anchor"  # what an operator's request to take the venue's cash as the account's is called
+OPERATOR: Final = "operator"  # why an anchor was taken, when it was asked for by itself
 FILE: Final = "inventory"  # the ledger's journal, by name, among the trader's state journals
 _BPS: Final = 10_000
 
@@ -158,7 +160,10 @@ class FloatLedger:
 
         anchor   where the account's cash began, by currency, when an operator asked for a funding (or said the
                  venue's cash is to be believed again): the venue's cash at that moment less everything the
-                 broker book's fills had moved
+                 broker book's fills had moved. One an operator asked for by itself (`--reanchor`) also says
+                 what it took for granted: `absorbed`, how far the venue's cash was from the old anchor and
+                 the fills, by currency; `restated`, the position of every sleeve the book held then, which
+                 the new anchor takes as true; and `baseline`, the float's baseline from then on
         open     a funding or an unfunding began: the float position each pair is being taken to, in order
         closed   it ended: for a funding, with the baseline it left; for an unfunding, with what could not be
                  converted back
@@ -192,6 +197,27 @@ class FloatLedger:
         self._journal.write("anchor", cash=self.anchor, operator=operator, why=why, at_ns=at_ns)
         self._journal.flush()
 
+    def reanchor(
+        self,
+        cash: Mapping[str, int],
+        *,
+        operator: str,
+        at_ns: int,
+        absorbed: Mapping[str, int],
+        restated: Sequence[Sequence[object]],
+        baseline: Mapping[str, int] | None,
+    ) -> None:
+        """An operator said the venue's cash is to be believed. The entry says what that took for granted."""
+        self.anchor = dict(sorted(cash.items()))
+        if self.phase == FUNDED and baseline is not None:
+            self.baseline = dict(sorted(baseline.items()))
+        self._journal.write(
+            "anchor", cash=self.anchor, operator=operator, why=OPERATOR, at_ns=at_ns,
+            absorbed=dict(sorted(absorbed.items())), restated=[list(line) for line in restated],
+            baseline=self.baseline,
+        )  # fmt: skip
+        self._journal.flush()
+
     def open(self, what: str, wanted: Mapping[str, int], order: Sequence[str], *, operator: str, at_ns: int) -> None:
         self.phase = FUNDING if what == FUND else UNFUNDING
         self.targets, self.order, self.operator = dict(wanted), tuple(order), operator
@@ -216,6 +242,8 @@ class FloatLedger:
         kind = entry.get("type")
         if kind == "anchor" and isinstance(cash := entry.get("cash"), dict):
             self.anchor = {str(code): int(amount) for code, amount in cash.items()}
+            if isinstance(kept := entry.get("baseline"), dict) and self.phase == FUNDED:
+                self.baseline = {str(code): int(amount) for code, amount in kept.items()}
         elif kind == "open" and isinstance(wanted := entry.get("targets"), dict):
             self.phase = FUNDING if entry.get("what") == FUND else UNFUNDING
             self.targets = {str(pair): int(quantity) for pair, quantity in wanted.items()}

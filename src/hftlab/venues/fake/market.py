@@ -343,7 +343,14 @@ class FakeMarket:
         self._carried[key] = self._carried.get(key, 0) + quantity
 
     def positions(self) -> dict[tuple[str, InstrumentKind], int]:
-        out = dict(self._carried)
+        out = self.executed_positions()
+        for key, quantity in self._carried.items():
+            out[key] = out.get(key, 0) + quantity
+        return {key: quantity for key, quantity in out.items() if quantity}
+
+    def executed_positions(self) -> dict[tuple[str, InstrumentKind], int]:
+        """What this market's own executions add up to, by pair and form, without what was carried in."""
+        out: dict[tuple[str, InstrumentKind], int] = {}
         for booked in self._orders.values():
             if booked.executed:
                 key = (booked.instrument.pair, booked.instrument.kind)

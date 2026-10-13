@@ -138,6 +138,11 @@ anything is sent, and a position left from before is closed by the trader itself
 ## 5. A reconciliation break
 
 A break means the broker's positions are not the ones the trader's book of the broker's fills adds up to.
+On a cash account with a float it means the broker's **cash** is not the anchor plus those fills: there the
+positions of spot are not compared at all, because the broker lists them only on the connection that made
+them ([ADR 0031](../adr/0031-spot-inventory-on-a-cash-account.md), last note). `break_opened` then has an empty
+`differences` and the currencies in `cash`, ours first, and what ends it is in
+[paper-trading-on-spot.md](paper-trading-on-spot.md), section 6.
 
 **What it looks like.** A page titled `Reconciliation break`. `sudo hft-status` shows
 `1 reconciliation break(s) today` and the sleeves that were placing paper orders at `stepped_down`. The
@@ -168,6 +173,14 @@ positions after it lost and regained its connection to the broker
 the list was empty. Steps 3 and 4 do not end that one, and while the connection is not made safe a request to
 take the float back or to anchor again is answered `NOT_SETTLED`. What ends it is not written yet: see
 [paper-trading-on-spot.md](paper-trading-on-spot.md), section 8.
+
+Note of 2026-10-13, later. It is written now. With a float in the limits an empty list of spot positions is
+no longer a difference, so that break does not open and the one that stood clears at the next start if the
+cash agrees. A connection that is not safe now answers those requests `CONNECTION_NOT_SAFE`; `NOT_SETTLED`
+means only that an order is on its way or a fill is fresh, and passes. A blind break can still stand, for the
+reasons in step 3 (a working order that is not the trader's, a position in another form than spot). While it
+does, the trader asks the broker less and less often, down to once in 30 seconds, and asks at once on a new
+connection.
 
 ## 6. A latch
 
@@ -214,6 +227,12 @@ identical as far as its tape goes, and `replayed_bytes` is smaller than `live_by
 session was decided and journalled, and cannot be replayed.
 
 ## 8. The tapes and their quota
+
+Since 2026-10-13 a tape is of format 2 (its head says `"format": 2`): an answer of the broker's that repeats
+the last answer to the same question is not written again. It is counted, and the count is written as a
+`same` line before the next answer that differs and before the session's `stop`. A replay is held to the
+count. A tape recorded before that has no such lines and replays as it always did. So the tape of a quiet
+hour is its beats and its quotes, and a trader waiting in a break no longer fills it.
 
 The tape is what the trader was shown from outside, one line each: it is what a replay runs on. On disk, in
 the day's folder:

@@ -31,11 +31,10 @@ from tests.venues.kit import EURUSD, MS
 
 PAIR = st.sampled_from(["EUR.USD", "AUD.USD"])
 SIZE = st.sampled_from([20_000, 25_000, 30_000, 50_000, 75_000])
-STEP = st.one_of(
-    st.tuples(st.just("order"), st.sampled_from(Side), SIZE, PAIR, st.sampled_from(["control", "ml"])),
-    st.tuples(st.just("move"), st.integers(-40, 40)),
-    st.tuples(st.just("wait"), st.integers(0, 300)),
-)
+ORDER = st.tuples(st.just("order"), st.sampled_from(Side), SIZE, PAIR, st.sampled_from(["control", "ml"]))
+WAIT = st.tuples(st.just("wait"), st.integers(0, 300))
+STEP = st.one_of(ORDER, st.tuples(st.just("move"), st.integers(-40, 40)), WAIT)
+STILL = st.one_of(ORDER, WAIT)  # the steps with the rates left where they are, drawn and not filtered for
 
 
 def play(steps, config, *, moves: bool) -> None:
@@ -97,7 +96,7 @@ def test_no_stream_of_orders_overdraws_the_account_or_parts_the_book_from_the_ve
 
 
 @settings(max_examples=25, deadline=None)
-@given(st.lists(STEP.filter(lambda step: step[0] != "move"), max_size=40))
+@given(st.lists(STILL, max_size=40))
 def test_with_rates_still_and_nothing_charged_no_currency_is_ever_under_its_reserve(steps):
     # An exit still pays the spread. An entry is judged at the edge of its collar and filled at the touch, and that
     # margin on the last entry let through is many times the spread these few exits pay.

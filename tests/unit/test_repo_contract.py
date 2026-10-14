@@ -169,8 +169,11 @@ def test_what_is_in_force_names_the_decision_record_that_set_it_and_says_it_is_a
     assert "HFT-EXP-0009" in read("config/cost_model.yaml"), "the fills that measured the commission minimum are named"
     assert "HFT-DEC-0003" in read("config/trader.yaml")
     records = sorted(path.name for path in (ROOT / "research" / "decisions").glob("HFT-DEC-*.md"))
-    assert [name[:12] for name in records] == ["HFT-DEC-0001", "HFT-DEC-0002", "HFT-DEC-0003"]
-    for name, file in zip(records, ("risk.yaml", "cost_model.yaml", "trader.yaml"), strict=True):
+    assert [name[:12] for name in records] == ["HFT-DEC-0001", "HFT-DEC-0002", "HFT-DEC-0003", "HFT-DEC-0004"]
+    form = read(f"research/decisions/{records[3]}")
+    assert "approved_by: owner" in form and "decided by the owner on 2026-10-12" in form, "a choice made, not proposed"
+    assert "config/venues/ibkr.yaml" in form and "Trials:** none" in form
+    for name, file in zip(records[:3], ("risk.yaml", "cost_model.yaml", "trader.yaml"), strict=True):
         text = read(f"research/decisions/{name}")
         assert "approved_by: owner" in text and "proposal" in text and f"config/{file}" in text, name
         assert "PROPOSAL" in read(f"config/{file}") or file == "trader.yaml", file
@@ -190,7 +193,8 @@ def test_the_capability_file_claims_only_what_was_measured():
     assert (venue["probed_at"], venue["probe_record"]) == ("2026-10-12", "HFT-EXP-0008")
     for record in ("HFT-EXP-0007", "HFT-EXP-0008"):
         assert list((ROOT / "research" / "experiments").glob(f"{record}-*")) and record in text, "the records exist"
-    assert venue["access_route"] is None and venue["instrument_form"] is None, "no decision record exists yet"
+    assert venue["access_route"] is None, "no decision record on the access route exists yet"
+    assert venue["instrument_form"] == "cash" and "HFT-DEC-0004" in text, "the owner's choice, recorded"
     assert venue["weekly_login"] == {"required": None, "observed_behaviour": None}
     assert venue["good_pricing_min_size_source"] == "broker_odd_lot_warning"
     assert [pair["pair"] for pair in venue["pairs"]] == ["EUR.USD", "USD.JPY", "AUD.USD", "GBP.USD"]

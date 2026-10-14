@@ -33,9 +33,8 @@
 #   probed            all of it measured in liquid hours, with an order round trip; code may then read costs from here
 # Code must not read a cost or a timing from this file while the status is anything but `probed`.
 #
-# The two decisions this file feeds (access route, instrument form) are research records that do not exist yet.
-# Both now wait on the owner's choice between cash balances held in each currency and CFDs (HFT-EXP-0008,
-# finding b).
+# The two decisions this file feeds: the instrument form is spot on a float (HFT-DEC-0004, the owner's choice
+# after HFT-EXP-0008, finding b). The access route has no record yet: it waits on an order timing on the server.
 #
 # Units: sizes in whole base-currency units, times in milliseconds, prices as decimal text, money as decimal
 # text converted with hftlab.core.money (never a float).
@@ -45,7 +44,7 @@ probed_at: "2026-10-12"             # UTC date of the latest probe run recorded 
 probe_record: HFT-EXP-0008          # the research record of that run; it names the earlier one, HFT-EXP-0007
 
 access_route: null                  # gateway | web_api: an HFT-DEC record, after an order timing taken on the host
-instrument_form: null               # cash | cfd: an HFT-DEC record, after the owner's choice in HFT-EXP-0008, finding b
+instrument_form: cash               # cash | cfd: HFT-DEC-0004, the owner's choice of 2026-10-12 (spot on a float)
 
 # Where `good_pricing_min_size` comes from: the broker's own warning on a one-unit order, which names the size
 # below which an order is routed as an odd lot (HFT-EXP-0008). A warning text, not a fill and not a schedule.

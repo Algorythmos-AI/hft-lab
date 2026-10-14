@@ -35,11 +35,12 @@ research/
 | [HFT-DEC-0001](decisions/HFT-DEC-0001-paper-risk-limits-and-float.md) | The risk limits for the first paper trading on spot, and the float of a cash account: EUR.USD and AUD.USD on paper at the venue's minimum size for good pricing, GBP.USD and USD.JPY on the shadow venue only | **Proposed**; in force when the owner merges it. No configuration was evaluated |
 | [HFT-DEC-0002](decisions/HFT-DEC-0002-shadow-cost-model-from-the-probe.md) | The shadow cost model stops being a placeholder: minimum sizes and latency bounds from the probe, the commission from the broker's published schedule and marked not measured, slippage not measured | **Proposed**; in force when the owner merges it. `decided`, not `measured` |
 | [HFT-DEC-0003](decisions/HFT-DEC-0003-control-sleeve-to-minimum-size.md) | The control sleeve goes from shadow to minimum size on paper after one clean trading day, once the float is funded. Every other sleeve stays in shadow | **Proposed**; in force when the owner merges it. The plan said five days |
+| [HFT-DEC-0004](decisions/HFT-DEC-0004-instrument-form-spot-on-a-float.md) | The instrument form is spot on IDEALPRO, traded against a float of each currency; CFDs are not used. USD.JPY and GBP.USD stay on the shadow venue only | **Decided by the owner on 2026-10-12**, recorded after the fact. No configuration was evaluated |
 
 6 hypotheses and 9 experiments are recorded: 6 experiments are registered and not run, and 3 are records of
-measurements that were made. 3 decision records are written: the
-risk limits and the float, the cost model, and the control sleeve's first step. Each is a proposal that the
-owner approves by merging it. None evaluated a configuration, so the trial registry is empty.
+measurements that were made. 4 decision records are written: the
+risk limits and the float, the cost model, and the control sleeve's first step, each a proposal that the
+owner approves by merging it; and the instrument form, a choice the owner had already made and acted on. None evaluated a configuration, so the trial registry is empty.
 
 ## Rules
 

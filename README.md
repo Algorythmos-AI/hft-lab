@@ -73,7 +73,7 @@ Code, and tests of it. **Two runs of the capability probe and the first funding 
 | The order manager with its write-ahead outbox, and reconciliation | `src/hftlab/exec/`, `src/hftlab/book/reconcile.py` |
 | The trader: one loop to two books, a staged rollout that starts and stays in shadow as shipped, a tape and a replay | `src/hftlab/trader/`, `config/trader.yaml` |
 | Sleeve state kept across a restart: an exact save and restore, believed only when no journal and no tape moved since | `src/hftlab/trader/resume.py`, `src/hftlab/strategy/sleeve.py` |
-| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 3 records of measurements (the capability probe's two real runs and the first funding of the float), and 3 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
+| The research registry: its lint, the trial count, 6 hypotheses, 6 experiments registered and not run, 3 records of measurements (the capability probe's two real runs and the first funding of the float), and 4 decision records | `src/hftlab/registry/`, `research/`, `config/trial_registry.yaml` |
 | The leak check for a public repository, with its hooks | `tools/leakcheck.py`, `.githooks/` |
 | The status snapshot contract, and its publisher (nothing has been sent yet) | `contracts/`, `src/hftlab/publish/` |
 | The host layer: systemd units rendered from code, the pre-flight gate, the status command with its dead-man rule, alerts, backup, the daily and weekly reports, and the deploy gate with its pruning of old checkouts (none of it installed on any host) | `src/hftlab/ops/`, `config/ops.yaml`, `config/preflight.json` |
@@ -121,10 +121,13 @@ What that does and does not mean:
   any host, no unit has been loaded by a service manager, and nothing has been published. Recording starts
   only after the owner has run the capability probe, the pre-flight day and the install
   ([runbook](docs/runbooks/install.md)).
-- **F1 is open.** The update rate and what the account may do on spot are now measured. Its gate still needs
-  the owner's choice between cash balances held in each currency and CFDs, the two decision records on the
-  access route and the instrument form that rest on it, an order timing taken on the host, and a commission
-  from a fill ([runbook](docs/runbooks/ibkr-probe.md), [roadmap](docs/roadmap.md)). None of those exists.
+- **F1 is open.** The update rate and what the account may do on spot are now measured. The instrument form is
+  recorded: spot on a float (HFT-DEC-0004, the owner's choice of 2026-10-12); CFDs are not used. Its gate still
+  needs the decision record on the access route, which needs an order timing taken on the server and so comes
+  with the server install, and a commission from a fill. The server was resized to 8 GB on 2026-10-14
+  (UTC 2026-10-13 21:07) after the first pre-flight failed on memory headroom (1.06 GB least available of
+  4 GB, 1.5 GB needed); a new 24-hour sample is running ([runbook](docs/runbooks/ibkr-probe.md),
+  [roadmap](docs/roadmap.md)).
 - **F2 and F3 are open** and cannot be closed by code: both need five recorded trading days. The command that
   compares the control run with its recording trip by trip, which the registered experiment names, is
   written (`python -m hftlab.review.trip_costs`,
